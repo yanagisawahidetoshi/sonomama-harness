@@ -1,0 +1,34 @@
+{
+  "id": "SBI-001",
+  "title": "名前に応じたあいさつ",
+  "description": "greeting.mjsでexport function greet(name)を実装する。空白を除去し、名前なしはゲスト扱いにする。",
+  "gherkin": "Feature: あいさつ\n  Scenario: 名前がある\n    Given 名前が 太郎 である\n    When greetを呼ぶ\n    Then こんにちは、太郎さん と返す\n  Scenario: 名前に余白がある\n    Given 名前が前後に空白を含む\n    When greetを呼ぶ\n    Then 前後の余白を除いた名前であいさつする\n  Scenario: 名前がない\n    Given 名前が空文字または空白または未指定である\n    When greetを呼ぶ\n    Then こんにちは、ゲストさん と返す",
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "description": "greet('太郎')は'こんにちは、太郎さん'",
+      "verifier": "sample-bdd"
+    },
+    {
+      "id": "AC-2",
+      "description": "greet(' 太郎 ')は'こんにちは、太郎さん'",
+      "verifier": "sample-bdd"
+    },
+    {
+      "id": "AC-3",
+      "description": "空文字・空白・undefinedは'こんにちは、ゲストさん'",
+      "verifier": "sample-bdd"
+    }
+  ],
+  "allowedFiles": [
+    "greeting.mjs"
+  ],
+  "risks": [],
+  "ambiguous": false,
+  "requiresDesignDecision": false,
+  "securityImpact": [],
+  "requiredSecurityRules": [],
+  "requiredVerifiers": [],
+  "preImplementationGate": false,
+  "minimumRiskLevel": 2
+}

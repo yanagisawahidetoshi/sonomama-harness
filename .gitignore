@@ -1,0 +1,21 @@
+node_modules/
+.harness/runs/*
+!.harness/runs/.gitkeep
+.harness/state/runs/*
+!.harness/state/runs/.gitkeep
+
+# Local human approval signing material; never commit or copy to the agent workspace.
+.harness/state/human/
+
+# Sensitive source files are never review/export artifacts.
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/credentials*
+**/secrets*
+**/.upload-access-key
+!docs/security/secrets.md
+.harness/exports/

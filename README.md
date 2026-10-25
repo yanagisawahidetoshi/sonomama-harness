@@ -1,0 +1,315 @@
+# SONOMAMA Local Harness
+
+SBI単位で「実装 → 検証 → 修正」を回し、Security・Risk・人間の承認からマージ可否まで判定するローカル基盤。
+
+Rails API + Expo + React adminの将来構成に向けた、ローカルLoop Engineering基盤。
+アプリ本体はplaceholder。クラウドFactory、CI/CD、PR作成、実際のmergeは実装しない。
+このリポジトリはHarness専用。既存の動画PoC・参照ファイル・実行履歴・秘密情報は含めない。
+
+## 実行
+
+Node.js 22以上、pnpm 8以上、Git 2.28以上が必要。レビューZIPの作成にはzip、テストにはunzipも使用する。
+
+```sh
+pnpm install --frozen-lockfile
+pnpm harness:check
+pnpm harness:test
+pnpm harness:demo
+```
+
+fakeは認証・外部通信なしで、次の流れを実行する。
+
+```text
+SBI → 意図的な誤実装 → Verifier FAIL
+    → 修正 → Verifier PASS → Security PASS → Policy Review PASS
+    → Semantic Review（有効時のみ）→ Completion Judge → Execution DONE
+    → Risk Classifier: LEVEL 2 → WAITING_FOR_HUMAN_REVIEW
+```
+
+デモは実装完了とリスク判定まで確認してexit 0。通常のrun/resumeはMERGE_ALLOWEDでexit 0、
+承認待ち・停止はexit 2、入力やCLI操作のエラーはexit 1。
+**Execution DONEはマージ承認ではない。** このサンプルはruntime変更のため既定LEVEL 2。
+承認を自動生成せず、実際のmergeも行わない。
+
+## 構成
+
+| 場所 | 役割 |
+| --- | --- |
+| apps/api・mobile・admin | Rails / Expo / Reactのplaceholder |
+| packages/api-schema | 将来のOpenAPI SSOT |
+| .harness/config/harness.json | provider、閾値、Verifier Registry、Semantic Review設定 |
+| .harness/state/sample-sbi.json | Gherkin、AC、許可ファイル、risk |
+| .harness/rules/policy.json | Human Gateと変更許可のポリシー |
+| .harness/rules/pr-risk.json | Default Risk、最低Risk、安全な降格候補 |
+| docs/security/ | 人間向けSecurity Requirements / PolicyのSSOT |
+| .harness/rules/security.json | Rule ID・検知・必須検証・Security最低Risk |
+| .harness/rules/human-gates.json | 事前承認が必要なSecurity rule IDへの参照 |
+| .harness/skills/implement.md | agentへの実装手順 |
+| .harness/state/runs/ | run別の状態保存 |
+| .harness/state/human/ | 信頼する人間用CLIの承認台帳と署名鍵。Git管理対象外 |
+| .harness/runs/ | 実行証跡と独立したGit workspace |
+| tools/harness/ | 実行ループ・分類・承認・マージ可否の判定 |
+| docs/ | アーキテクチャ、SBI、ADR、workflow |
+
+開発指示は[AGENTS.md](AGENTS.md)、Harness配下の指示は[tools/harness/AGENTS.md](tools/harness/AGENTS.md)。
+設定・SBI・リスクポリシー・agentレスポンス・承認レコードはZodで検証する。
+
+## 同じworkspaceを実装・検証・レビューする
+
+各runにapps / packages / docsとrootのpackage設定をコピーし、ローカルGitを初期化する。
+元フォルダへ書き戻さず、baseline SHAと各iterationのHEAD SHAを保存する。
+Agentの変更、Verifierのcwd、Policy Review、Security Check、差分取得は同じworkspaceを使う。
+信頼するテストと検証スクリプトはagentの書き込み領域の外で管理する。
+
+agentは許可されたファイルのJSONを返し、Harnessが検査して適用する。
+`.git`、`.harness`、`tools`、`sources`、テスト、AGENTS.mdは書き込み不可。
+CLIが直接ファイルを変更した場合も停止する。差分をローカルcommitしてから検証する。
+
+承認・resume時はHEAD、未commit変更、Gitで無視されたファイルを含むsource fingerprint、
+入力設定、SBI、rules、スキル、信頼するHarnessコードの一致を確認する。
+いずれか変われば以前の検証・承認を使わずESCALATED。新しいrunで再検証・再承認する。
+node_modulesはコピー・fingerprintの対象外。アプリを接続する際は同じworkspaceに必要な実行環境を準備する。
+検証コマンドによるsource変更も拒否する。生成物の扱いはアプリ接続時に明示的に整備する。
+
+## Verifier Registry
+
+組み込みsample-bddとharness.jsonのverifiersをIDで登録する。
+SBIの各ACは登録済みverifierとacceptanceIdsに対応させる。未知のIDはcheckで拒否する。
+コマンド型verifierは全コマンドがexit 0のときだけ、そのadapterに登録したACを合格とする。
+各コマンドで信頼するassertionを実行すること。単なるechoやagentの自己申告は検証にしない。
+
+| adapter | 未生成判定marker | 接続予定 |
+| --- | --- | --- |
+| rails | apps/api/Gemfile | RSpec / RuboCop / Brakeman / OpenAPI |
+| expo | apps/mobile/package.json | TypeScript / ESLint / RNTL / Storybook / Maestro |
+| admin | apps/admin/package.json | TypeScript / ESLint / Vitest / RTL / Storybook / Playwright / VRT |
+
+markerなしでallowMissing=trueかつそのACを要求しないアプリだけ、対象外としてSKIPできる。
+allowMissing=false、またはACがそのadapterを要求する場合は必須なのでFAIL。
+markerあり・commands未設定もFAIL。**対象となる必須チェックはすべてPASSが必要。**
+
+commandsは引数配列で指定する。例は`[["bundle", "exec", "rspec"]]`。
+cwdは常に`<run>/workspace/<directory>`。将来のアプリを生成したら必要な全検証を登録する。
+SBI固有のテストは任意のverifier IDとacceptanceIdsで追加できる。
+
+## ReviewerとSecurity Check
+
+Policy Reviewerは、許可ファイルの存在・空ファイル・サイズ・TODO/FIXMEを確認する。
+Security Checkはsecurity.jsonとSBIから必要なSecurity Verifierを決めて実行する。
+秘密情報・禁止パターンの基本検査は全runで必須。Security条件は承認人数で上書きできない。
+
+Semantic Reviewは既定で無効。有効ならPASSが必須で、adapter未設定はFAIL。
+`runHarness` / `resumeRun`のsemanticReviewer引数が信頼するadapterの接続点。
+返すstatusはPASS/FAIL、追加リスクはriskLevel=1/2/3で指定する。
+AIの判断はRiskを上げる方向にだけ使い、人間の承認人数には数えない。
+失敗結果は次iterationへ渡し、再実装→再検証→再レビューする。
+
+## Security Enforcement
+
+人間向けの要件は[docs/security/README.md](docs/security/README.md)をSSOTにする。
+Harnessは誰がどのデータを見られるか、PIIの定義、retention期間、匿名化要件、
+業務上の権限モデルを決めない。docs/security・docs/product・ADRで人間が決める。
+今回作成したSecurity文書は未決事項とRule IDの対応を示す最小テンプレート。
+
+security.jsonの各ルールはSEC-AUTH-001、SEC-RLS-001、SEC-PII-001などのIDで文書に紐付く。
+checkはrule ID、参照文書、事前GateのID一覧、Registryの整合性を検証する。
+Security Impact Classifierは、パス、変更行、SBI、AC、明示的securityImpact、保護された設計を評価する。
+AuthN/AuthZ/RLS/PII/Secret/Migration/schema/role・permission/Security Config/CI/CD/Infrastructure/
+破壊的操作/削除・匿名化・retention/API認証・認可/PIIログを検知する初期ルールを用意している。
+分類はパターンと宣言に基づき、未知の意味上の影響を完全に推論する仕組みではない。
+
+SBIで次のmetadataを指定できる。
+
+```json
+{
+  "securityImpact": ["RLS", "PII"],
+  "requiredSecurityRules": ["SEC-RLS-001", "SEC-PII-001"],
+  "requiredVerifiers": ["rails-rls-test", "pii-log-check"],
+  "preImplementationGate": true,
+  "minimumRiskLevel": 3
+}
+```
+
+Security-sensitiveな変更は事前Gate・最低LEVEL 3を強制する。
+Gate承認はそのSBIと検知した変更範囲に対するもの。agentが新しいSecurity影響を提案したら、
+適用前に止め、新しいSBI/承認を要求する。実装後の2人承認で事前Gateを代用できない。
+既存のgate.state=WAITING_FOR_HUMAN_GATEは維持し、approvalState=WAITING_FOR_HUMAN_APPROVALを併記する。
+
+Security Verifierは次の状態を区別する。
+
+| 状態 | 意味 |
+| --- | --- |
+| PASS | 対象の検証を実行して成功 |
+| FAIL | 対象の検証を実行して失敗 |
+| SKIP | この変更では対象外 |
+| NOT_CONFIGURED | 必須だがコマンド・必要なツールが未設定／未導入 |
+
+requiredな検証はすべてPASSが必要。FAIL・SKIP・NOT_CONFIGURED、未承認Gate、rule violationがあれば
+Completion JudgeもMerge Policy Judgeも拒否する。未設定の必須検証は修正ループで解決できないため即Escalation。
+
+組み込みはsecret-scan / forbidden-pattern-check / pii-log-check。
+Rails Brakeman / bundler-audit / authz / RLS / OpenAPI security、dependency-audit、migration-safety、
+authz-ui-test、sensitive-storage-check、data-lifecycle-testは接続用placeholderを用意する。
+必要になったplaceholderはSKIPにせずNOT_CONFIGUREDにする。
+harness.jsonのsecurityVerifiersにid、workspace内directory、信頼するcommandsを登録して接続する。
+組み込みの必須検査は置き換えられない。実ツール本体の導入・本番の権限検証はまだ行っていない。
+
+Security / Human Gateの強制 → minimumRiskLevel → protected path → deterministic → AIによる上方提案
+→ 明示的なLOW候補の順に優先する。DefaultはLEVEL 2。
+docs/securityとdocs/adrはdocs-onlyのLOW候補より保護ルールを優先する。
+
+## Secret保護とレビューZIP
+
+.env / .env.* / pem / key / p12 / pfx / credentials* / secrets* / .upload-access-keyは
+workspaceコピーとレビューexportから除外し、Gitにも含めない。
+仕様で必要なdocs/security/secrets.mdだけは文書として残し、内容は検査する。
+別名のソース内に既知の秘密値やcredentialパターンを検知した場合もコピーしない。
+
+agentが秘密値を提案した場合は、workspaceへの適用・Git commitより前に停止する。
+prompt・JSON・ログ・例外出力にredactionを適用し、外部CLIの生レスポンスはrun外の一時領域で受けて削除する。
+redactionExtensionsで固有の伏せ字処理を追加できる。公開値の許可やPIIの業務定義は人間が別途定める。
+
+```sh
+pnpm harness:export --run RUN_ID
+# 必要なら --out 出力先.zip を指定。既存ファイルへの上書きは拒否する。
+```
+
+export時にも再検査し、旧run内の秘密ファイルから伏せるべき値を取得する。
+.gitの全オブジェクト、鍵、node_modules、バイナリを含めず、伏せ字化したレビュー用ZIPを作る。
+出力は既定で.harness/exports配下。以前作ったZIPを自動修正する機能ではない。
+既知値・検知パターンによる保護なので、任意の未知の値の意味を完全に判別するものではない。
+秘密情報を入力しない運用と、用途に応じたredaction/scannerの追加を前提とする。
+
+## Risk LevelとMerge Policy
+
+**Default Risk Levelは2。** ファイル名・拡張子・diff・SBI・AC・Human Gateを使って分類する。
+
+| LEVEL | 必要な実装後Human Approval | autoMergeEligible |
+| --- | --- | --- |
+| 1 / LOW | 0人 | 必須チェック合格、Human Gateなしの場合のみtrue |
+| 2 / MEDIUM | 1人 | false |
+| 3 / HIGH | 異なる2人以上 | false |
+
+LEVEL 1への降格には明示的なsafe ruleが必要。
+初期ルールは、安全なdocsの追加・更新だけを候補とする。バイナリ、rename、削除は降格しない。
+テストのみ、Storybookのみ、コメントのみ、refactor、feature flag付きという理由だけでは降格しない。
+意味上の安全性を機械的に確認できない変更はLEVEL 2に留める。
+
+AuthN/AuthZ/RLS/PII、Migration、schema、権限モデル、本番データ、secret、Security、
+CI/CD、deploy、Infrastructure、破壊的操作、ADR、API互換性破壊、データ削除・匿名化・retentionはLEVEL 3。
+既定のpath/metadata/contentルールで検出し、SBIのrisksでも宣言する。
+未知のコードから意味上の影響を完全推論する仕組みではない。人間が影響をSBIに記録する。
+OpenAPI SSOTとHarnessポリシー自体も保護対象とする。
+
+candidateLevelは降格候補、minimumLevelは下限。混在変更は最も高い判定を採用する。
+Human Gateなら最低LEVEL 3。AIのLOWで既定LEVEL 2や強制LEVEL 3を下げられない。
+AIが追加リスクを検出した場合は引き上げられる。分類根拠・該当パス・判定元を証跡に保存する。
+
+Merge Policy Judgeは別モジュール。Verifier・Policy・Security・Completionと、
+有効時のSemantic Reviewを必須条件として、SHAと承認を評価する。
+LEVEL 3はMerge Judge側でも最低2人を強制する。Human GateをLOWとして扱う入力も許可しない。
+`MERGE_ALLOWED`と`autoMergeEligible`は可否情報だけで、実際のmerge・Auto Mergeは実行しない。
+MERGED状態を生成するコードやGitHub merge APIは持たない。
+
+## Human GateとMerge Approvalは別の承認
+
+- 実装前: gate.state = NOT_REQUIRED / WAITING_FOR_HUMAN_GATE / APPROVED / REJECTED
+- 実装: executionStatus = PENDING / IMPLEMENTING / VERIFYING / REVIEWING / JUDGING / FAILED / DONE / ESCALATED
+- 実装後: merge.state = NOT_ASSESSED / RISK_ASSESSING / WAITING_FOR_HUMAN_REVIEW / MERGE_ALLOWED / REJECTED / BLOCKED
+
+Human Gate未充足ならMerge JudgeもWAITING_FOR_HUMAN_GATEを返す。
+ゲート対象のSBIはagentを一度も動かさず停止し、人間が着手範囲・設計を確認して承認する。
+ゲート承認のpurposeはimplementation-gate。baseline SHAとSBI/設計/Rulesのdigestに紐付ける。
+
+実装後の承認はpurpose=merge。現在HEAD SHAと検証・リスク・入力のdigestに紐付ける。
+**ゲート承認はマージ承認人数に一切カウントしない。** AI、重複人物、旧SHA、旧context、
+取り消された承認も人数に入れない。修正要求はREJECTEDにする。
+新しいcommitや入力変更で失効した承認は再利用しない。
+
+```sh
+# ゲート待ちのrunに、人間が着手を承認
+pnpm harness:approve --run RUN_ID --phase gate
+pnpm harness:resume --run RUN_ID
+
+# 実装DONE後、人間が現在の差分をレビューして承認
+pnpm harness:approve --run RUN_ID --phase merge
+pnpm harness:resume --run RUN_ID
+
+# 承認の取り消し・修正要求
+pnpm harness:approve --run RUN_ID --phase merge --decision revoke
+pnpm harness:approve --run RUN_ID --phase merge --decision request-changes
+pnpm harness:resume --run RUN_ID
+```
+
+実装前承認は1人、実装後はRisk別の人数を要求する。承認待ちは連続失敗に数えない。
+実装前の仕様曖昧・未決の重要設計はESCALATED。agentが未宣言のHIGH変更を提案した場合も、
+適用前に停止してSBI更新と新しいゲートを要求する。
+実装・検証・レビューの失敗は既定3回、総iteration上限は5回。
+resumeは未着手のゲート待ちと実装DONE後の承認再評価だけに対応し、中断iterationの再開はしない。
+
+### ローカル承認の信頼境界
+
+人間用CLIはOSユーザーを識別子にし、任意の--reviewer名を受け付けない。
+承認はworkspace外の署名付き台帳に保存する。agentはJSONレスポンス経由でここへ書けない。
+証跡のapprovals.jsonを書き換えても承認にならず、台帳改ざんも署名検証で拒否する。
+
+同じOSアカウントで名前だけ変えて2人に見せる運用はできない。
+現行ローカルCLIは単一OSユーザーの識別であり、同じアカウントを共有する実際の人数は認証しない。
+LEVEL 3を複数人で承認する本運用には、認証済みの別人を返すidentityProvider/承認adapterが必要。
+テストでは信頼する模擬adapterで2人を確認する。ローカルのファイル所有者そのものを敵とする隔離ではない。
+`recordDecision`のidentityProviderと、純粋なRisk/Merge Judgeを将来のGitHub等の接続点にする。
+署名鍵を含む.harness/state/humanは共有物やリポジトリに含めない。
+
+## Evidence
+
+```text
+.harness/runs/<run-id>/
+  inputs.json                   # SBI / 設定 / Rules / スキル / tool fingerprint
+  summary.json                  # 3つの状態、HEAD、遷移履歴
+  human-gate.json
+  security-assessment.json      # impacts / rule IDs / Gate / 最低Risk / 必須検証
+  security-verification.json    # 必須Security checksのPASS/FAIL/SKIP/NOT_CONFIGURED
+  workspace-exclusions.json     # コピー除外のパスと理由。秘密値は保存しない
+  risk-preflight.json           # ゲート対象時
+  risk-assessment.json          # preflightかpost-executionかを明記
+  changes.json                  # baseline → HEADの差分情報（実装後）
+  approvals.json                # 署名付き台帳からの投影。承認の正本ではない
+  merge-decision.json
+  escalation.json               # 異常停止時
+  workspace/                    # 独立Git、アプリplaceholder、生成成果物
+  iteration-N/
+    prompt.txt
+    agent.log
+    verify.log
+    security.json
+    security-verification.json
+    review.json
+    semantic-review.json
+    result.json
+```
+
+未実行のフェーズはNOT_RUNとし、成功結果を捏造しない。ゲート待ちでも初期リスクと承認・マージ未評価を保存する。
+Stateは.harness/state/runsにも保存する。resume時には同じrunを再評価する。
+実行証跡・ローカル承認はGit管理対象外。
+
+## provider切り替え
+
+```sh
+pnpm harness:run --provider fake
+pnpm harness:run --provider codex
+pnpm harness:run --provider claude
+pnpm harness:run --provider fake --sbi .harness/state/sample-sbi.json
+```
+
+既定値はharness.jsonのprovider。demoは常にfake。
+Codex CLI / Claude Codeはインストール・ログイン済みでPATHから起動できることが必要。
+実際のモデル通信を検証済みなのはfakeのみ。実CLIは模擬プロセスでプロトコルを確認している。
+
+Codexは非対話read-onlyと構造化出力、Claudeは組み込み/MCP toolsを無効にして構造化出力を要求する。
+CLIの仕様は[Codex公式資料](https://developers.openai.com/codex/cli/reference)、
+[Claude Code公式資料](https://code.claude.com/docs/en/cli-reference)を参照。
+権限自動拡張、provider自動fallback、agent経由の承認は行わない。
+
+実CLIのユーザー設定・hooksは各CLIに従う。信頼するローカルコードとCLIを動かす基盤であり、
+敵対的コードを完全隔離する実行基盤ではない。
+PBI→SBI Plannerは今回追加しない。まず実装・検証・承認判定を成立させる。

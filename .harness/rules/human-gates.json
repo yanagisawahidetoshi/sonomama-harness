@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "preImplementationRuleIds": [
+    "SEC-AUTH-001",
+    "SEC-AUTHZ-001",
+    "SEC-RLS-001",
+    "SEC-PII-001",
+    "SEC-SECRET-001",
+    "SEC-MIGRATION-001",
+    "SEC-SCHEMA-001",
+    "SEC-ROLE-001",
+    "SEC-CONFIG-001",
+    "SEC-CICD-001",
+    "SEC-INFRA-001",
+    "SEC-DESTRUCTIVE-001",
+    "SEC-LIFECYCLE-001",
+    "SEC-LOG-001",
+    "SEC-DESIGN-001"
+  ]
+}

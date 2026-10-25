@@ -1,0 +1,23 @@
+{
+  "name": "sonomama",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@8.15.2",
+  "engines": {
+    "node": ">=22",
+    "pnpm": ">=8"
+  },
+  "scripts": {
+    "harness:check": "node tools/harness/cli.mjs check",
+    "harness:demo": "node tools/harness/cli.mjs demo",
+    "harness:run": "node tools/harness/cli.mjs run",
+    "harness:test": "node --test tools/harness/*.test.mjs tools/harness/agents/*.test.mjs",
+    "harness:approve": "node tools/harness/cli.mjs approve",
+    "harness:resume": "node tools/harness/cli.mjs resume",
+    "harness:export": "node tools/harness/cli.mjs export"
+  },
+  "dependencies": {
+    "zod": "4.1.12"
+  }
+}

@@ -1,0 +1,445 @@
+{
+  "version": 1,
+  "alwaysRequiredVerifiers": [
+    "secret-scan",
+    "forbidden-pattern-check"
+  ],
+  "rules": [
+    {
+      "id": "SEC-AUTH-001",
+      "description": "AuthNへの影響を検知し着手承認・必須検証・HIGHを強制する",
+      "categories": [
+        "AuthN",
+        "APIAuthentication"
+      ],
+      "pathPatterns": [
+        "(^|/)(auth|authn|authentication|sessions?|login|passwords?|tokens?)([_./-]|$)"
+      ],
+      "contentPatterns": [
+        "\\b(authentication|authenticate|sign_in)\\b",
+        "\\b(securitySchemes|bearerAuth|oauth2|jwt)\\b"
+      ],
+      "metadataPatterns": [
+        "\\bauthn\\b|\\bauthentication\\b|認証"
+      ],
+      "preImplementationGate": true,
+      "minimumRiskLevel": 3,
+      "requiredHumanApprovals": 2,
+      "requiredVerifiers": [
+        "authn-test"
+      ],
+      "policyDocument": "docs/security/authorization.md"
+    },
+    {
+      "id": "SEC-AUTHZ-001",
+      "description": "AuthZへの影響を検知し着手承認・必須検証・HIGHを強制する",
+      "categories": [
+        "AuthZ",
+        "APIAuthorization"
+      ],
+      "pathPatterns": [
+        "(^|/)(authz|authorization)(/|\\.|$)"
+      ],
+      "contentPatterns": [
+        "\\bauthoriz(e|ation)\\b"
+      ],
+      "metadataPatterns": [
+        "\\bauthz\\b|\\bauthorization\\b|権限"
+      ],
+      "preImplementationGate": true,
+      "minimumRiskLevel": 3,
+      "requiredHumanApprovals": 2,
+      "requiredVerifiers": [
+        "rails-authz-test"
+      ],
+      "policyDocument": "docs/security/authorization.md"
+    },
+    {
+      "id": "SEC-RLS-001",
+      "description": "RLSへの影響を検知し着手承認・必須検証・HIGHを強制する",
+      "categories": [
+        "RLS"
+      ],
+      "pathPatterns": [
+        "(^|/)rls([_./-]|$)"
+      ],
+      "contentPatterns": [
+        "\\bRLS\\b|ROW\\s+LEVEL\\s+SECURITY|CREATE\\s+POLICY"
+      ],
+      "metadataPatterns": [
+        "\\brls\\b|row.level.security"
+      ],
+      "preImplementationGate": true,
+      "minimumRiskLevel": 3,
+      "requiredHumanApprovals": 2,
+      "requiredVerifiers": [
+        "rails-rls-test"
+      ],
+      "policyDocument": "docs/security/authorization.md"
+    },
+    {
+      "id": "SEC-PII-001",
+      "description": "PIIへの影響を検知し着手承認・必須検証・HIGHを強制する",
+      "categories": [
+        "PII"
+      ],
+      "pathPatterns": [
+        "(^|/)pii(/|\\.|$)"
+      ],
+      "contentPatterns": [
+        "\\b(pii|ssn|email|phone_number)\\b|個人情報"
+      ],
+      "metadataPatterns": [
+        "\\bpii\\b|個人情報"
+      ],
+      "preImplementationGate": true,
+      "minimumRiskLevel": 3,
+      "requiredHumanApprovals": 2,
+      "requiredVerifiers": [
+        "pii-log-check"
+      ],
+      "policyDocument": "docs/security/pii.md"
+    },
+    {
+      "id": "SEC-SECRET-001",
+      "description": "Secretへの影響を検知し着手承認・必須検証・HIGHを強制する",
+      "categories": [
+        "Secret",
+        "Credential"
+      ],
+      "pathPatterns": [
+        "(^|/)(\\.env[^/]*|secrets?[^/]*|credentials?[^/]*|\\.upload-access-key)(/|$)|\\.(pem|key|p12|pfx)$"
+      ],
+      "contentPatterns": [
+        "\\b(secret|credential)s?\\b"
+      ],
+      "metadataPatterns": [
+        "\\b(secret|credential)s?\\b"
+      ],
+      "preImplementationGate": true,
+      "minimumRiskLevel": 3,
+      "requiredHumanApprovals": 2,
+      "requiredVerifiers": [
+        "secret-scan"
+      ],
+      "policyDocument": "docs/security/secrets.md"
+    },
+    {
+      "id": "SEC-MIGRATION-001",
+      "description": "Migrationへの影響を検知し着手承認・必須検証・HIGHを強制する",
+      "categories": [
+        "Migration"
+      ],
+      "pathPatterns": [
+        "(^|/)(migrate|migrations)(/|$)"
+      ],
+      "contentPatterns": [],
+      "metadataPatterns": [
+        "\\bmigrations?\\b|DB移行"
+      ],
+      "preImplementationGate": true,
+      "minimumRiskLevel": 3,
+      "requiredHumanApprovals": 2,
+      "requiredVerifiers": [
+        "migration-safety"
+      ],
+      "policyDocument": "docs/security/threat-model.md"
+    },
+    {
+      "id": "SEC-SCHEMA-001",
+      "description": "DBSchemaへの影響を検知し着手承認・必須検証・HIGHを強制する",
+      "categories": [
+        "DBSchema",
+        "Schema"
+      ],
+      "pathPatterns": [
+        "(^|/)(schema\\.(rb|sql|prisma)|structure\\.sql)$"
+      ],
+      "contentPatterns": [
+        "\\b(ALTER|CREATE|DROP)\\s+(TABLE|SCHEMA)\\b"
+      ],
+      "metadataPatterns": [
+        "db.schema|database.schema|スキーマ変更"
+      ],
+      "preImplementationGate": true,
+      "minimumRiskLevel": 3,
+      "requiredHumanApprovals": 2,
+      "requiredVerifiers": [
+        "migration-safety"
+      ],
+      "policyDocument": "docs/security/threat-model.md"
+    },
+    {
+      "id": "SEC-ROLE-001",
+      "description": "RolePermissionへの影響を検知し着手承認・必須検証・HIGHを強制する",
+      "categories": [
+        "RolePermission"
+      ],
+      "pathPatterns": [
+        "(^|/)(roles?|permissions?)(/|\\.|$)"
+      ],
+      "contentPatterns": [
+        "\\b(role|permission)_?(model|id)?\\b"
+      ],
+      "metadataPatterns": [
+        "role.permission|permission.model|role.model|アクセス範囲"
+      ],
+      "preImplementationGate": true,
+      "minimumRiskLevel": 3,
+      "requiredHumanApprovals": 2,
+      "requiredVerifiers": [
+        "rails-authz-test"
+      ],
+      "policyDocument": "docs/security/authorization.md"
+    },
+    {
+      "id": "SEC-CONFIG-001",
+      "description": "SecurityConfigへの影響を検知し着手承認・必須検証・HIGHを強制する",
+      "categories": [
+        "SecurityConfig",
+        "SensitiveConfig"
+      ],
+      "pathPatterns": [
+        "(^|/)docs/security(/|$)|(^|/)(security|\\.harness/rules)(/|$)",
+        "(^|/)config(/|$)",
+        "(^|/)security([_./-]|$)"
+      ],
+      "contentPatterns": [
+        "security.rule"
+      ],
+      "metadataPatterns": [
+        "security.config|sensitive.config|security.rule"
+      ],
+      "preImplementationGate": true,
+      "minimumRiskLevel": 3,
+      "requiredHumanApprovals": 2,
+      "requiredVerifiers": [
+        "forbidden-pattern-check"
+      ],
+      "policyDocument": "docs/security/README.md"
+    },
+    {
+      "id": "SEC-CICD-001",
+      "description": "CICDSecurityへの影響を検知し着手承認・必須検証・HIGHを強制する",
+      "categories": [
+        "CICDSecurity"
+      ],
+      "pathPatterns": [
+        "(^|/)(\\.github|\\.gitlab|\\.circleci)(/|$)|(^|/)Jenkinsfile$"
+      ],
+      "contentPatterns": [],
+      "metadataPatterns": [
+        "ci/cd|cicd|deploy.workflow|release.workflow"
+      ],
+      "preImplementationGate": true,
+      "minimumRiskLevel": 3,
+      "requiredHumanApprovals": 2,
+      "requiredVerifiers": [
+        "forbidden-pattern-check"
+      ],
+      "policyDocument": "docs/security/threat-model.md"
+    },
+    {
+      "id": "SEC-INFRA-001",
+      "description": "InfrastructureSecurityへの影響を検知し着手承認・必須検証・HIGHを強制する",
+      "categories": [
+        "InfrastructureSecurity"
+      ],
+      "pathPatterns": [
+        "(^|/)(infra|infrastructure|terraform|k8s|helm)(/|$)|\\.tf$"
+      ],
+      "contentPatterns": [],
+      "metadataPatterns": [
+        "infrastructure|インフラ"
+      ],
+      "preImplementationGate": true,
+      "minimumRiskLevel": 3,
+      "requiredHumanApprovals": 2,
+      "requiredVerifiers": [
+        "forbidden-pattern-check"
+      ],
+      "policyDocument": "docs/security/threat-model.md"
+    },
+    {
+      "id": "SEC-DESTRUCTIVE-001",
+      "description": "DestructiveOperationへの影響を検知し着手承認・必須検証・HIGHを強制する",
+      "categories": [
+        "DestructiveOperation",
+        "ProductionData"
+      ],
+      "pathPatterns": [],
+      "contentPatterns": [
+        "\\b(delete_all|destroy_all|TRUNCATE)\\b|DROP\\s+TABLE"
+      ],
+      "metadataPatterns": [
+        "destructive.operation|production.data|破壊的操作|本番データ"
+      ],
+      "preImplementationGate": true,
+      "minimumRiskLevel": 3,
+      "requiredHumanApprovals": 2,
+      "requiredVerifiers": [
+        "data-lifecycle-test"
+      ],
+      "policyDocument": "docs/security/threat-model.md"
+    },
+    {
+      "id": "SEC-LIFECYCLE-001",
+      "description": "DataLifecycleへの影響を検知し着手承認・必須検証・HIGHを強制する",
+      "categories": [
+        "DataLifecycle",
+        "Retention",
+        "Anonymization"
+      ],
+      "pathPatterns": [
+        "(^|/)(retention|anonymization)(/|\\.|$)"
+      ],
+      "contentPatterns": [
+        "\\b(retention|anonymization)\\b"
+      ],
+      "metadataPatterns": [
+        "data.deletion|retention|anonymization|データ削除|匿名化"
+      ],
+      "preImplementationGate": true,
+      "minimumRiskLevel": 3,
+      "requiredHumanApprovals": 2,
+      "requiredVerifiers": [
+        "data-lifecycle-test"
+      ],
+      "policyDocument": "docs/security/pii.md"
+    },
+    {
+      "id": "SEC-LOG-001",
+      "description": "PIILoggingへの影響を検知し着手承認・必須検証・HIGHを強制する",
+      "categories": [
+        "PIILogging"
+      ],
+      "pathPatterns": [],
+      "contentPatterns": [
+        "(logger|console|logging)\\s*[.\\(].*(email|ssn|phone_number|pii)"
+      ],
+      "metadataPatterns": [
+        "pii.logging|PII出力"
+      ],
+      "preImplementationGate": true,
+      "minimumRiskLevel": 3,
+      "requiredHumanApprovals": 2,
+      "requiredVerifiers": [
+        "pii-log-check"
+      ],
+      "policyDocument": "docs/security/pii.md"
+    },
+    {
+      "id": "SEC-DESIGN-001",
+      "description": "SecurityDesignへの影響を検知し着手承認・必須検証・HIGHを強制する",
+      "categories": [
+        "SecurityDesign"
+      ],
+      "pathPatterns": [
+        "(^|/)docs/adr(/|$)"
+      ],
+      "contentPatterns": [],
+      "metadataPatterns": [
+        "security.design|重要Security設計"
+      ],
+      "preImplementationGate": true,
+      "minimumRiskLevel": 3,
+      "requiredHumanApprovals": 2,
+      "requiredVerifiers": [
+        "forbidden-pattern-check"
+      ],
+      "policyDocument": "docs/security/threat-model.md"
+    }
+  ],
+  "verifiers": [
+    {
+      "id": "secret-scan",
+      "kind": "secret"
+    },
+    {
+      "id": "forbidden-pattern-check",
+      "kind": "forbidden"
+    },
+    {
+      "id": "pii-log-check",
+      "kind": "pii-log"
+    },
+    {
+      "id": "authn-test",
+      "kind": "command",
+      "directory": ".",
+      "commands": []
+    },
+    {
+      "id": "rails-brakeman",
+      "kind": "command",
+      "directory": "apps/api",
+      "commands": []
+    },
+    {
+      "id": "rails-bundler-audit",
+      "kind": "command",
+      "directory": "apps/api",
+      "commands": []
+    },
+    {
+      "id": "rails-authz-test",
+      "kind": "command",
+      "directory": "apps/api",
+      "commands": []
+    },
+    {
+      "id": "rails-rls-test",
+      "kind": "command",
+      "directory": "apps/api",
+      "commands": []
+    },
+    {
+      "id": "rails-openapi-security",
+      "kind": "command",
+      "directory": "apps/api",
+      "commands": []
+    },
+    {
+      "id": "dependency-audit",
+      "kind": "command",
+      "directory": ".",
+      "commands": []
+    },
+    {
+      "id": "migration-safety",
+      "kind": "command",
+      "directory": ".",
+      "commands": []
+    },
+    {
+      "id": "authz-ui-test",
+      "kind": "command",
+      "directory": ".",
+      "commands": []
+    },
+    {
+      "id": "sensitive-storage-check",
+      "kind": "command",
+      "directory": ".",
+      "commands": []
+    },
+    {
+      "id": "data-lifecycle-test",
+      "kind": "command",
+      "directory": ".",
+      "commands": []
+    }
+  ],
+  "secretPatterns": [
+    "-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----",
+    "gh[pousr]_[A-Za-z0-9]{30,}",
+    "AKIA[0-9A-Z]{16}"
+  ],
+  "forbiddenPatterns": [
+    "\\bNODE_TLS_REJECT_UNAUTHORIZED\\s*=\\s*[\\x27\\x22]?0",
+    "\\bverify_ssl\\s*[:=]\\s*false"
+  ],
+  "piiLogPatterns": [
+    "(logger|console|logging)\\s*[.\\(].*(email|ssn|phone_number|pii)"
+  ]
+}

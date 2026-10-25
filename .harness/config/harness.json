@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "provider": "fake",
+  "sbi": ".harness/state/sample-sbi.json",
+  "maxConsecutiveFailures": 3,
+  "maxIterations": 5,
+  "timeoutMs": 120000,
+  "verifiers": [
+    {
+      "id": "rails",
+      "directory": "apps/api",
+      "marker": "Gemfile",
+      "planned": [
+        "RSpec",
+        "RuboCop",
+        "Brakeman",
+        "OpenAPI"
+      ],
+      "commands": []
+    },
+    {
+      "id": "expo",
+      "directory": "apps/mobile",
+      "marker": "package.json",
+      "planned": [
+        "TypeScript",
+        "ESLint",
+        "RNTL",
+        "Storybook",
+        "Maestro"
+      ],
+      "commands": []
+    },
+    {
+      "id": "admin",
+      "directory": "apps/admin",
+      "marker": "package.json",
+      "planned": [
+        "TypeScript",
+        "ESLint",
+        "Vitest",
+        "RTL",
+        "Storybook",
+        "Playwright",
+        "VRT"
+      ],
+      "commands": []
+    }
+  ],
+  "semanticReview": {
+    "enabled": false
+  }
+}
