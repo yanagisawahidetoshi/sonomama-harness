@@ -51,6 +51,10 @@ describe('Lane quality and promotion enforcement',()=>{
       const done=await resumeRun({root,runId:run.id,quiet:true,agent});
       assert.equal(done.designApproval.state,'APPROVED');assert.equal(done.executionStatus,'DONE');
       assert.equal(done.lane.name,'production');assert.equal(done.status,'WAITING_FOR_HUMAN_REVIEW');assert.equal(done.merge.validApprovals,0);
+      await recordDecision({root,runId:run.id,purpose:'merge',identityProvider:human('reviewer')});
+      assert.equal((await resumeRun({root,runId:run.id,quiet:true})).status,'MERGE_ALLOWED');
+      await recordDecision({root,runId:run.id,purpose:'design-approval',decision:'REVOKE',identityProvider:human('designer')});
+      assert.equal((await resumeRun({root,runId:run.id,quiet:true})).status,'WAITING_FOR_HUMAN_GATE');
     }));
   });
 });
