@@ -218,6 +218,12 @@ describe('SBI Quality Judge', () => {
         assert.ok(result.findings.some(f => f.sbi === 'SBI-001' && reason.test(f.reason)), JSON.stringify(result.findings));
       });
     }
+    it('when an acceptance criterion contains a word like fetch then does not treat it as the vague term etc', () => {
+      assert.equal(judgePlan([sbi('SBI-001', { acceptanceCriteria: [{ id: 'AC-1', description: 'プロフィールをfetchして氏名を表示する' }, { id: 'AC-2', description: '未登録なら未設定と表示される' }] })]).status, 'PASS');
+    });
+    it('when the purpose mentions a host name or version then does not count the dots as sentences', () => {
+      assert.equal(judgePlan([sbi('SBI-001', { purpose: 'api.example.com のv1.2を使ってプロフィールを取得する。表示までを対象にする。' })]).status, 'PASS');
+    });
     it('when two SBIs share an ID then fails with the duplicate', () => {
       const result = judgePlan([sbi('SBI-001'), sbi('SBI-001')]);
       assert.equal(result.status, 'FAIL');
