@@ -11,15 +11,19 @@ const count = checks => {
 export function healthMetrics(summary) {
   const last = summary.iterations?.at(-1) ?? null;
   const finishedAt = summary.cleanedAt ?? summary.events?.at(-1)?.at ?? null;
+  const executionEndedAt = summary.events?.filter(e => e.phase === 'execution').at(-1)?.at ?? null;
+  const elapsed = until => summary.startedAt && until ? Date.parse(until) - Date.parse(summary.startedAt) : null;
   const risk = summary.risk ? { level: summary.risk.level, phase: 'post-execution' } : summary.riskPreflight ? { level: summary.riskPreflight.level, phase: 'preflight' } : { level: null, phase: null };
   const security = summary.securityAssessment ?? null;
   const merge = summary.merge ?? {};
-  const escalation = summary.executionStatus === 'ESCALATED' ? { code: summary.escalation?.code ?? 'UNKNOWN', detail: summary.escalation?.detail ?? summary.reason ?? null } : null;
+  // Only the code is observation data. The human-facing reason text stays in escalation.json and may carry PII.
+  const escalation = summary.executionStatus === 'ESCALATED' ? { code: summary.escalation?.code ?? 'UNKNOWN' } : null;
   return {
     version: healthMetricsVersion,
     runId: summary.id, sbiId: summary.sbi ?? null, lane: summary.lane?.name ?? null, provider: summary.provider ?? null,
     startedAt: summary.startedAt ?? null, finishedAt,
-    durationMs: summary.startedAt && finishedAt ? Date.parse(finishedAt) - Date.parse(summary.startedAt) : null,
+    // durationMs is lifecycle elapsed time including human waits; executionDurationMs stops at the last execution-phase event.
+    durationMs: elapsed(finishedAt), executionDurationMs: elapsed(executionEndedAt),
     executionStatus: summary.executionStatus ?? null, mergeStatus: merge.state ?? null,
     riskLevel: risk.level, riskPhase: risk.phase, autoMergeEligible: merge.autoMergeEligible === true,
     cleaned: Boolean(summary.cleanedAt),

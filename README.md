@@ -312,6 +312,8 @@ Stateは.harness/state/runsにも保存する。resume時には同じrunを再�
 
 各runは`health-metrics.json`（schema `version: 1`）をEvidence配下へ保存する。summary.jsonから派生した
 機械集計用の観測データで、run基本情報、iteration、Verifier件数、Security、承認3種、Review、escalationを持つ。
+`durationMs`は開始から最終更新までのlifecycle経過時間で、人間の承認待ちを含む。実装・検証・判定だけの
+時間は`executionDurationMs`（最後のexecution phase遷移まで）で見る。
 
 - Signal Collection（今回）: Harnessが各runのMetricsを保存するところまで。Completion / Risk / Merge Judgeは
   この値を読まない。壊れていても判定は変わらず、次のsaveで再生成する。
@@ -319,8 +321,9 @@ Stateは.harness/state/runsにも保存する。resume時には同じrunを再�
   Harnessの自動変更・自動Issue作成・自動mergeは行わない。
 
 ESCALATEDはsummary.escalation.codeとescalation.json.codeに機械集計可能なreasonCodeを持つ。
-人間向けのreason文は従来どおり残す。Reviewer名・prompt・agent応答・秘密値はMetricsに含めず、
-他のEvidenceと同じredactionを通す。Gate / Design Approvalの拒否はescalationではなく各approvalのstateで追う。
+人間向けのreason文はsummary.jsonとescalation.jsonにだけ残し、Metricsにはcodeだけを載せる。
+redactionは秘密値をマスクするがメールアドレス等のPIIは除去しないため、自由文をMetricsへ載せない。
+Reviewer名・prompt・agent応答・秘密値もMetricsに含めず、他のEvidenceと同じredactionを通す。Gate / Design Approvalの拒否はescalationではなく各approvalのstateで追う。
 
 | code | 発生点 |
 | --- | --- |
