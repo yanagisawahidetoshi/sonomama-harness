@@ -2,23 +2,10 @@ import {describe,it} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdir,writeFile,readFile} from 'node:fs/promises';
 import {join} from 'node:path';
-import {fixture,update,runFixture,human} from './test-fixture.mjs';
+import {fixture,update,runFixture,human,prototype} from './test-fixture.mjs';
 import {resumeRun} from './index.mjs';
 import {recordDecision} from './human-approvals.mjs';
 const state='.harness/state/sample-sbi.json';
-async function prototype(root,{promotion=false,failing=false}={}) {
-  const file=promotion?'apps/admin/visual.txt':'prototypes/web/visual.txt';
-  await mkdir(join(root,'.harness/verification'),{recursive:true});
-  await writeFile(join(root,'.harness/verification/visual.mjs'),'import assert from "node:assert/strict";import{readFileSync}from"node:fs";import{join}from"node:path";assert.equal(readFileSync(join(process.argv[2],'+JSON.stringify(file)+'),"utf8"),"visual");console.log(JSON.stringify({acceptance:["VISUAL"]}));');
-  await update(root,state,s=>{s.title='Render a static visual';s.description='Use dummy text';s.allowedFiles=[file];s.risks=[];s.acceptanceCriteria=[{id:'VISUAL',description:'Expected text is present',verifier:'visual'}];if(promotion)s.promotion={source:'prototypes/web'};});
-  const folder=promotion?'apps/admin':'prototypes/web';
-  await writeFile(join(root,folder,'package.json'),JSON.stringify({private:true,scripts:{typecheck:'node -e "process.exit(0)"',lint:`node -e "process.exit(${failing?1:0})"`,'format:check':'node -e "process.exit(0)"',build:'node -e "process.exit(0)"'}}));
-  await update(root,'.harness/config/harness.json',c=>{
-    c.verifiers.push({id:'visual',trust:'acceptance',trustedScript:'.harness/verification/visual.mjs',directory:'.',planned:['independent visual assertion'],commands:[],acceptanceIds:['VISUAL'],appliesTo:['^never/']});
-    if(promotion)c.verifiers.find(v=>v.id==='admin').commands=[[process.execPath,'-e','process.exit(0)']];
-  });
-  return {file,agent:async()=>({files:[{path:file,content:'visual'}]})};
-}
 describe('Lane quality and promotion enforcement',()=>{
   describe('given a dummy-data prototype with independent acceptance checks',()=>{
     it('when light gates pass then permits review without production human approval or auto merge',()=>fixture(async root=>{
