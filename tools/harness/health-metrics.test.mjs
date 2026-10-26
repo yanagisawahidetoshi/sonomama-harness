@@ -26,7 +26,8 @@ describe('Health metrics signal collection', () => {
       assert.equal(metrics.startedAt, run.startedAt);
       assert.equal(metrics.finishedAt, run.events.at(-1).at);
       assert.equal(metrics.durationMs, Date.parse(metrics.finishedAt) - Date.parse(metrics.startedAt));
-      assert.equal(metrics.executionDurationMs, Date.parse(run.events.filter(e => e.phase === 'execution').at(-1).at) - Date.parse(run.startedAt));
+      const execution = run.events.filter(e => e.phase === 'execution');
+      assert.equal(metrics.executionDurationMs, Date.parse(execution.at(-1).at) - Date.parse(execution.find(e => e.status === 'IMPLEMENTING').at));
       assert.ok(metrics.executionDurationMs <= metrics.durationMs);
       assert.equal(metrics.executionStatus, 'DONE');
       assert.equal(metrics.mergeStatus, 'WAITING_FOR_HUMAN_REVIEW');
@@ -114,7 +115,23 @@ describe('Health metrics signal collection', () => {
       assert.deepEqual(metrics.iterations, { total: 0, failed: 0, done: false, limitReached: false, consecutiveFailure: false });
       assert.deepEqual(metrics.verifiers, { summary: { pass: 0, fail: 0, skip: 0, notConfigured: 0 }, checks: [] });
       assert.equal(metrics.review.humanReviewRequired, null);
+      assert.equal(metrics.executionDurationMs, null);
       assert.equal(metrics.escalation, null);
+    }));
+    it('when a gated run is approved and resumed then execution duration excludes the human wait', () => fixture(async root => {
+      await update(root, sbiPath, s => s.risks = ['AuthN']);
+      const run = await runHarness({ root, quiet: true });
+      assert.equal(run.status, 'WAITING_FOR_HUMAN_GATE');
+      await new Promise(resolve => setTimeout(resolve, 20));
+      await recordDecision({ root, runId: run.id, purpose: 'implementation-gate', identityProvider: human('A') });
+      await recordDecision({ root, runId: run.id, purpose: 'implementation-gate', identityProvider: human('B') });
+      const resumed = await resumeRun({ root, runId: run.id, quiet: true });
+      assert.equal(resumed.executionStatus, 'DONE');
+      const metrics = await metricsOf(root, run);
+      const implementing = resumed.events.find(e => e.status === 'IMPLEMENTING');
+      assert.ok(Date.parse(implementing.at) - Date.parse(run.startedAt) >= 20);
+      assert.ok(metrics.executionDurationMs < Date.parse(resumed.events.filter(e => e.phase === 'execution').at(-1).at) - Date.parse(run.startedAt));
+      assert.ok(metrics.executionDurationMs < metrics.durationMs);
     }));
     it('when Design Approval is required then records it separately from the implementation gate', () => fixture(async root => {
       const { agent } = await prototype(root, { promotion: true });
