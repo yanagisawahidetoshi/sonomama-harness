@@ -45,10 +45,11 @@ SBI → 意図的な誤実装 → Verifier FAIL
 | .harness/rules/security.json | Rule ID・検知・必須検証・Security最低Risk |
 | .harness/rules/human-gates.json | 事前承認が必要なSecurity rule IDへの参照 |
 | .harness/skills/implement.md | agentへの実装手順 |
+| .harness/skills/plan.md | PlannerへのPBI → SBI分割手順 |
 | .harness/state/runs/ | run別の状態保存 |
 | .harness/state/human/ | 信頼する人間用CLIの承認台帳と署名鍵。Git管理対象外 |
 | .harness/runs/ | 実行証跡と元リポジトリを共有するGit worktree |
-| tools/harness/ | 実行ループ・分類・承認・マージ可否の判定 |
+| tools/harness/ | 実行ループ・分類・承認・マージ可否の判定、PBI → SBI Planner |
 | docs/ | アーキテクチャ、SBI、ADR、workflow |
 
 開発指示は[AGENTS.md](AGENTS.md)、Harness配下の指示は[tools/harness/AGENTS.md](tools/harness/AGENTS.md)。
@@ -358,7 +359,40 @@ CLIの仕様は[Codex公式資料](https://developers.openai.com/codex/cli/refer
 
 実CLIのユーザー設定・hooksは各CLIに従う。信頼するローカルコードとCLIを動かす基盤であり、
 敵対的コードを完全隔離する実行基盤ではない。
-PBI→SBI Plannerは今回追加しない。まず実装・検証・承認判定を成立させる。
+
+## PBI → SBI Planner
+
+GitHub IssueのPBIをBDDベースのSBIへ分割し、レビュー待ちのSBI Issueとして登録する。
+
+```sh
+pnpm harness:plan https://github.com/<owner>/<repo>/issues/<number> --provider claude
+```
+
+```text
+GitHub Issue (PBI) → PBI Reader → SBI Decomposer（codex / claude）→ SBI Quality Judge
+  → PASS: SBI Issue作成 [sbi][needs-review] → 元PBIへ一覧コメント → Human Review → ready
+  → FAIL: Issueを作らずexit 1で修正理由を表示
+```
+
+GitHubアクセスは認証済みの`gh` CLIを使う。providerはcodexまたはclaudeを明示するか、harness.jsonのproviderを使う。
+fakeは公開先がGitHubのため拒否する。`--dry-run`・`--publish`は設けない。
+Quality Judgeは決定的なルールで、粒度（受け入れ要件6件・変更範囲4領域以内）、目的が2文以内、受け入れ要件の曖昧語、
+Gherkinと受け入れ要件の対応、依存SBIの存在と循環、変更範囲・Risk/Security・検証方法の記載を検査する。
+Security Impactを宣言したSBIのRisk candidateはL3。最終Risk判定はExecution Harnessが行う。
+
+生成したSBI Issueの番号・タイトル・URLはCLI stdout、`GITHUB_STEP_SUMMARY`があればJob Summary、元PBIのコメントに表示する。
+証跡は`.harness/runs/plan-<id>/`（pbi.json / prompt.txt / candidates.json / quality.json / issues.json / summary.json）。
+PBI本文とprompt・証跡はredactionを通す。Issue本文は仕様データとして扱い、本文中の指示には従わない。
+provider出力に秘密値らしき文字列があればGitHubへ書き込む前に停止する。
+各SBI Issue本文には`<!-- sonomama-sbi pbi=<URL> id=<SBI-ID> digest=<内容のSHA-256> -->`、元PBIコメントにはPBI URLのmarkerを埋める。
+再実行時は`sbi`ラベルの既存Issueをmarkerで探し、同じPBI・同じSBI ID・同じdigestに加えて、現在のIssueがopen、`needs-review`付き、
+title・本文が今回の生成結果と完全一致する場合だけ再利用し、コメントは更新する。
+digest不一致（PBIやモデル出力が変わった）、人間による本文・title編集、`ready`化、closeのいずれかがあれば書き込まずに停止し、人間が判断する。
+途中失敗後の再実行で重複Issueを作らない。
+
+Plannerは`needs-review`のSBIをExecution Harnessへ投入しない。人間がレビューして`needs-review`を外し`ready`を付ける。
+Execution Harnessは引き続きSBI JSONを入力にし、Issueからの自動実行・`ready`への自動遷移・Risk確定・mergeは行わない。
+手順は[docs/workflows/pbi-sbi-planner.md](docs/workflows/pbi-sbi-planner.md)。
 
 
 ## 変更範囲によるVerifier選択

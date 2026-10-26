@@ -18,4 +18,4 @@ OSユーザーの別名は別人として数えない。複数人の本運用に
 SHA・source・SBI・Rules・検証コードが変わったら新規runで再検証・再承認する。
 途中iterationはresumeしない。承認待ちだけを再開・再評価する。
 承認撤回後もresumeでMERGE_ALLOWEDを取り消せる。
-Planner、GitHub PR、Ruleset、CODEOWNERS、実mergeは今回の対象外。
+PBI → SBI Plannerは[pbi-sbi-planner.md](pbi-sbi-planner.md)。GitHub PR、Ruleset、CODEOWNERS、実mergeは今回の対象外。
