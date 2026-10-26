@@ -8,7 +8,7 @@ import { verify, checksPassed } from './verifier.mjs';
 import { judge, runHarness, resumeRun, cleanupRun } from './index.mjs';
 import { classifyLane } from './lanes.mjs';
 import { check } from './check.mjs';
-const good = 'export const greet = name => `Hello, ${name}!`;';
+const good = 'export function greet(name) { return `こんにちは、${name?.trim() || "ゲスト"}さん`; }';
 const sbiPath = '.harness/state/sample-sbi.json';
 
 describe('Application and trusted acceptance boundary', () => {
@@ -25,6 +25,8 @@ describe('Application and trusted acceptance boundary', () => {
     });
     it('when an allowed application test is repaired then trusted verification still decides completion', () => fixture(async root => {
       await update(root,sbiPath,s=>s.allowedFiles.push('apps/admin/widget.test.mjs'));
+      await writeFile(join(root,'apps/admin/package.json'),'{"private":true}');
+      await update(root,'.harness/config/harness.json',c=>c.verifiers.find(v=>v.id==='admin').commands=[[process.execPath,'-e','process.exit(0)']]);
       const run=await runFixture({root,quiet:true,agent:async()=>({files:[{path:'greeting.mjs',content:good},{path:'apps/admin/widget.test.mjs',content:'// Given widget; When render; Then visible'}]})});
       assert.equal(run.executionStatus,'DONE');
       assert.equal(run.iterations[0].verification.checks.find(c=>c.id==='sample-bdd').trust,'acceptance');

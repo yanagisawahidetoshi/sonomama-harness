@@ -1,13 +1,13 @@
-import { mkdtemp, cp, mkdir, rm, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, cp, mkdir, rm, realpath, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { git } from './workspace.mjs';
 import { runHarness } from './index.mjs';
 const source = new URL('../../', import.meta.url).pathname;
 export async function fixture(fn) {
-  const root = await mkdtemp(join(tmpdir(), 'sonomama-risk-'));
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'sonomama-risk-')));
   try {
-    for (const path of ['apps', 'packages', 'docs', '.harness/config', '.harness/rules', '.harness/skills', '.harness/state/sample-sbi.json', 'tools/harness', 'AGENTS.md', 'package.json', 'pnpm-workspace.yaml', '.gitignore']) {
+    for (const path of ['apps', 'prototypes', 'packages', 'docs', '.harness/config', '.harness/verification', '.harness/rules', '.harness/skills', '.harness/state/sample-sbi.json', 'tools/harness', 'AGENTS.md', 'package.json', 'pnpm-workspace.yaml', '.gitignore']) {
       await mkdir(join(root, path, '..'), { recursive: true });
       await cp(join(source, path), join(root, path), { recursive: true });
     }
