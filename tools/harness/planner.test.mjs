@@ -27,6 +27,7 @@ function sbi(id, overrides = {}) {
 }
 const validPlan = () => [sbi('SBI-001'), sbi('SBI-002', { dependsOn: ['SBI-001'] }), sbi('SBI-003', { dependsOn: ['SBI-001', 'SBI-002'] })];
 const agentWith = sbis => async () => ({ sbis, escalation: null });
+const fakeToken = 'ghp_' + 'k'.repeat(36);
 
 // Stub gh on PATH. It answers `gh api` calls from a state directory and records every call.
 async function mockGitHub(state, test) {
@@ -147,15 +148,16 @@ describe('PBI → SBI Planner', () => {
       await plan(root);
       assert.equal(await exists(join(github.dir, 'summary.md')), false);
     })));
-    it('when planning succeeds then records redacted evidence and never starts the Execution Harness', () => fixture(root => mockGitHub({ issue: { ...pbi, body: 'token=ghp_abcdefghijklmnopqrstuvwxyz0123456789\n本文' } }, async github => {
+    it('when planning succeeds then records redacted evidence and never starts the Execution Harness', () => fixture(root => mockGitHub({ issue: { ...pbi, body: `token=${fakeToken}\n本文` } }, async github => {
       const result = await plan(root);
       const directory = join(root, result.planDir);
       for (const file of ['pbi.json', 'prompt.txt', 'quality.json', 'issues.json', 'summary.json']) assert.ok(await exists(join(directory, file)), `missing ${file}`);
       const prompt = await readFile(join(directory, 'prompt.txt'), 'utf8');
       assert.match(prompt, /受講生プロフィールを表示する/);
-      assert.doesNotMatch(prompt, /ghp_abcdefghijklmnopqrstuvwxyz0123456789/);
-      assert.doesNotMatch(await readFile(join(directory, 'pbi.json'), 'utf8'), /ghp_abcdefghijklmnopqrstuvwxyz0123456789/);
-      assert.deepEqual(await readdir(join(root, '.harness/state/runs')), ['.gitkeep']);
+      assert.ok(!prompt.includes(fakeToken));
+      assert.ok(!(await readFile(join(directory, 'pbi.json'), 'utf8')).includes(fakeToken));
+      const runState = join(root, '.harness/state/runs');
+      assert.ok(!(await exists(runState)) || (await readdir(runState)).every(name => name === '.gitkeep'), 'execution run state must not be created');
       assert.ok(!(await github.state()).created.some(i => i.labels.some(l => l.name === 'ready')));
       assert.ok(!(await readdir(join(root, '.harness/runs'))).some(name => !name.startsWith('plan-') && name !== '.gitkeep'));
     })));

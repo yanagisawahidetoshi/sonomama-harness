@@ -10,7 +10,7 @@ export function providerCommand(provider, schema, answer, schemaText) {
   if (provider === 'claude') return { command: 'claude', args: ['-p', '--tools', '', '--disallowedTools', 'mcp__*', '--output-format', 'json', '--json-schema', schemaText, '--no-session-persistence'] };
   throw new Error(`Unknown provider: ${provider}`);
 }
-export async function runAgent({ provider, iteration, prompt, directory, workspace, timeoutMs }) {
+export async function runAgent({ provider, iteration, prompt, directory, workspace, timeoutMs, schema: contract = responseJsonSchema }) {
   if (provider === 'fake') return {
     files: [{ path: 'greeting.mjs', content: iteration === 1
       ? 'export function greet(name) { return `Hello, ${name}`; }\n'
@@ -20,8 +20,8 @@ export async function runAgent({ provider, iteration, prompt, directory, workspa
   const temporary = await mkdtemp(join(tmpdir(), 'harness-agent-response-'));
   const answer = join(temporary, 'response.json');
   try {
-  await json(schema, responseJsonSchema);
-  const { command, args } = providerCommand(provider, schema, answer, JSON.stringify(responseJsonSchema));
+  await json(schema, contract);
+  const { command, args } = providerCommand(provider, schema, answer, JSON.stringify(contract));
   const result = await execute(command, args, { cwd: workspace, input: prompt, timeoutMs });
   await json(join(directory, 'provider-process.json'), result);
   if (!result.ok) throw new Error(`${provider}: ${result.error || (result.timedOut ? 'timeout' : result.stderr || `exit ${result.code}`)}`);

@@ -10,7 +10,7 @@ export async function check(root, sbiPath) {
   for (const path of directories) {
     if (!await exists(join(root, path)) || !(await stat(join(root, path))).isDirectory()) throw new Error(`Missing directory: ${path}`);
   }
-  for (const file of ['AGENTS.md', 'package.json', 'pnpm-workspace.yaml', '.harness/skills/implement.md']) {
+  for (const file of ['AGENTS.md', 'package.json', 'pnpm-workspace.yaml', '.harness/skills/implement.md', '.harness/skills/plan.md']) {
     if (!await exists(join(root, file))) throw new Error(`Missing file: ${file}`);
   }
   const lanePolicy = lanePolicySchema.parse(await readJson(join(root, '.harness/config/lanes.json')));

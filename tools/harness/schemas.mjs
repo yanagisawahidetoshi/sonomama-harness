@@ -43,6 +43,38 @@ export const responseJsonSchema = {
   },
 };
 
+const line = text.max(200);
+export const plannedSbiSchema = z.strictObject({
+  id: text.max(20), title: text.max(80), purpose: text.max(300),
+  scope: z.strictObject({ included: z.array(line).max(8), excluded: z.array(line).max(8) }),
+  acceptanceCriteria: z.array(z.strictObject({ id: text.max(20), description: z.string().max(200) })).max(12),
+  scenarios: z.array(z.strictObject({ name: line, given: z.array(line).max(8), when: z.array(line).max(8), then: z.array(line).max(8), acceptanceIds: z.array(text.max(20)).max(12) })).max(12),
+  dependsOn: z.array(text.max(20)).max(12), changeAreas: z.array(z.string().max(80)).max(12),
+  riskCandidate: z.enum(['L1', 'L2', 'L3']), securityImpact: z.array(z.string().max(40)).max(12),
+  verification: z.strictObject({ applicationTest: z.string().max(120), acceptance: z.string().max(120), e2e: z.string().max(120) }),
+});
+export const planResponseSchema = z.strictObject({ sbis: z.array(plannedSbiSchema).max(20), escalation: z.string().nullable().optional() });
+const strings = { type: 'array', items: { type: 'string' } };
+const object = (properties) => ({ type: 'object', additionalProperties: false, required: Object.keys(properties), properties });
+export const planJsonSchema = object({
+  sbis: { type: 'array', items: object({
+    id: { type: 'string' }, title: { type: 'string' }, purpose: { type: 'string' },
+    scope: object({ included: strings, excluded: strings }),
+    acceptanceCriteria: { type: 'array', items: object({ id: { type: 'string' }, description: { type: 'string' } }) },
+    scenarios: { type: 'array', items: object({ name: { type: 'string' }, given: strings, when: strings, then: strings, acceptanceIds: strings }) },
+    dependsOn: strings, changeAreas: strings,
+    riskCandidate: { type: 'string', enum: ['L1', 'L2', 'L3'] }, securityImpact: strings,
+    verification: object({ applicationTest: { type: 'string' }, acceptance: { type: 'string' }, e2e: { type: 'string' } }),
+  }) },
+  escalation: { type: ['string', 'null'] },
+});
+// GitHub REST responses carry many more fields; only the ones the Planner relies on are validated.
+export const githubIssueSchema = z.object({
+  number: z.number().int().positive(), title: z.string(), body: z.string().nullable().default(null), html_url: z.url(),
+  state: z.string().optional(), labels: z.array(z.object({ name: z.string() })).default([]), pull_request: z.unknown().optional(),
+});
+export const githubCommentSchema = z.object({ html_url: z.url() });
+
 export const riskPolicySchema = z.strictObject({
   version: z.literal(1), defaultLevel: z.literal(2),
   levels: z.strictObject({
