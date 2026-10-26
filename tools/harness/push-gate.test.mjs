@@ -23,4 +23,15 @@ describe('Versioned pre-push quality gate',()=>{
       });
     }
   });
+  describe('given git exported GIT_DIR of the pushing worktree to the hook',()=>{
+    it('when the gate runs tests then git fixtures do not inherit the repository location',async()=>{
+      const temp=await mkdtemp(join(tmpdir(),'harness-hook-'));
+      try {
+        await writeFile(join(temp,'pnpm'),`#!/bin/sh\necho "${'$'}{GIT_DIR-unset} ${'$'}{GIT_WORK_TREE-unset} ${'$'}{GIT_INDEX_FILE-unset}" >> "$GATE_LOG"\n`);
+        await chmod(join(temp,'pnpm'),0o755);
+        await exec('sh',[join(root,'.githooks/pre-push')],{cwd:root,env:{...process.env,PATH:`${temp}:${process.env.PATH}`,GATE_LOG:join(temp,'log'),GIT_DIR:join(root,'.git'),GIT_WORK_TREE:root,GIT_INDEX_FILE:join(root,'.git/index')}});
+        assert.equal(await readFile(join(temp,'log'),'utf8'),'unset unset unset\nunset unset unset\n');
+      } finally { await rm(temp,{recursive:true,force:true}); }
+    });
+  });
 });
