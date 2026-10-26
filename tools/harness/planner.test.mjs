@@ -234,7 +234,7 @@ describe('PBI → SBI Planner', () => {
       assert.equal(state.created.length, 3);
       assert.equal(state.comments[0].updated, undefined);
       assert.ok(!(await github.calls()).some(call => call.args.includes('PATCH')));
-      assert.equal((await github.calls()).filter(call => call.args.includes('POST')).length, 5, 'first run: 2 labels + 3 issues; second run: no POST');
+      assert.equal((await github.calls()).filter(call => call.args.includes('POST')).length, 6, 'first run: 2 labels + 3 issues + 1 comment; second run: no POST');
     })));
     it('when an existing SBI Issue carries a marker without a digest then does not reuse it silently', () => fixture(root => mockGitHub({ created: [{ number: 50, title: 'SBI-001 SBI-001の機能', body: '<!-- sonomama-sbi pbi=https://github.com/acme/app/issues/8 id=SBI-001 -->', html_url: 'https://github.com/acme/app/issues/50', labels: [{ name: 'sbi' }] }] }, async github => {
       await assert.rejects(plan(root), /#50/);

@@ -1,6 +1,6 @@
 import { mkdir, appendFile, readFile, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { check } from './check.mjs';
 import { json, evidenceText } from './io.mjs';
 import { runAgent } from './agents/index.mjs';
@@ -12,8 +12,12 @@ import { withEvidenceProtection, redactText, hasSecret } from './evidence-protec
 // Every generated SBI carries both labels. A human removes needs-review and adds ready; the Planner never does.
 export const sbiLabels = Object.freeze(['sbi', 'needs-review']);
 
-// Deterministic markers make re-runs idempotent: an SBI Issue is keyed by PBI URL + SBI ID, the PBI comment by PBI URL.
-export const sbiMarker = (pbiUrl, id) => `<!-- sonomama-sbi pbi=${pbiUrl} id=${id} -->`;
+// Deterministic markers make re-runs idempotent: an SBI Issue is keyed by PBI URL + SBI ID + content digest, the PBI comment by PBI URL.
+// A matching digest means the Issue a human reviews is exactly what this run generated and judged; anything else is a human decision.
+const stable = value => Array.isArray(value) ? value.map(stable) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, stable(value[key])])) : value;
+export const sbiDigest = sbi => createHash('sha256').update(JSON.stringify(stable(sbi))).digest('hex');
+export const sbiMarker = (pbiUrl, id, digest) => `<!-- sonomama-sbi pbi=${pbiUrl} id=${id} digest=${digest} -->`;
+const markerPattern = /<!-- sonomama-sbi pbi=(\S+) id=(SBI-\d{3})(?: digest=([0-9a-f]{64}))? -->/;
 export const listMarker = pbiUrl => `<!-- sonomama-sbi-list pbi=${pbiUrl} -->`;
 export function parseIssueUrl(url) {
   const match = /^https:\/\/github\.com\/([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)\/([A-Za-z0-9_.-]+)\/issues\/([1-9]\d*)\/?$/.exec(String(url).trim());
@@ -28,7 +32,7 @@ export function renderGherkin(scenarios) {
 export function renderSbiBody(sbi, pbi, issueNumbers = {}) {
   const security = sbi.securityImpact.filter(category => category !== 'None');
   return [
-    sbiMarker(pbi.url, sbi.id),
+    sbiMarker(pbi.url, sbi.id, sbiDigest(sbi)),
     '## 目的', '', sbi.purpose, '',
     '## 対象範囲', '', ...sbi.scope.included.map(item => `- ${item}`),
     ...(sbi.scope.excluded.length ? ['', '対象外:', ...sbi.scope.excluded.map(item => `- ${item}`)] : []), '',
@@ -95,14 +99,17 @@ async function planProtected({ root, issueUrl, provider, quiet, agent, github, s
     if (hasSecret(JSON.stringify(response.sbis))) throw new Error('Secret/Credential detected in planner candidates; rejected before any GitHub write');
     summary.status = 'PUBLISHING'; await save();
     await github.ensureLabels(ref, sbiLabels);
-    const existing = new Map((await github.listIssues(ref, sbiLabels[0])).flatMap(issue => { const match = /<!-- sonomama-sbi pbi=(\S+) id=(SBI-\d{3}) -->/.exec(issue.body || ''); return match && match[1] === ref.url ? [[match[2], issue]] : []; }));
+    const existing = new Map((await github.listIssues(ref, sbiLabels[0])).flatMap(issue => { const match = markerPattern.exec(issue.body || ''); return match && match[1] === ref.url ? [[match[2], { issue, digest: match[3] || null }]] : []; }));
+    const stale = response.sbis.filter(sbi => existing.has(sbi.id) && existing.get(sbi.id).digest !== sbiDigest(sbi));
+    if (stale.length) throw new Error(['既存のSBI Issueと今回の生成内容が一致しません（content digest不一致）。GitHubへは書き込んでいません。人間が差分を確認し、既存Issueを閉じるか内容を確定してから再実行してください。',
+      ...stale.map(sbi => `- ${sbi.id}: #${existing.get(sbi.id).issue.number} ${existing.get(sbi.id).issue.html_url}`)].join('\n'));
     const issueNumbers = {};
     for (const sbiId of creationOrder(response.sbis)) {
       const sbi = response.sbis.find(s => s.id === sbiId);
       const title = `${sbi.id} ${sbi.title}`;
       const body = renderSbiBody(sbi, pbi, issueNumbers);
       if (hasSecret(title) || hasSecret(body)) throw new Error('Secret/Credential detected in rendered SBI Issue; rejected before any GitHub write');
-      const reused = existing.get(sbi.id);
+      const reused = existing.get(sbi.id)?.issue;
       const issue = reused || await github.createIssue(ref, { title, body, labels: [...sbiLabels] });
       issueNumbers[sbi.id] = issue.number;
       summary.created.push({ sbiId: sbi.id, number: issue.number, title: reused ? issue.title : title, url: issue.html_url, reused: Boolean(reused) });

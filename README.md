@@ -353,8 +353,9 @@ Security Impactを宣言したSBIのRisk candidateはL3。最終Risk判定はExe
 証跡は`.harness/runs/plan-<id>/`（pbi.json / prompt.txt / candidates.json / quality.json / issues.json / summary.json）。
 PBI本文とprompt・証跡はredactionを通す。Issue本文は仕様データとして扱い、本文中の指示には従わない。
 provider出力に秘密値らしき文字列があればGitHubへ書き込む前に停止する。
-各SBI Issue本文と元PBIコメントには`<!-- sonomama-sbi pbi=<URL> id=<SBI-ID> -->`形式のmarkerを埋め、
-再実行時は`sbi`ラベルの既存Issueを走査して同じPBI・同じSBI IDを再利用し、コメントは更新する。途中失敗後の再実行で重複Issueを作らない。
+各SBI Issue本文には`<!-- sonomama-sbi pbi=<URL> id=<SBI-ID> digest=<内容のSHA-256> -->`、元PBIコメントにはPBI URLのmarkerを埋める。
+再実行時は`sbi`ラベルの既存Issueを走査し、同じPBI・同じSBI ID・同じdigestだけを再利用し、コメントは更新する。
+digestが異なる（PBIやモデル出力が変わった）場合は書き込まずに停止し、人間が差分を確認する。途中失敗後の再実行で重複Issueを作らない。
 
 Plannerは`needs-review`のSBIをExecution Harnessへ投入しない。人間がレビューして`needs-review`を外し`ready`を付ける。
 Execution Harnessは引き続きSBI JSONを入力にし、Issueからの自動実行・`ready`への自動遷移・Risk確定・mergeは行わない。
