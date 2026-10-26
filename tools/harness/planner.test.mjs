@@ -43,11 +43,24 @@ async function mockGitHub(state, test) {
       const input = args.includes('--input') ? fs.readFileSync(0, 'utf8') : '';
       fs.appendFileSync(path.join(dir, 'calls.jsonl'), JSON.stringify({ args, input }) + '\\n');
       const method = args.includes('-X') ? args[args.indexOf('-X') + 1] : 'GET';
-      const endpoint = args.find(a => a.startsWith('repos/'));
+      const [endpoint, query = ''] = args.find(a => a.startsWith('repos/')).split('?');
+      const params = Object.fromEntries(new URLSearchParams(query));
+      const page = list => { const size = Number(params.per_page || 30), index = Number(params.page || 1); return list.slice((index - 1) * size, index * size); };
       const fail = (message, code = 1) => { process.stderr.write(message + '\\n'); process.exit(code); };
       if (args[0] !== 'api') fail('unexpected gh command');
-      if (state.failOnCreate && method === 'POST' && endpoint === 'repos/acme/app/issues' && state.created.length + 1 === state.failOnCreate) fail('gh: Validation Failed (HTTP 422)');
+      if (state.failOnCreate && method === 'POST' && endpoint === 'repos/acme/app/issues' && state.created.length + 1 === state.failOnCreate) {
+        state.failOnCreate = null; fs.writeFileSync(file, JSON.stringify(state)); fail('gh: Validation Failed (HTTP 422)');
+      }
       let m;
+      if (method === 'GET' && endpoint === 'repos/acme/app/issues') {
+        if (!params.labels) fail('label filter required');
+        process.stdout.write(JSON.stringify(page(state.created.filter(i => i.labels.some(l => l.name === params.labels)))));
+      } else if (method === 'GET' && (m = endpoint.match(/^repos\\/acme\\/app\\/issues\\/(\\d+)\\/comments$/))) {
+        process.stdout.write(JSON.stringify(page(state.comments.filter(c => c.issue === Number(m[1])))));
+      } else if (method === 'PATCH' && (m = endpoint.match(/^repos\\/acme\\/app\\/issues\\/comments\\/(\\d+)$/))) {
+        const comment = state.comments.find(c => c.id === Number(m[1])); if (!comment) fail('gh: Not Found (HTTP 404)');
+        comment.body = JSON.parse(input).body; comment.updated = (comment.updated || 0) + 1; process.stdout.write(JSON.stringify(comment));
+      } else
       if (method === 'GET' && (m = endpoint.match(/^repos\\/acme\\/app\\/issues\\/(\\d+)$/))) {
         if (Number(m[1]) !== state.issue.number) fail('gh: Not Found (HTTP 404)');
         process.stdout.write(JSON.stringify(state.issue));
@@ -62,7 +75,8 @@ async function mockGitHub(state, test) {
         const created = { number, title: issue.title, body: issue.body, html_url: 'https://github.com/acme/app/issues/' + number, labels: (issue.labels || []).map(name => ({ name })) };
         state.created.push(created); process.stdout.write(JSON.stringify(created));
       } else if (method === 'POST' && (m = endpoint.match(/^repos\\/acme\\/app\\/issues\\/(\\d+)\\/comments$/))) {
-        const comment = { issue: Number(m[1]), body: JSON.parse(input).body, html_url: 'https://github.com/acme/app/issues/' + m[1] + '#issuecomment-1' };
+        const id = 1 + state.comments.length;
+        const comment = { id, issue: Number(m[1]), body: JSON.parse(input).body, html_url: 'https://github.com/acme/app/issues/' + m[1] + '#issuecomment-' + id };
         state.comments.push(comment); process.stdout.write(JSON.stringify(comment));
       } else fail('unexpected gh api call: ' + method + ' ' + endpoint);
       fs.writeFileSync(file, JSON.stringify(state));
@@ -114,6 +128,7 @@ describe('PBI → SBI Planner', () => {
       for (const issue of state.created) {
         assert.deepEqual(issue.labels.map(l => l.name).sort(), ['needs-review', 'sbi']);
         assert.match(issue.body, /#8/);
+        assert.ok(issue.body.includes(`<!-- sonomama-sbi pbi=${pbiUrl} id=${issue.title.split(' ')[0]} -->`), 'deterministic marker');
         for (const heading of ['## 目的', '## 対象範囲', '## 受け入れ要件', '## Gherkin', '## 依存SBI', '## 想定変更範囲', '## Risk / Security Impact', '## 検証方法', '## 元PBI']) assert.ok(issue.body.includes(heading), `${issue.title} lacks ${heading}`);
         assert.match(issue.body, /Scenario: 登録済みプロフィールを表示する\n\s+Given ログイン済みの受講生がいる\n\s+And プロフィールが登録されている\n\s+When プロフィール画面を開く\n\s+Then 登録済みの氏名が表示される/);
         assert.match(issue.body, /- \[ \] AC-1: 登録済みの氏名が画面に表示される/);
@@ -183,6 +198,44 @@ describe('PBI → SBI Planner', () => {
       assert.equal(state.created.length, 1);
       assert.equal(state.comments.length, 0);
     })));
+    it('when the planner is re-run after a partial failure then reuses the existing SBI Issue and creates only the missing ones', () => fixture(root => mockGitHub({ failOnCreate: 2 }, async github => {
+      await assert.rejects(plan(root), /#101/);
+      const result = await plan(root);
+      const state = await github.state();
+      assert.deepEqual(state.created.map(i => i.title), ['SBI-001 SBI-001の機能', 'SBI-002 SBI-002の機能', 'SBI-003 SBI-003の機能']);
+      assert.deepEqual(result.created.map(c => [c.sbiId, c.number, c.reused]), [['SBI-001', 101, true], ['SBI-002', 102, false], ['SBI-003', 103, false]]);
+      assert.match(state.created[2].body, /- SBI-001 \(#101\)\n- SBI-002 \(#102\)/);
+      assert.equal(state.comments.length, 1);
+      assert.match(state.comments[0].body, /- #101 SBI-001 SBI-001の機能\n- #102 SBI-002 SBI-002の機能\n- #103 SBI-003 SBI-003の機能/);
+    })));
+    it('when the planner is re-run after success then creates no duplicate Issue and updates the existing PBI comment in place', () => fixture(root => mockGitHub({}, async github => {
+      await plan(root);
+      const result = await plan(root);
+      const state = await github.state();
+      assert.equal(state.created.length, 3);
+      assert.ok(result.created.every(c => c.reused));
+      assert.equal(state.comments.length, 1);
+      assert.equal(state.comments[0].updated, 1);
+      assert.match(renderCreatedList(result.created), /#101 SBI-001/);
+    })));
+    it('when an SBI Issue for another PBI carries the same SBI ID then does not reuse it', () => fixture(root => mockGitHub({ created: [{ number: 50, title: 'SBI-001 別PBIのSBI', body: '<!-- sonomama-sbi pbi=https://github.com/acme/app/issues/7 id=SBI-001 -->', html_url: 'https://github.com/acme/app/issues/50', labels: [{ name: 'sbi' }] }] }, async github => {
+      const result = await plan(root);
+      assert.deepEqual(result.created.map(c => [c.sbiId, c.reused]), [['SBI-001', false], ['SBI-002', false], ['SBI-003', false]]);
+      assert.equal((await github.state()).created.length, 4);
+    })));
+    it('when a candidate contains a credential then rejects it before any GitHub write', () => fixture(root => mockGitHub({}, async github => {
+      const leaking = validPlan();
+      leaking[1].acceptanceCriteria[0].description = `${fakeToken} で認証できる`;
+      await assert.rejects(plan(root, { agent: agentWith(leaking) }), /[Ss]ecret|[Cc]redential/);
+      assert.equal((await github.state()).created.length, 0);
+      assert.ok(!(await github.calls()).some(call => call.args.includes('-X')));
+      const plans = (await readdir(join(root, '.harness/runs'))).filter(name => name.startsWith('plan-'));
+      assert.ok(!(await readFile(join(root, '.harness/runs', plans[0], 'summary.json'), 'utf8')).includes(fakeToken));
+    })));
+    it('when a candidate declares a security category outside the Harness policy then the quality judge fails', () => fixture(root => mockGitHub({}, async github => {
+      await assert.rejects(plan(root, { agent: agentWith([sbi('SBI-001', { securityImpact: ['Telemetry'], riskCandidate: 'L3' })]) }), /SBI Quality Judge[\s\S]*Telemetry/);
+      assert.equal((await github.state()).created.length, 0);
+    })));
   });
 });
 
@@ -209,6 +262,10 @@ describe('SBI Quality Judge', () => {
       ['the change areas are empty', sbi('SBI-001', { changeAreas: [] }), /変更範囲/],
       ['a security impact is declared with a risk candidate below L3', sbi('SBI-001', { securityImpact: ['AuthZ'], riskCandidate: 'L2' }), /Risk/],
       ['the security impact mixes None with a category', sbi('SBI-001', { securityImpact: ['None', 'PII'], riskCandidate: 'L3' }), /Security/],
+      ['the title is blank', sbi('SBI-001', { title: ' ' }), /タイトル/],
+      ['the purpose is blank', sbi('SBI-001', { purpose: ' ' }), /目的/],
+      ['the scope has no included item', sbi('SBI-001', { scope: { included: [], excluded: [] } }), /対象範囲/],
+      ['the scope contains a blank item', sbi('SBI-001', { scope: { included: [' '], excluded: [] } }), /対象範囲/],
       ['the verification method is blank', sbi('SBI-001', { verification: { applicationTest: ' ', acceptance: 'Trusted Acceptance', e2e: '不要' } }), /検証方法/],
     ];
     for (const [condition, candidate, reason] of failures) {
@@ -223,6 +280,14 @@ describe('SBI Quality Judge', () => {
     });
     it('when the purpose mentions a host name or version then does not count the dots as sentences', () => {
       assert.equal(judgePlan([sbi('SBI-001', { purpose: 'api.example.com のv1.2を使ってプロフィールを取得する。表示までを対象にする。' })]).status, 'PASS');
+    });
+    it('when a security category is outside the known list then fails naming it', () => {
+      const result = judgePlan([sbi('SBI-001', { securityImpact: ['Telemetry'], riskCandidate: 'L3' })], { securityCategories: ['AuthZ', 'PII'] });
+      assert.equal(result.status, 'FAIL');
+      assert.ok(result.findings.some(f => /Security/.test(f.reason) && /Telemetry/.test(f.reason)));
+    });
+    it('when every security category is in the known list then passes', () => {
+      assert.equal(judgePlan([sbi('SBI-001', { securityImpact: ['AuthZ'], riskCandidate: 'L3' })], { securityCategories: ['AuthZ', 'PII'] }).status, 'PASS');
     });
     it('when two SBIs share an ID then fails with the duplicate', () => {
       const result = judgePlan([sbi('SBI-001'), sbi('SBI-001')]);
