@@ -14,8 +14,9 @@ import { mergeDecision, validHumanApprovals } from './merge-policy.mjs';
 import { authenticatedRecords } from './human-approvals.mjs';
 import { classifySecurity, verifySecurity, combineSecurity, securityPassed } from './security-enforcement.mjs';
 import { withEvidenceProtection, redact, redactText, hasSecret, assertSafeInput } from './evidence-protection.mjs';
-import { digest, prepareWorkspace, commitWorkspace, changedFiles, workspaceIntegrity, toolFingerprint, assertWritablePath, workspaceFingerprint } from './workspace.mjs';
+import { digest, prepareWorkspace, commitWorkspace, changedFiles, workspaceIntegrity, toolFingerprint, assertWritablePath, workspaceFingerprint, sourceIntegrity, assertWorktreeOwner, git } from './workspace.mjs';
 import { saveRun, loadRun, runPaths, withRunLock } from './run-store.mjs';
+import { classifyLane } from './lanes.mjs';
 import { assertState } from './state-machine.mjs';
 export { check, judge, providerCommand };
 
@@ -43,8 +44,15 @@ function metadata(sbi) {
   return { id: sbi.id, title: sbi.title, description: sbi.description, risks: sbi.risks, acceptanceCriteria: sbi.acceptanceCriteria, securityImpact: sbi.securityImpact, requiredSecurityRules: sbi.requiredSecurityRules, requiredVerifiers: sbi.requiredVerifiers, minimumRiskLevel: sbi.minimumRiskLevel };
 }
 async function resolveGate(root, summary) {
-  if (!summary.gate.required) return true;
+  if (!summary.gate.required && !summary.designApproval?.required) return true;
   const records = await authenticatedRecords(root, summary.id);
+  if (summary.designApproval?.required) {
+    const design = validHumanApprovals(records, { purpose:'design-approval', headSha:summary.baselineSha, contextDigest:summary.designApproval.contextDigest });
+    summary.designApproval.state = design.rejected ? 'REJECTED' : design.approvals.length ? 'APPROVED' : 'WAITING_FOR_HUMAN_GATE';
+    summary.lane.designApproved = summary.designApproval.state === 'APPROVED';
+    if (!summary.lane.designApproved) { summary.gate.state = summary.designApproval.state; return false; }
+  }
+  if (!summary.gate.required) return true;
   const { approvals, rejected } = validHumanApprovals(records, { purpose: 'implementation-gate', headSha: summary.gate.headSha, contextDigest: summary.gate.contextDigest });
   summary.gate.state = rejected ? 'REJECTED' : approvals.length ? 'APPROVED' : 'WAITING_FOR_HUMAN_GATE';
   summary.gate.reviewers = approvals.map(a => a.reviewer);
@@ -54,6 +62,8 @@ async function resolveGate(root, summary) {
 async function assessMerge(root, summary, inputs, quiet) {
   const { directory, workspace } = runPaths(root, summary.id);
   const { transition } = controller(root, summary, quiet);
+  await sourceIntegrity(root, summary.baselineSha);
+  await assertWorktreeOwner(root, workspace, summary.baselineSha);
   await workspaceIntegrity(workspace, summary.headSha);
   if (await workspaceFingerprint(workspace) !== summary.workspaceDigest) throw new Error('workspace snapshot changed');
   await transition('RISK_ASSESSING', '変更差分とRulesを評価', 'merge');
@@ -77,7 +87,7 @@ async function assessMerge(root, summary, inputs, quiet) {
   const records = await authenticatedRecords(root, summary.id);
   const gateApproved = await resolveGate(root, summary);
   summary.merge = mergeDecision({ risk: summary.risk, checks, approvals: records, headSha: summary.headSha, contextDigest,
-    humanGate: summary.gate.required, gateApproved, securityVerification, semanticEnabled: inputs.config.semanticReview.enabled });
+    humanGate: summary.gate.required, gateApproved, securityVerification, semanticEnabled: inputs.config.semanticReview.enabled, lane:summary.lane });
   await json(join(directory, 'approvals.json'), { headSha: summary.headSha, approvals: records, source: 'authenticated local ledger; this file is not an authority' });
   await json(join(directory, 'merge-decision.json'), { ...summary.merge, checks });
   summary.reason = summary.merge.reasons.join(', ');
@@ -89,11 +99,13 @@ async function executeLoop({ root, summary, inputs, quiet, agent = runAgent, rev
   const { directory, workspace } = runPaths(root, summary.id);
   const { transition, escalate } = controller(root, summary, quiet);
   if (!await resolveGate(root, summary)) {
-    summary.reason = summary.gate.reason;
+    summary.reason = summary.gate.reason || 'Human Gate: Design Approval for prototype promotion';
+    await json(join(directory, 'design-approval.json'), summary.designApproval);
     await json(join(directory, 'human-gate.json'), summary.gate);
     await transition(summary.gate.state, summary.reason, 'implementation-gate');
     return summary;
   }
+  await json(join(directory, 'design-approval.json'), summary.designApproval);
   await json(join(directory, 'human-gate.json'), summary.gate);
   let feedback = null;
   for (let iteration = 1; iteration <= config.maxIterations; iteration++) {
@@ -149,10 +161,18 @@ async function executeLoop({ root, summary, inputs, quiet, agent = runAgent, rev
       result.headSha = summary.headSha;
       result.agent = { status: 'PASS', files: response.files.map(f => f.path) };
       await transition('VERIFYING', `iteration ${iteration}`);
-      result.verification = redact(await verify({ root, workspace, config, sbi }));
       const files = await changedFiles(workspace,summary.baselineSha,summary.headSha);
+      const actualLane = classifyLane(files,sbi,inputs.lanePolicy);
+      if (summary.lane.name === 'prototype' && actualLane.name !== 'prototype') throw new Error('Prototype scope escalated; declare production/security scope in a new SBI');
+      const generalIds = new Set(config.verifiers.map(v=>v.id));
+      const securityIds = new Set([...securityPolicy.verifiers,...config.securityVerifiers].map(v=>v.id));
+      result.verification = redact(await verify({ root, workspace, config,
+        sbi:{...sbi,requiredVerifiers:sbi.requiredVerifiers.filter(id=>!securityIds.has(id) || generalIds.has(id))}, files,
+        lane:summary.lane, full:summary.fullVerification,
+        requiredVerifiers:summary.securityAssessment.requiredVerifiers.filter(id=>generalIds.has(id)) }));
+      await json(join(iterDir,'verifier-selection.json'),result.verification.checks.map(({id,selectionReasons,required,status})=>({id,selectionReasons,required,status})));
       summary.securityAssessment = combineSecurity(summary.securityAssessment, classifySecurity({files,sbi},securityPolicy));
-      result.securityVerification = redact(await verifySecurity({ workspace, sbi, assessment: summary.securityAssessment, policy: securityPolicy, config, headSha:summary.headSha }));
+      result.securityVerification = redact(await verifySecurity({ workspace, sbi, assessment: summary.securityAssessment, policy: securityPolicy, config, headSha:summary.headSha, verification:result.verification }));
       result.security = { id:'security',required:true,status:securityPassed(result.securityVerification)?'PASS':'FAIL' };
       result.gateApproved = await resolveGate(root,summary);
       await json(join(directory,'security-assessment.json'),{...summary.securityAssessment,headSha:summary.headSha});
@@ -198,19 +218,19 @@ async function executeLoop({ root, summary, inputs, quiet, agent = runAgent, rev
   }
   return escalate(`iteration limit (${config.maxIterations}) reached`);
 }
-async function runProtected({ root, provider, sbiPath, quiet = false, agent = runAgent, reviewer = review, semanticReviewer }) {
+async function runProtected({ root, provider, sbiPath, quiet = false, agent = runAgent, reviewer = review, semanticReviewer, full = false }) {
   root = await realpath(root);
-  const { config, rules, sbi, riskPolicy, securityPolicy, humanGates, securityDocuments } = await check(root, sbiPath);
-  assertSafeInput({config,rules,sbi,riskPolicy,securityPolicy,humanGates,securityDocuments});
+  const { config, rules, sbi, riskPolicy, securityPolicy, humanGates, securityDocuments, lanePolicy } = await check(root, sbiPath);
+  assertSafeInput({config,rules,sbi,riskPolicy,securityPolicy,humanGates,securityDocuments,lanePolicy});
   provider ??= config.provider;
   if (!['fake', 'codex', 'claude'].includes(provider)) throw new Error(`Unknown provider: ${provider}`);
   const id = `${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`;
   const { directory, workspace } = runPaths(root, id);
   await mkdir(directory, { recursive: true });
   const baselineSha = await prepareWorkspace(root, workspace, sbi);
-  const inputs = { config, rules, sbi, riskPolicy, securityPolicy, humanGates, securityDocuments, toolFingerprint: await toolFingerprint(root), skill: await readFile(join(root, '.harness/skills/implement.md'), 'utf8') };
+  const inputs = { config, rules, sbi, riskPolicy, securityPolicy, humanGates, securityDocuments, lanePolicy, toolFingerprint: await toolFingerprint(root), skill: await readFile(join(root, '.harness/skills/implement.md'), 'utf8') };
   const summary = { id, runDir: `.harness/runs/${id}`, sbi: sbi.id, sbiPath: sbiPath || config.sbi, provider,
-    status: 'PENDING', executionStatus: 'PENDING', reason: null, consecutiveFailures: 0, iterations: [], events: [],
+    fullVerification:full, status: 'PENDING', executionStatus: 'PENDING', reason: null, consecutiveFailures: 0, iterations: [], events: [],
     baselineSha, headSha: baselineSha, workspaceDigest: await workspaceFingerprint(workspace), inputsDigest: digest(inputs), gate: { required: false, state: 'NOT_REQUIRED' },
     merge: { state: 'NOT_ASSESSED', autoMergeEligible: false }, startedAt: new Date().toISOString() };
   await json(join(directory, 'inputs.json'), inputs);
@@ -222,17 +242,22 @@ async function runProtected({ root, provider, sbiPath, quiet = false, agent = ru
     let added = ''; try { added = await readFile(join(workspace,path),'utf8'); } catch(e) { if(e.code!=='ENOENT') throw e; }
     return {path,status:'M',binary:false,added,excludedSecret:excludedSources.some(f=>f.path===path)};
   }));
+  summary.lane = classifyLane(preflightFiles,sbi,lanePolicy);
+  summary.designApproval = {required:summary.lane.requiresDesignApproval,state:summary.lane.requiresDesignApproval?'WAITING_FOR_HUMAN_GATE':'NOT_REQUIRED',contextDigest:digest({inputsDigest:summary.inputsDigest,baselineSha,promotion:sbi.promotion || null})};
+  await json(join(directory,'lane-assessment.json'),summary.lane);
   summary.securityAssessment = classifySecurity({files:preflightFiles,sbi},securityPolicy);
   await json(join(directory,'security-assessment.json'),{...summary.securityAssessment,phase:'preflight',headSha:baselineSha});
   await json(join(directory,'security-verification.json'),{status:'NOT_RUN',requiredVerifiers:summary.securityAssessment.requiredVerifiers,checks:[],violations:[]});
   const gateReason = humanGate(sbi, rules) || (summary.securityAssessment.requiresPreImplementationGate ? 'Human Gate: Security rule requires approval before implementation' : null);
   const preflight = assessRisk({ files: preflightFiles, metadata: metadata(sbi), humanGate: Boolean(gateReason), securityAssessment:summary.securityAssessment }, riskPolicy);
   if (gateReason || preflight.level === 3) {
-    summary.gate = { required: true, state: 'WAITING_FOR_HUMAN_GATE', approvalState:'WAITING_FOR_HUMAN_APPROVAL', reason: gateReason || `Human Gate: ${preflight.reasons.join(', ')}`,
+    summary.gate = { required: true, state: 'WAITING_FOR_HUMAN_GATE', approvalState:'WAITING_FOR_HUMAN_APPROVAL', reason: gateReason || (summary.designApproval.required ? 'Human Gate: Design Approval for prototype promotion' : null) || `Human Gate: ${preflight.reasons.join(', ')}`,
       headSha: baselineSha, contextDigest: digest({ inputsDigest: summary.inputsDigest, baselineSha, allowedFiles: sbi.allowedFiles, reasons: preflight.reasons, securityAssessment:summary.securityAssessment }) };
-    summary.reason = summary.gate.reason;
+    summary.reason = summary.gate.reason || 'Human Gate: Design Approval for prototype promotion';
     await json(join(directory, 'risk-preflight.json'), preflight);
   }
+  if (summary.designApproval.required && !summary.gate.required) summary.gate.state = 'WAITING_FOR_HUMAN_GATE';
+  await json(join(directory, 'design-approval.json'), summary.designApproval);
   await json(join(directory, 'risk-assessment.json'), { ...preflight, phase: 'preflight', headSha: baselineSha });
   await json(join(directory, 'approvals.json'), { headSha: baselineSha, approvals: [], source: 'authenticated local ledger' });
   await json(join(directory, 'merge-decision.json'), summary.merge);
@@ -262,4 +287,25 @@ export async function runHarness(options) {
 export async function resumeRun(options) {
   const root = await realpath(options.root);
   return withEvidenceProtection(root, () => resumeProtected({...options,root}), { extensions: options.redactionExtensions || [] });
+}
+
+// Explicit cleanup keeps evidence and the reachable run ref. Dirty worktrees are never forced away.
+export async function cleanupRun({root,runId}) {
+  root = await realpath(root);
+  return withRunLock(root,runId,async()=>{
+    const paths = runPaths(root,runId);
+    const summary = await readJson(paths.summary);
+    if (summary.id !== runId || summary.cleanedAt) throw new Error('Invalid or already cleaned run');
+    await assertWorktreeOwner(root,paths.workspace,summary.baselineSha);
+    await workspaceIntegrity(paths.workspace,summary.headSha);
+    if (await workspaceFingerprint(paths.workspace) !== summary.workspaceDigest) throw new Error('workspace snapshot changed');
+    const ref = (await git(root,['rev-parse',`refs/harness/runs/${runId}`],true)).stdout.trim();
+    if (ref && ref !== summary.headSha) throw new Error('run ref changed');
+    await git(root,['update-ref',`refs/harness/runs/${runId}`,summary.headSha]);
+    await git(root,['worktree','remove',paths.workspace]);
+    summary.cleanedAt=new Date().toISOString();
+    summary.merge={...summary.merge,state:'BLOCKED',decision:'BLOCKED',autoMergeEligible:false,reasons:['workspace_cleaned']};
+    await saveRun(root,summary);
+    return summary;
+  });
 }

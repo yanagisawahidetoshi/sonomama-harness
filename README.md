@@ -47,7 +47,7 @@ SBI → 意図的な誤実装 → Verifier FAIL
 | .harness/skills/implement.md | agentへの実装手順 |
 | .harness/state/runs/ | run別の状態保存 |
 | .harness/state/human/ | 信頼する人間用CLIの承認台帳と署名鍵。Git管理対象外 |
-| .harness/runs/ | 実行証跡と独立したGit workspace |
+| .harness/runs/ | 実行証跡と元リポジトリを共有するGit worktree |
 | tools/harness/ | 実行ループ・分類・承認・マージ可否の判定 |
 | docs/ | アーキテクチャ、SBI、ADR、workflow |
 
@@ -56,27 +56,32 @@ SBI → 意図的な誤実装 → Verifier FAIL
 
 ## 同じworkspaceを実装・検証・レビューする
 
-各runにapps / packages / docsとrootのpackage設定をコピーし、ローカルGitを初期化する。
-元フォルダへ書き戻さず、baseline SHAと各iterationのHEAD SHAを保存する。
+cleanな元リポジトリのHEADから、各runにdetached Git worktreeを作成する。
+元フォルダは変更せず、baseline SHAは元のHEADそのもの、各iterationのHEADはその子孫になる。
+.npmrc / .ruby-version / .tool-versions / tsconfig等も、Git管理された設定をそのまま引き継ぐ。
+開始前に未commit・未追跡の入力変更があれば停止する。設定とSBIも先にcommitする。
 Agentの変更、Verifierのcwd、Policy Review、Security Check、差分取得は同じworkspaceを使う。
 信頼するテストと検証スクリプトはagentの書き込み領域の外で管理する。
 
 agentは許可されたファイルのJSONを返し、Harnessが検査して適用する。
-`.git`、`.harness`、`tools`、`sources`、テスト、AGENTS.mdは書き込み不可。
+`.git`、`.harness`、`tools`、`sources`、`.github`、`.githooks`、AGENTS.mdは書き込み不可。
+apps / packages / prototypesのApplication TestはSBI.allowedFilesに明記すればTDDで変更できる。
 CLIが直接ファイルを変更した場合も停止する。差分をローカルcommitしてから検証する。
 
 承認・resume時はHEAD、未commit変更、Gitで無視されたファイルを含むsource fingerprint、
 入力設定、SBI、rules、スキル、信頼するHarnessコードの一致を確認する。
 いずれか変われば以前の検証・承認を使わずESCALATED。新しいrunで再検証・再承認する。
-node_modulesはコピー・fingerprintの対象外。アプリを接続する際は同じworkspaceに必要な実行環境を準備する。
+node_modulesはworktreeへ持ち込まず、fingerprintの対象外。アプリを接続する際は同じworkspaceに必要な実行環境を準備する。
 検証コマンドによるsource変更も拒否する。生成物の扱いはアプリ接続時に明示的に整備する。
 
 ## Verifier Registry
 
 組み込みsample-bddとharness.jsonのverifiersをIDで登録する。
 SBIの各ACは登録済みverifierとacceptanceIdsに対応させる。未知のIDはcheckで拒否する。
-コマンド型verifierは全コマンドがexit 0のときだけ、そのadapterに登録したACを合格とする。
-各コマンドで信頼するassertionを実行すること。単なるechoやagentの自己申告は検証にしない。
+Application Test用コマンドは全てexit 0でPASSとなるが、ACの合格証拠には使わない。
+ACは組み込みsample-bddまたは`trust: "acceptance"`と`trustedScript`で登録した
+`.harness/verification/*.mjs`の独立したassertionで検証する。スクリプトは第1引数のworktreeを検証し、
+成功時に`{"acceptance":["AC-ID"]}`をJSON出力する。Agentが変更できるテストへの委譲や自己申告は不可。
 
 | adapter | 未生成判定marker | 接続予定 |
 | --- | --- | --- |
@@ -161,9 +166,12 @@ docs/securityとdocs/adrはdocs-onlyのLOW候補より保護ルールを優先�
 ## Secret保護とレビューZIP
 
 .env / .env.* / pem / key / p12 / pfx / credentials* / secrets* / .upload-access-keyは
-workspaceコピーとレビューexportから除外し、Gitにも含めない。
+Git管理しない。未追跡・ignoredの秘密ファイルはworktreeに現れず、レビューexportからも除外する。
 仕様で必要なdocs/security/secrets.mdだけは文書として残し、内容は検査する。
-別名のソース内に既知の秘密値やcredentialパターンを検知した場合もコピーしない。
+trackedファイルに秘密パスやcredentialを検知した場合は、worktree作成前に停止する。
+保護されたHarnessテストに含まれる検出用文字列は一般ソースの代入検出と分け、実際のトークン形式と鍵を検査する。
+共有Git object DBの過去履歴を秘密情報の隔離境界にはできないため、秘密をcommitした履歴の除去は人間が別途行う。
+Agentは読取専用／ツール無効のproviderからJSONだけを返す。これは信頼したローカルOSでの実行であり、敵対プロセスのOS隔離ではない。
 
 agentが秘密値を提案した場合は、workspaceへの適用・Git commitより前に停止する。
 prompt・JSON・ログ・例外出力にredactionを適用し、外部CLIの生レスポンスはrun外の一時領域で受けて削除する。
@@ -269,7 +277,7 @@ LEVEL 3を複数人で承認する本運用には、認証済みの別人を返�
   human-gate.json
   security-assessment.json      # impacts / rule IDs / Gate / 最低Risk / 必須検証
   security-verification.json    # 必須Security checksのPASS/FAIL/SKIP/NOT_CONFIGURED
-  workspace-exclusions.json     # コピー除外のパスと理由。秘密値は保存しない
+  workspace-exclusions.json     # 互換用の空配列。trackedの秘密はcheckout前に停止
   risk-preflight.json           # ゲート対象時
   risk-assessment.json          # preflightかpost-executionかを明記
   changes.json                  # baseline → HEADの差分情報（実装後）
@@ -313,3 +321,74 @@ CLIの仕様は[Codex公式資料](https://developers.openai.com/codex/cli/refer
 実CLIのユーザー設定・hooksは各CLIに従う。信頼するローカルコードとCLIを動かす基盤であり、
 敵対的コードを完全隔離する実行基盤ではない。
 PBI→SBI Plannerは今回追加しない。まず実装・検証・承認判定を成立させる。
+
+
+## 変更範囲によるVerifier選択
+
+`.harness/config/harness.json`の`appliesTo`は正規表現の配列。実際のbaseline→HEAD差分から選ぶ。
+`lanes`でprototype / productionを指定できる。未指定のappliesToは全変更に適用する。
+AC指定、SBI.requiredVerifiers、Security RuleのrequiredVerifiers、allowMissing:falseはパス・lane条件より優先する。
+必須IDが未登録・未設定ならFAIL / NOT_CONFIGURED。必要なアプリが未生成でも必須検証はSKIPしない。
+変更に無関係な任意チェックだけSKIPできる。各iterationのverifier-selection.jsonに選択理由を記録する。
+Security Ruleから一般VerifierのIDを要求する場合も同じworktree上で実行し、その実測結果をSecurity証跡に反映する。
+
+`pnpm harness:demo --full` / `pnpm harness:run --full`はlane内の全アプリVerifierを選択する。
+このモードでも未生成の任意placeholderはSKIPできる。AC・Security必須チェックは引き続き省略不可。
+CIはこのfullモードを使う。アプリ実装・依存環境ができたらcommandsを接続する。
+
+## Prototype Lane / Production Lane
+
+| 場所 | 責務・ゲート |
+| --- | --- |
+| prototypes/web | React画面試作。ダミーデータで軽量検証 |
+| prototypes/mobile | React Native / Expo画面試作。ダミーデータで軽量検証 |
+| apps/api・mobile・admin | Production。本番のAC、Application Test、Security検証 |
+| packages/**（packages/ui含む） | Production共有資産。試作laneへの降格不可 |
+
+機械設定は`.harness/config/lanes.json`。人物のroleではなく変更パスで決める。
+混在・未知のパスはProduction。apps/**とpackages/**は設定でprototypeへ降格できない。
+試作専用コンポーネントはprototypes配下に置く。Rails / Expo / React本体は今回も未生成。
+
+通常の試作はtypecheck・lint・format:check・build・secret-scanが必須。
+prototypeのpackage.jsonにはこの4スクリプトを用意する。mobileのbuildはExpo exportに接続する。
+統合テスト・E2E・Maestro・VRT・本番向けSecurityコマンドは通常は必須にしない。
+ただしACの独立検証と軽量の禁止パターン検査は行う。普通の試作はRiskの既定LEVEL 2を保ちつつ、
+Production相当のmerge人間承認を要求しない。MERGE_ALLOWEDでもautoMergeEligibleはfalseで、merge実行はしない。
+
+認証・権限・PII・Secret/Credential・本番データ/API・Cognito User Pool・機密設定への影響は
+試作でもProduction/Securityへ昇格し、実装前Human Gate・LEVEL 3・必須Security検証を強制する。
+SBI.securityImpactで宣言し、既知の接続先はsecurityPatternsにも追加する。静的検出だけで全ての業務影響は推定できない。
+packagesへの変更を含むSBIも常にProduction。本番共有packageの検証を試作profileで省略できない。
+
+試作を本番へ移す場合は、新しいProduction SBIに`promotion: {"source":"prototypes/web"}`を設定する。
+Design Approval待ちで実装を止め、`pnpm harness:approve --run RUN_ID --phase design`で人間が承認してからresumeする。
+Design Approvalは`design-approval`という独立した署名済みstate。SBIやSHAを変えたら取り直す。
+その後apps配下で本番実装→Production検証→実装後のMerge Approval→MERGE_ALLOWED。
+Design Approvalは実装前Human GateやMerge Approvalの代わりにはならない。
+既存の本番SBI全てに試作を強制するものではない。試作の採用時にpromotionを宣言する。
+
+## Git worktreeの保持と片付け
+
+runのHEADを`refs/harness/runs/<run-id>`で保持するので、レビュー・将来のPR Adapterも同じSHAを参照できる。
+元リポジトリのHEADが進んだ場合、dirty workspace、検証ソースの変更、入力の変更があれば承認を再利用しない。
+証跡・承認台帳・秘密値・node_modulesはiteration commitに含めない。
+
+```sh
+pnpm harness:cleanup --run RUN_ID
+```
+
+cleanで所有関係を確認できたworktreeだけを削除する。証跡・run参照は保持し、cleanup後は再開・merge可否の再利用を止める。
+変更のあるworktreeを強制削除しない。履歴の自動削除・GC・mergeは行わない。
+現在はsource全体の変更検出を厳格に行う。アプリ接続時はbuild/exportの生成物をsource外に出すなど、
+検証中にsourceが変わらない実行方法を整える。node_modulesの依存内容はfingerprint対象外なので、lockfile固定で準備する。
+
+## pre-push / CI
+
+Nodeは`.node-version`、pnpmはpackage.jsonのpackageManagerに固定。`pnpm install --frozen-lockfile`後のprepareで
+version管理された`.githooks/pre-push`を設定する。必要なら`pnpm hooks:install`で再設定できる。
+push前にharness:check→harness:testを実行し、失敗するとpushを止める。
+
+GitHub ActionsはPRとmainへのpushでfrozen install→harness:check→harness:test→harness:demo --fullを実行する。
+いずれかの失敗でworkflowも失敗する。Actionsはcommit SHA固定、読取専用権限、checkout認証情報を保存しない。
+ローカルhookは回避可能なので、チーム運用ではRuleset / branch protectionで成功チェックを必須にする。
+これは次の設定段階。hook・CI・Harnessのどれにもmerge機能はない。

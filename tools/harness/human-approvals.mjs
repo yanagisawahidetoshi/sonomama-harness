@@ -38,18 +38,20 @@ export async function authenticatedRecords(root, runId) {
 // CLI deliberately offers no --reviewer option; two aliases of one OS account count as one.
 export async function recordDecision({ root, runId, purpose, decision = 'APPROVE', identityProvider = localHumanIdentity }) {
   return withRunLock(root, runId, async () => {
-    if (!['implementation-gate', 'merge'].includes(purpose) || !['APPROVE', 'REVOKE', 'REQUEST_CHANGES'].includes(decision)) throw new Error('Invalid approval purpose/decision');
+    if (!['implementation-gate', 'design-approval', 'merge'].includes(purpose) || !['APPROVE', 'REVOKE', 'REQUEST_CHANGES'].includes(decision)) throw new Error('Invalid approval purpose/decision');
     const { summary } = await loadRun(root, runId);
     if (purpose === 'merge' && summary.executionStatus !== 'DONE') throw new Error('Execution/gate must complete before merge approval');
     if (purpose === 'implementation-gate' && (!summary.gate.required || (summary.executionStatus !== 'PENDING' && decision !== 'REVOKE'))) throw new Error('Implementation gate cannot be granted after execution');
+    if (purpose === 'design-approval' && (!summary.designApproval?.required || (summary.executionStatus !== 'PENDING' && decision !== 'REVOKE'))) throw new Error('Design Approval must precede production implementation');
     const identity = await identityProvider();
     if (identity?.kind !== 'human' || !identity.id || !identity.source) throw new Error('Authenticated human identity required');
     const key = await signingKey(root, true);
     const records = await authenticatedRecords(root, runId);
     const gate = purpose === 'implementation-gate';
+    const design = purpose === 'design-approval';
     const body = { id: randomUUID(), runId, purpose, reviewer: identity.id, kind: 'human', identitySource: identity.source,
-      decision, approvedAt: new Date().toISOString(), commitSha: gate ? summary.gate.headSha : summary.headSha,
-      contextDigest: gate ? summary.gate.contextDigest : summary.merge.contextDigest };
+      decision, approvedAt: new Date().toISOString(), commitSha: design ? summary.baselineSha : gate ? summary.gate.headSha : summary.headSha,
+      contextDigest: design ? summary.designApproval.contextDigest : gate ? summary.gate.contextDigest : summary.merge.contextDigest };
     const record = approvalRecordSchema.parse({ ...body, signature: sign(key, body) });
     records.push(record);
     const envelope = { records, signature: sign(key, records) };

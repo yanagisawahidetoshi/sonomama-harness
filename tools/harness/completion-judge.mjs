@@ -9,5 +9,5 @@ export function judge(result, sbi) {
     && checksPassed(verification.checks)
     && sbi.acceptanceCriteria.length > 0
     && sbi.acceptanceCriteria.every(a => verification.acceptance?.includes(a.id)
-      && verification.checks.some(c => c.id === a.verifier && c.status === 'PASS')));
+      && verification.checks.some(c => c.id === a.verifier && c.status === 'PASS' && c.trust === 'acceptance')));
 }

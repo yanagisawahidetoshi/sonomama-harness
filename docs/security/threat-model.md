@@ -16,3 +16,5 @@
 
 いずれも事前Human Gateと最低LEVEL 3。
 汎用パターン検査だけでは業務上の安全性を証明しない。必要な個別テストをRegistryへ登録する。
+
+SEC-DESTRUCTIVE-001は本番データ、本番API、Cognito User Poolへの接続も対象とする。試作でもSBI.securityImpactにProductionData / ProductionAPI / CognitoUserPoolを宣言し、Human Gateとdata-lifecycle-testを必要とする。本番環境の接続先に応じてlane securityPatternsも拡張する。

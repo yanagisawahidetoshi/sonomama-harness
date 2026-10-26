@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "prototypePaths": [
+    "^prototypes/(web|mobile)/"
+  ],
+  "productionPaths": [
+    "^apps/",
+    "^packages/"
+  ],
+  "securityPatterns": [
+    "\\b(authn|authz|authentication|authorization|pii|secret|credential)s?\\b",
+    "production[ _-]?(data|api)|cognito[ _-]*user[ _-]*pool|本番(データ|API)|個人情報",
+    "security[ _-]*(sensitive[ _-]*)?(config|rule)|sensitive[ _-]*config"
+  ],
+  "prototypeGates": [
+    "typecheck",
+    "lint",
+    "format",
+    "build",
+    "secret-scan"
+  ],
+  "productionGates": [
+    "application-tests",
+    "trusted-acceptance",
+    "security",
+    "policy-review"
+  ]
+}

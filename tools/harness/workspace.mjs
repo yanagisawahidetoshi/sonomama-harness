@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, lstat, copyFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, lstat, realpath } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { isSecretPath, hasSecret } from './evidence-protection.mjs';
@@ -10,45 +10,50 @@ export async function git(workspace, args, optional = false) {
   if (!result.ok && !optional) throw new Error(`git ${args[0]}: ${result.stderr || result.error}`);
   return result;
 }
-async function copyTree(from, to, sourceRoot, exclusions) {
-  const relative = from.slice(sourceRoot.length + 1);
-  if (isSecretPath(relative)) { exclusions.push({ path: relative, reason: 'prohibited secret path' }); return; }
-  const info = await lstat(from);
-  if (info.isSymbolicLink()) throw new Error(`workspace source symlink is not permitted: ${from}`);
-  if (info.isDirectory()) {
-    await mkdir(to, { recursive: true });
-    for (const name of await readdir(from)) {
-      if (['node_modules', '.git', '.harness', 'sources'].includes(name)) continue;
-      await copyTree(join(from, name), join(to, name), sourceRoot, exclusions);
-    }
-  } else if (info.isFile()) {
-    if (info.size > 10 * 1024 * 1024) throw new Error(`workspace source exceeds 10 MiB: ${from}`);
-    const bytes = await readFile(from);
-    if (hasSecret(bytes.toString('utf8'))) { exclusions.push({ path: relative, reason: 'credential content detected' }); return; }
-    await mkdir(dirname(to), { recursive: true }); await copyFile(from, to);
-  } else throw new Error(`unsupported workspace source: ${from}`);
-}
 export function assertWritablePath(path, { allowSensitiveDeclaration = false } = {}) {
   if (!allowSensitiveDeclaration && isSecretPath(path)) throw new Error('scope/path is a prohibited secret file');
-  if (/(^|\/)(\.git|\.harness|node_modules|sources|tools)(\/|$)|(^|\/)AGENTS\.md$|\.(test|spec)\.[^/]+$/.test(path)) throw new Error(`scope/path is reserved: ${path}`);
+  if (/(^|\/)(\.git|\.harness|\.github|\.githooks|node_modules|sources|tools)(\/|$)|(^|\/)AGENTS\.md$/.test(path)) throw new Error(`scope/path is reserved: ${path}`);
+  if (/\.(test|spec)\.[^/]+$/.test(path) && !/^(apps|packages|prototypes)\//.test(path)) throw new Error(`trusted test path is reserved: ${path}`);
 }
-export async function prepareWorkspace(root, workspace, sbi) {
-  await mkdir(workspace, { recursive: true });
-  const exclusions = [];
-  for (const path of ['apps', 'packages', 'docs', 'package.json', 'pnpm-workspace.yaml', 'pnpm-lock.yaml', ...sbi.allowedFiles]) {
-    if (await exists(join(root, path))) await copyTree(join(root, path), join(workspace, path), root, exclusions);
+export async function sourceIntegrity(root, baselineSha) {
+  const head = (await git(root, ['rev-parse', 'HEAD'])).stdout.trim();
+  const dirty = (await git(root, ['status', '--porcelain', '--untracked-files=all'])).stdout;
+  if (dirty || (baselineSha && head !== baselineSha)) throw new Error('Source must be clean; uncommitted inputs or source HEAD changed');
+  return head;
+}
+export async function prepareWorkspace(root, workspace) {
+  const baseline = await sourceIntegrity(root);
+  // Never materialize committed credentials/operational data in an agent worktree.
+  const names = (await git(root, ['ls-tree', '-r', '--name-only', '-z', baseline])).stdout.split('\0').filter(Boolean);
+  for (const path of names) {
+    if (/^\.harness\/(state\/human|state\/runs|runs|exports)\//.test(path) && !path.endsWith('/.gitkeep')) throw new Error('tracked operational evidence is prohibited');
+    const info = await lstat(join(root, path));
+    if (info.isSymbolicLink()) throw new Error('tracked symlink is not permitted in a worktree');
+    const content = (await readFile(join(root, path))).toString('utf8');
+    const trustedSource = /^tools\/harness\/.*\.test\.mjs$/.test(path);
+    const credentialFound = trustedSource ? /gh[pousr]_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----\r?\n/.test(content) : hasSecret(content);
+    if (isSecretPath(path) || credentialFound) throw new Error('tracked credential detected; remove sensitive material before creating a worktree');
   }
+  await mkdir(dirname(workspace), { recursive: true });
+  await git(root, ['worktree', 'add', '--detach', workspace, baseline]);
   const { json } = await import('./io.mjs');
-  await json(join(workspace, '..', 'workspace-exclusions.json'), exclusions);
-  await git(workspace, ['init', '--template=', '--initial-branch=harness']);
-  await commitWorkspace(workspace, 'Harness baseline');
-  return (await git(workspace, ['rev-parse', 'HEAD'])).stdout.trim();
+  await json(join(workspace, '..', 'workspace-exclusions.json'), []);
+  return baseline;
+}
+export async function assertWorktreeOwner(root, workspace, baselineSha) {
+  const source = (await git(root, ['rev-parse', '--path-format=absolute', '--git-common-dir'])).stdout.trim();
+  const target = (await git(workspace, ['rev-parse', '--path-format=absolute', '--git-common-dir'])).stdout.trim();
+  if (source !== target || await realpath(root) === await realpath(workspace)) throw new Error('workspace is not an owned Git worktree');
+  await git(workspace, ['merge-base', '--is-ancestor', baselineSha, 'HEAD']);
 }
 export async function commitWorkspace(workspace, message, allowedFiles = []) {
   await git(workspace, ['add', '--all']);
   for (const path of allowedFiles) if (await exists(join(workspace, path))) await git(workspace, ['add', '--force', '--', path]);
   await git(workspace, ['commit', '--allow-empty', '-m', message]);
-  return (await git(workspace, ['rev-parse', 'HEAD'])).stdout.trim();
+  const head = (await git(workspace, ['rev-parse', 'HEAD'])).stdout.trim();
+  const runId = dirname(workspace).split('/').at(-1);
+  await git(workspace, ['update-ref', `refs/harness/runs/${runId}`, head]);
+  return head;
 }
 export async function workspaceIntegrity(workspace, headSha) {
   const current = (await git(workspace, ['rev-parse', 'HEAD'])).stdout.trim();
@@ -79,6 +84,7 @@ export async function toolFingerprint(root) {
     }
   }
   await collect(join(root, 'tools/harness'));
+  if (await exists(join(root, '.harness/verification'))) await collect(join(root, '.harness/verification'));
   for (const name of ['package.json', 'pnpm-lock.yaml']) {
     if (await exists(join(root, name))) content.push([name, await readFile(join(root, name), 'utf8')]);
   }

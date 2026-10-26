@@ -43,6 +43,17 @@
 - Security-sensitiveは事前Gate、最低LEVEL 3、必須Verifierを強制する。
 - required Security VerifierのFAIL/SKIP/NOT_CONFIGURED、rule violation、未承認GateではDONEもMERGE_ALLOWEDも禁止。
 - 新しいSecurity影響と秘密値の提案は、workspaceへ適用する前に止める。
-- 秘密ファイルはコピー・export・Gitから除外する。実値をログや会話へ出さない。
+- 秘密ファイルはworktree・export・Gitから除外する。trackedで検出した場合はcheckout前に停止する。実値をログや会話へ出さない。
 - ログ・prompt・JSON・例外はredactionを通す。レビューZIPはharness:exportで再検査して生成する。
 - 外部CLIの生レスポンスをrun配下へ直接書かせない。
+
+## Application TestとTrusted Acceptance Test
+
+- SBI.allowedFilesに明記したapps/**、packages/**、prototypes/**のApplication Testは実装と一緒に変更できる。TDDを守る。
+- .harness/verification/**、tools/harness/**、AGENTS.md、.github/**、.githooks/**はAgentの書込禁止。
+- Application TestのPASSだけではACやDONEを満たさない。ACは独立したTrusted Acceptanceのassertionで検証する。
+- VerifierのappliesToとlaneで変更範囲を選ぶ。AC・Security・明示必須指定はlane/pathより優先し、必須検証をSKIPしない。
+- prototypes/web、prototypes/mobileは軽量ゲート。apps/**とpackages/**は常にProduction。認証・PII・本番API等への影響はSecurity Gateへ昇格する。
+- 試作の本番移行は新しいProduction SBIと実装前Design Approvalを必要とし、本番検証を省略しない。
+- runは元のHEADからdetached Git worktreeで実行する。元リポジトリはcleanで開始し、証跡と承認台帳をrunのGit履歴に入れない。
+- cleanupはcleanなworktreeだけを削除し、証跡とrefs/harness/runs/<run-id>を保持する。force/remove/resetは使わない。

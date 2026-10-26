@@ -9,6 +9,7 @@ export const sbiSchema = z.strictObject({
   ambiguous: z.boolean(), requiresDesignDecision: z.boolean(),
   securityImpact: z.array(text).default([]), requiredSecurityRules: z.array(text).default([]),
   requiredVerifiers: z.array(text).default([]), preImplementationGate: z.boolean().default(false),
+  promotion: z.strictObject({ source: relativePath.refine(p => /^prototypes\/(web|mobile)(\/|$)/.test(p)), designApproval: z.null().optional() }).optional(),
   minimumRiskLevel: z.union([z.literal(2), z.literal(3)]).default(2),
 }).refine(s => new Set(s.acceptanceCriteria.map(a => a.id)).size === s.acceptanceCriteria.length, 'duplicate acceptance criteria');
 export const configSchema = z.strictObject({
@@ -17,9 +18,13 @@ export const configSchema = z.strictObject({
   timeoutMs: z.number().int().min(100).max(600000),
   securityVerifiers: z.array(z.strictObject({ id: text, directory: z.union([z.literal('.'), relativePath]), commands: z.array(z.array(text).min(1)) })).default([]),
   semanticReview: z.strictObject({ enabled: z.boolean() }).default({ enabled: false }),
-  verifiers: z.array(z.strictObject({ id: text, directory: relativePath, marker: relativePath.optional(),
+  verifiers: z.array(z.strictObject({ id: text, directory: z.union([z.literal('.'), relativePath]), marker: relativePath.optional(),
     allowMissing: z.boolean().default(true), planned: z.array(text).min(1), commands: z.array(z.array(text).min(1)),
     acceptanceIds: z.array(text).default([]),
+    appliesTo: z.array(text).optional(),
+    lanes: z.array(z.enum(['prototype', 'production'])).default(['prototype', 'production']),
+    trust: z.enum(['application', 'acceptance']).default('application'),
+    trustedScript: relativePath.optional(),
   })).min(1),
 }).refine(c => new Set(c.verifiers.map(v => v.id)).size === c.verifiers.length && !c.verifiers.some(v => v.id === 'sample-bdd'), 'duplicate or reserved verifier');
 export const rulesSchema = z.strictObject({
@@ -50,7 +55,7 @@ export const riskPolicySchema = z.strictObject({
   safeRules: z.array(z.strictObject({ id: text, pattern: text, candidateLevel: z.literal(1), allowedStatuses: z.array(z.enum(['A', 'M'])), maxChangedBytes: z.number().int().positive() })),
 });
 export const approvalRecordSchema = z.strictObject({
-  id: text, runId: text, purpose: z.enum(['implementation-gate', 'merge']),
+  id: text, runId: text, purpose: z.enum(['implementation-gate', 'design-approval', 'merge']),
   reviewer: text, kind: z.literal('human'), identitySource: text,
   decision: z.enum(['APPROVE', 'REQUEST_CHANGES', 'REVOKE']), approvedAt: z.iso.datetime(),
   commitSha: z.string().regex(/^[0-9a-f]{40,64}$/), contextDigest: text, signature: text,
@@ -69,3 +74,10 @@ export const securityPolicySchema = z.strictObject({
   secretPatterns: z.array(text).min(1), forbiddenPatterns: z.array(text), piiLogPatterns: z.array(text),
 }).refine(p => new Set(p.rules.map(r => r.id)).size === p.rules.length && new Set(p.verifiers.map(v => v.id)).size === p.verifiers.length, 'duplicate security rule/verifier');
 export const humanGatesSchema = z.strictObject({ version: z.literal(1), preImplementationRuleIds: z.array(text).min(1) });
+
+export const lanePolicySchema = z.strictObject({
+  version: z.literal(1), prototypePaths: z.array(text).min(1), productionPaths: z.array(text).min(1),
+  securityPatterns: z.array(text).min(1),
+  prototypeGates: z.tuple([z.literal('typecheck'),z.literal('lint'),z.literal('format'),z.literal('build'),z.literal('secret-scan')]),
+  productionGates: z.array(text).min(1),
+});

@@ -16,7 +16,15 @@
         "Brakeman",
         "OpenAPI"
       ],
-      "commands": []
+      "commands": [],
+      "appliesTo": [
+        "^apps/api/",
+        "^packages/",
+        "^(package\\.json|pnpm-lock\\.yaml|pnpm-workspace\\.yaml|\\.npmrc|\\.ruby-version|\\.tool-versions|tsconfig[^/]*)$"
+      ],
+      "lanes": [
+        "production"
+      ]
     },
     {
       "id": "expo",
@@ -29,7 +37,15 @@
         "Storybook",
         "Maestro"
       ],
-      "commands": []
+      "commands": [],
+      "appliesTo": [
+        "^apps/mobile/",
+        "^packages/",
+        "^(package\\.json|pnpm-lock\\.yaml|pnpm-workspace\\.yaml|\\.npmrc|\\.ruby-version|\\.tool-versions|tsconfig[^/]*)$"
+      ],
+      "lanes": [
+        "production"
+      ]
     },
     {
       "id": "admin",
@@ -44,7 +60,97 @@
         "Playwright",
         "VRT"
       ],
-      "commands": []
+      "commands": [],
+      "appliesTo": [
+        "^apps/admin/",
+        "^packages/",
+        "^(package\\.json|pnpm-lock\\.yaml|pnpm-workspace\\.yaml|\\.npmrc|\\.ruby-version|\\.tool-versions|tsconfig[^/]*)$"
+      ],
+      "lanes": [
+        "production"
+      ]
+    },
+    {
+      "id": "prototype-web",
+      "directory": "prototypes/web",
+      "marker": "package.json",
+      "appliesTo": [
+        "^prototypes/web/",
+        "^(package\\.json|pnpm-lock\\.yaml|pnpm-workspace\\.yaml|\\.npmrc|tsconfig[^/]*)$"
+      ],
+      "lanes": [
+        "prototype",
+        "production"
+      ],
+      "planned": [
+        "TypeScript",
+        "ESLint",
+        "Prettier",
+        "build/export"
+      ],
+      "commands": [
+        [
+          "pnpm",
+          "run",
+          "typecheck"
+        ],
+        [
+          "pnpm",
+          "run",
+          "lint"
+        ],
+        [
+          "pnpm",
+          "run",
+          "format:check"
+        ],
+        [
+          "pnpm",
+          "run",
+          "build"
+        ]
+      ]
+    },
+    {
+      "id": "prototype-mobile",
+      "directory": "prototypes/mobile",
+      "marker": "package.json",
+      "appliesTo": [
+        "^prototypes/mobile/",
+        "^(package\\.json|pnpm-lock\\.yaml|pnpm-workspace\\.yaml|\\.npmrc|tsconfig[^/]*)$"
+      ],
+      "lanes": [
+        "prototype",
+        "production"
+      ],
+      "planned": [
+        "TypeScript",
+        "ESLint",
+        "Prettier",
+        "build/export"
+      ],
+      "commands": [
+        [
+          "pnpm",
+          "run",
+          "typecheck"
+        ],
+        [
+          "pnpm",
+          "run",
+          "lint"
+        ],
+        [
+          "pnpm",
+          "run",
+          "format:check"
+        ],
+        [
+          "pnpm",
+          "run",
+          "build"
+        ]
+      ]
     }
   ],
   "semanticReview": {

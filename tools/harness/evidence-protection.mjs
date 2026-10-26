@@ -8,7 +8,7 @@ const defaults = [
   /gh[pousr]_[A-Za-z0-9]{30,}/g, /AKIA[0-9A-Z]{16}/g,
   /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g,
 ];
-const assignment = /((?:["']?)(?:password|passwd|api[_-]?key|access[_-]?key|upload[_-]?token|token|secret|credential|authorization)(?:["']?)\s*[:=]\s*)(?:["']?)([^\s"',;\}\]]+)/gi;
+const assignment = /(?<![A-Za-z0-9_])((?:["']?)(?:password|passwd|api[_-]?key|access[_-]?key|upload[_-]?token|token|secret|credential|authorization)(?:["']?)\s*(?::|=(?!=))\s*)(?:["']?)([^\s"',;\}\]]+)/gi;
 export function isSecretPath(path) {
   const normalized = path.replaceAll('\\', '/');
   // Required policy document is prose, not a credential store. Its content is still inspected.

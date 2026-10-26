@@ -265,14 +265,18 @@
       "description": "DestructiveOperationへの影響を検知し着手承認・必須検証・HIGHを強制する",
       "categories": [
         "DestructiveOperation",
-        "ProductionData"
+        "ProductionData",
+        "ProductionAPI",
+        "CognitoUserPool"
       ],
       "pathPatterns": [],
       "contentPatterns": [
-        "\\b(delete_all|destroy_all|TRUNCATE)\\b|DROP\\s+TABLE"
+        "\\b(delete_all|destroy_all|TRUNCATE)\\b|DROP\\s+TABLE",
+        "production[ _-]?(data|api)|cognito[ _-]*user[ _-]*pool|本番(データ|API)"
       ],
       "metadataPatterns": [
-        "destructive.operation|production.data|破壊的操作|本番データ"
+        "destructive.operation|production.data|破壊的操作|本番データ",
+        "production[ _-]?(data|api)|cognito[ _-]*user[ _-]*pool|本番API"
       ],
       "preImplementationGate": true,
       "minimumRiskLevel": 3,
