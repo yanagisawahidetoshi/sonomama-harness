@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { execute } from './io.mjs';
 import { hasSecret, isSecretPath } from './evidence-protection.mjs';
+import { classifyLane } from './lanes.mjs';
 import { securityPolicySchema } from './schemas.mjs';
 const normalize = text => text.replace(/[^a-z0-9]/gi, '').toLowerCase();
 export function classifySecurity({ files = [], sbi = {} }, rawPolicy) {
@@ -31,6 +32,10 @@ export function classifySecurity({ files = [], sbi = {} }, rawPolicy) {
       reasons.push({ ruleId: rule.id, policyDocument: rule.policyDocument, matches });
     }
   }
+  if (classifyLane(files,sbi).requiresSecurityGate) {
+    gate=true; minimum=3; approvals=Math.max(approvals,2);
+    if (!matchedRules.length) { matchedRules.push('SEC-CONFIG-001'); impacts.add('SecurityConfig'); required.add('forbidden-pattern-check'); reasons.push({ruleId:'SEC-CONFIG-001',source:'lane-security-escalation'}); }
+  }
   return { impacts: [...impacts], matchedRules, securitySensitive: matchedRules.length > 0,
     requiresPreImplementationGate: gate, preImplementationGateRequired: gate,
     minimumRiskLevel: minimum, requiredHumanApprovals: approvals, requiredVerifiers: [...required], reasons, violations: [] };
@@ -41,7 +46,7 @@ export function securityPassed(evidence) {
     && evidence.requiredVerifiers.every(id => evidence.checks?.some(c => c.id === id && c.required === true && c.status === 'PASS'))
     && evidence.checks?.every(c => c.required !== true || c.status === 'PASS');
 }
-export async function verifySecurity({ workspace, sbi, assessment, policy, config, headSha }) {
+export async function verifySecurity({ workspace, sbi, assessment, policy, config, headSha, verification }) {
   const registry = new Map(policy.verifiers.map(v => [v.id, v]));
   for (const adapter of config.securityVerifiers || []) {
     if (registry.has(adapter.id) && registry.get(adapter.id).kind !== 'command') throw new Error('Builtin security verifiers cannot be overridden');
@@ -55,6 +60,8 @@ export async function verifySecurity({ workspace, sbi, assessment, policy, confi
   }
   for (const id of assessment.requiredVerifiers) {
     const adapter = registry.get(id);
+    const general = verification?.checks?.find(c=>c.id===id);
+    if (general) { checks.push({...general,required:true,verifier:id}); continue; }
     if (!adapter || (adapter.kind === 'command' && !adapter.commands?.length)) {
       checks.push({ id, verifier: id, required: true, status: 'NOT_CONFIGURED', reason: 'required security verifier is not configured' }); continue;
     }

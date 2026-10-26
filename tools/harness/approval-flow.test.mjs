@@ -1,9 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { fixture, update, human } from './test-fixture.mjs';
-import { runHarness, resumeRun } from './index.mjs';
+import { fixture, update, human, runFixture as runHarness } from './test-fixture.mjs';
+import { resumeRun } from './index.mjs';
 import { recordDecision } from './human-approvals.mjs';
 import { execute, readJson } from './io.mjs';
 const good = 'export function greet(name) { return `こんにちは、${name?.trim() || "ゲスト"}さん`; }';
@@ -117,7 +117,9 @@ describe('Workspace and verifier registry', () => {
         s.title = 'Write an introduction'; s.description = 'Explain the project';
         s.acceptanceCriteria = [{ id: 'DOC-1', description: 'Introduction exists', verifier: 'docs-bdd' }];
       });
-      await update(root, '.harness/config/harness.json', c => c.verifiers.push({ id: 'docs-bdd', directory: 'docs/product', planned: ['BDD'], acceptanceIds: ['DOC-1'], commands: [[process.execPath, '-e', 'require("node:assert/strict").equal(require("node:fs").readFileSync("intro.md","utf8"),"Welcome.")']] }));
+      await mkdir(join(root, '.harness/verification'), { recursive: true });
+      await writeFile(join(root, '.harness/verification/docs.mjs'), 'import { readFileSync } from "node:fs"; import { join } from "node:path"; import assert from "node:assert/strict"; assert.equal(readFileSync(join(process.argv[2], "docs/product/intro.md"), "utf8"), "Welcome."); console.log(JSON.stringify({acceptance:["DOC-1"]}));');
+      await update(root, '.harness/config/harness.json', c => c.verifiers.push({ trust: 'acceptance', trustedScript: '.harness/verification/docs.mjs', id: 'docs-bdd', directory: 'docs/product', planned: ['BDD'], acceptanceIds: ['DOC-1'], commands: [[process.execPath, '-e', 'require("node:assert/strict").equal(require("node:fs").readFileSync("intro.md","utf8"),"Welcome.")']] }));
       const run = await runHarness({ root, quiet: true, agent: async () => ({ files: [{ path: 'docs/product/intro.md', content: 'Welcome.' }] }) });
       assert.equal(run.status, 'MERGE_ALLOWED');
       assert.equal(run.risk.level, 1);

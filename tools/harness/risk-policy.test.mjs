@@ -106,3 +106,50 @@ describe('Safe downgrade requires plain document metadata', () => {
     it('when the file becomes executable then remains level 2', () => assert.equal(risk([file('docs/intro.md', 'Welcome', { mode: '100755', modeChanged: true })]).level, 2));
   });
 });
+
+
+describe('Risk contract for prototype lanes', () => {
+  describe('given a lightweight prototype lane', () => {
+    const lane = { name:'prototype', requiresSecurityGate:false, requiresDesignApproval:false };
+    it('when level 2 has no approval then still requires one human', () => {
+      const result = decide(2, [], { lane });
+      assert.equal(result.requiredApprovals,1);
+      assert.equal(result.decision,'WAITING_FOR_HUMAN_REVIEW');
+    });
+    it('when level 3 applies then still requires two humans', () => {
+      const result = decide(3, [approval('A')], { lane });
+      assert.equal(result.requiredApprovals,2);
+      assert.equal(result.decision,'WAITING_FOR_HUMAN_REVIEW');
+    });
+    it('when level 1 is safe then keeps auto merge disabled for prototypes', () => {
+      const result=decide(1,[],{lane});
+      assert.equal(result.decision,'MERGE_ALLOWED');
+      assert.equal(result.autoMergeEligible,false);
+    });
+    it('when prototype has no explicit safe rule then cannot downgrade by lane alone', () => {
+      const withoutRule={...policy,safeRules:[]};
+      assert.equal(assessRisk({files:[file('prototypes/web/View.tsx')],lane},withoutRule).level,2);
+    });
+    it('when design approval is still pending then waits for design approval instead of the implementation gate', () => {
+      const result=decide(2,[approval('A')],{lane:{name:'production',requiresSecurityGate:false,requiresDesignApproval:true,designApproved:false}});
+      assert.equal(result.decision,'WAITING_FOR_DESIGN_APPROVAL');
+      assert.equal(result.state,'WAITING_FOR_DESIGN_APPROVAL');
+      assert.deepEqual(result.reasons,['design_approval_not_approved']);
+    });
+    it('when explicit safe prototype content is ordinary then selects level 1', () => {
+      const result=risk([file('prototypes/web/View.tsx','Static dummy card')],{lane});
+      assert.equal(result.level,1);assert.equal(result.autoMergeAllowed,false);
+      assert.ok(result.reasons.includes('explicit_safe_prototype_only'));
+    });
+    it('when prototype content has high risk or AI raises it then never downgrades the floor', () => {
+      assert.equal(risk([file('prototypes/web/View.tsx','PII')],{lane}).level,3);
+      assert.equal(risk([file('prototypes/web/View.tsx')],{lane,aiRisk:3}).level,3);
+      assert.equal(risk([file('prototypes/web/View.tsx')],{lane,aiRisk:2}).level,2);
+    });
+    it('when mixed with production or when binary, deleted or executable then refuses safe classification',()=>{
+      for(const change of [file('apps/admin/View.tsx'),file('prototypes/web/image.png','',{binary:true}),file('prototypes/web/View.tsx','',{status:'D'}),file('prototypes/web/View.tsx','',{mode:'100755'})]) {
+        assert.notEqual(risk([file('prototypes/web/View.tsx'),change],{lane}).level,1);
+      }
+    });
+  });
+});

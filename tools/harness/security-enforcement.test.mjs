@@ -2,11 +2,11 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, writeFile, mkdir, readdir, lstat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { fixture, update, human } from './test-fixture.mjs';
+import { fixture, update, human, runFixture as runHarness } from './test-fixture.mjs';
 import { classifySecurity, verifySecurity, securityPassed } from './security-enforcement.mjs';
 import { withEvidenceProtection, redact, isSecretPath } from './evidence-protection.mjs';
 import { exportRun } from './review-export.mjs';
-import { runHarness, resumeRun, judge } from './index.mjs';
+import { resumeRun, judge } from './index.mjs';
 import { recordDecision } from './human-approvals.mjs';
 import { mergeDecision } from './merge-policy.mjs';
 import { execute, readJson } from './io.mjs';
@@ -121,7 +121,7 @@ describe('Secret protection and review export', () => {
       const value = `fixture-only-${Date.now()}-sentinel`;
       await writeFile(join(root, 'apps/admin/.upload-access-key'), value);
       await writeFile(join(root, 'apps/admin/.env.local'), `UPLOAD_TOKEN=${value}`);
-      await writeFile(join(root, 'apps/admin/copied-credential.txt'), `const credential = '${value}'`);
+      await writeFile(join(root, 'apps/admin/.env.extra'), `UPLOAD_TOKEN=${value}`);
       const run = await runHarness({ root, quiet: true, agent: async () => { throw new Error(`failure: ${value}`); } });
       assert.equal(run.status, 'ESCALATED');
       await assertNoValue(join(root, run.runDir), value);
@@ -213,14 +213,11 @@ describe('Security floors outrank LOW proposals', () => {
 
 describe('Excluded source still contributes security impact', () => {
   describe('given a credential in an ordinary allowed source file', () => {
-    it('when copying excludes the file then still requires the Secret gate without recording its value', () => fixture(async root => {
+    it('when a tracked credential exists then refuses worktree creation before checkout', () => fixture(async root => {
       const value='ghp_'+'q'.repeat(36);
       await writeFile(join(root,'greeting.mjs'),`// ${value}\n${good}`);
-      const run=await runHarness({root,quiet:true});
-      assert.equal(run.status,'WAITING_FOR_HUMAN_GATE');
-      assert.ok(run.securityAssessment.matchedRules.includes('SEC-SECRET-001'));
-      assert.equal(run.iterations.length,0);
-      await assertNoValue(join(root,run.runDir),value);
+      await assert.rejects(runHarness({root,quiet:true}), /tracked.*credential|credential.*tracked/i);
+      await assertNoValue(join(root,'.harness/runs'),value);
     }));
   });
 });

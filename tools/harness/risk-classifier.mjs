@@ -1,7 +1,7 @@
 import { riskPolicySchema } from './schemas.mjs';
 
 // Rules provide floors; safe rules are explicit candidates, never overrides for a floor.
-export function assessRisk({ files = [], metadata = {}, humanGate = false, aiRisk = null, securityAssessment = null }, rawPolicy) {
+export function assessRisk({ files = [], metadata = {}, humanGate = false, aiRisk = null, securityAssessment = null, lane = null }, rawPolicy) {
   const policy = riskPolicySchema.parse(rawPolicy);
   const reasons = [], matches = [];
   let floor = 0;
@@ -27,11 +27,15 @@ export function assessRisk({ files = [], metadata = {}, humanGate = false, aiRis
       if (new RegExp(rule.pattern, 'i').test(text)) match(rule.minimumLevel, rule.id, 'changed-content', file.path);
     }
   }
-  const safe = files.length > 0 && files.every(file => !file.binary && !file.previousPath && !file.modeChanged && (!file.mode || file.mode === '100644') && policy.safeRules.some(rule =>
-    new RegExp(rule.pattern).test(file.path) && rule.allowedStatuses.includes(file.status)
-    && Buffer.byteLength(`${file.added || ''}${file.deleted || ''}`) <= rule.maxChangedBytes));
+  const safeMatches = files.map(file => {
+    if (file.binary || file.previousPath || file.modeChanged || (file.mode && file.mode !== '100644')) return null;
+    return policy.safeRules.find(rule => (!rule.requiredLane || (lane?.name === rule.requiredLane && !lane.requiresSecurityGate && !lane.requiresDesignApproval))
+      && new RegExp(rule.pattern).test(file.path) && rule.allowedStatuses.includes(file.status)
+      && Buffer.byteLength(`${file.added || ''}${file.deleted || ''}`) <= rule.maxChangedBytes);
+  });
+  const safe = files.length > 0 && safeMatches.every(Boolean);
   let level = Math.max(safe ? 1 : policy.defaultLevel, floor);
-  if (safe && floor < 2) reasons.push('explicit_safe_docs_only');
+  if (safe && floor < 2) reasons.push(...safeMatches.map(rule => rule.id));
   else reasons.push('default_medium');
   if (aiRisk !== null) {
     if (![1, 2, 3].includes(aiRisk)) throw new Error('Invalid AI risk level');
@@ -41,6 +45,6 @@ export function assessRisk({ files = [], metadata = {}, humanGate = false, aiRis
   }
   return { level, label: ['LOW', 'MEDIUM', 'HIGH'][level - 1], reasons: [...new Set(reasons)], matches,
     requiredHumanApprovals: Math.max(policy.levels[level].requiredHumanApprovals, securityAssessment?.requiredHumanApprovals || 0),
-    autoMergeAllowed: level === 1 && !humanGate && !securityAssessment?.securitySensitive && policy.levels[level].autoMerge,
+    autoMergeAllowed: lane?.name !== 'prototype' && level === 1 && !humanGate && !securityAssessment?.securitySensitive && policy.levels[level].autoMerge,
     humanGate, defaultLevel: policy.defaultLevel };
 }

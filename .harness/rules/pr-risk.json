@@ -179,6 +179,17 @@
         "M"
       ],
       "maxChangedBytes": 32768
+    },
+    {
+      "id": "explicit_safe_prototype_only",
+      "pattern": "^prototypes/(web|mobile)/.+\\.(tsx?|jsx?|mjs|json|css|scss|md|txt|html|svg|ya?ml)$",
+      "candidateLevel": 1,
+      "requiredLane": "prototype",
+      "allowedStatuses": [
+        "A",
+        "M"
+      ],
+      "maxChangedBytes": 32768
     }
   ]
 }

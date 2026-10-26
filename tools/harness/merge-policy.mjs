@@ -8,7 +8,7 @@ export function validHumanApprovals(records, { purpose, headSha, contextDigest }
   return { approvals: [...latest.values()].filter(a => a.decision === 'APPROVE'), rejected: [...latest.values()].some(a => a.decision === 'REQUEST_CHANGES') };
 }
 // Pure policy evaluation. Authentication of records is the approval adapter's responsibility.
-export function mergeDecision({ risk, checks, approvals = [], headSha, contextDigest, humanGate = false, gateApproved = false, semanticEnabled = false, securityVerification }) {
+export function mergeDecision({ risk, checks, approvals = [], headSha, contextDigest, humanGate = false, gateApproved = false, semanticEnabled = false, securityVerification, lane }) {
   const required = ['verification', 'policy-review', 'security', 'completion', ...(semanticEnabled ? ['semantic-review'] : [])];
   const { approvals: valid, rejected } = validHumanApprovals(approvals, { purpose: 'merge', headSha, contextDigest });
   const checkOk = Array.isArray(checks) && checksPassed(checks) && required.every(id => checks.some(c => c.id === id && c.required === true && c.status === 'PASS'));
@@ -17,6 +17,7 @@ export function mergeDecision({ risk, checks, approvals = [], headSha, contextDi
   let decision = 'BLOCKED';
   const reasons = [];
   if (!/^[0-9a-f]{40,64}$/.test(headSha || '') || !contextDigest || ![1, 2, 3].includes(risk.level)) reasons.push('missing_or_invalid_snapshot');
+  else if (lane?.requiresDesignApproval && !lane.designApproved) { decision = 'WAITING_FOR_DESIGN_APPROVAL'; reasons.push('design_approval_not_approved'); }
   else if (humanGate && !gateApproved) { decision = 'WAITING_FOR_HUMAN_GATE'; reasons.push('implementation_gate_not_approved'); }
   else if (!checkOk) reasons.push('required_checks_not_passed');
   else if (!securityPassed(securityVerification) || (securityVerification.headSha && securityVerification.headSha !== headSha)) reasons.push('required_security_checks_not_passed');
@@ -25,5 +26,5 @@ export function mergeDecision({ risk, checks, approvals = [], headSha, contextDi
   else { decision = 'MERGE_ALLOWED'; reasons.push('all_conditions_satisfied'); }
   return { state: decision, decision, riskLevel: effectiveLevel, headSha, contextDigest, requiredApprovals,
     validApprovals: valid.length, validReviewers: valid.map(a => a.reviewer), reasons,
-    autoMergeEligible: decision === 'MERGE_ALLOWED' && effectiveLevel === 1 && risk.autoMergeAllowed !== false && !humanGate && checkOk };
+    autoMergeEligible: lane?.name !== 'prototype' && decision === 'MERGE_ALLOWED' && effectiveLevel === 1 && risk.autoMergeAllowed !== false && !humanGate && checkOk };
 }

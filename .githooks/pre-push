@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+cd "$(git rev-parse --show-toplevel)"
+# git exports the pushing repository location to hooks. Test fixtures run git in temp dirs,
+# so an inherited GIT_DIR would redirect their commits and config into this repository.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
+pnpm harness:check
+pnpm harness:test

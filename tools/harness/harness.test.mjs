@@ -3,26 +3,9 @@ import assert from 'node:assert/strict';
 import { mkdtemp, cp, readFile, writeFile, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { check, runHarness, judge, providerCommand } from './index.mjs';
+import { check, judge, providerCommand } from './index.mjs';
 
-const source = new URL('../../', import.meta.url).pathname;
-async function fixture(fn) {
-  const root = await mkdtemp(join(tmpdir(), 'sonomama-harness-'));
-  try {
-    for (const path of ['apps', 'packages', 'docs', '.harness/config', '.harness/rules', '.harness/skills', '.harness/state/sample-sbi.json', 'tools/harness', 'AGENTS.md', 'package.json', 'pnpm-workspace.yaml']) {
-      await mkdir(join(root, path, '..'), { recursive: true });
-      await cp(join(source, path), join(root, path), { recursive: true });
-    }
-    await mkdir(join(root, '.harness/runs'), { recursive: true });
-    await fn(root);
-  } finally { await rm(root, { recursive: true, force: true }); }
-}
-async function update(root, path, fn) {
-  const file = join(root, path);
-  const value = JSON.parse(await readFile(file, 'utf8'));
-  fn(value);
-  await writeFile(file, JSON.stringify(value));
-}
+import { fixture, update, runFixture as runHarness } from './test-fixture.mjs';
 
 describe('Local Harness', () => {
   describe('given a valid workspace with placeholder apps', () => {
@@ -36,7 +19,7 @@ describe('Local Harness', () => {
       assert.equal(run.iterations[0].verification.status, 'FAIL');
       assert.equal(run.iterations[1].verification.status, 'PASS');
       assert.equal(run.iterations[1].review.status, 'PASS');
-      assert.equal(run.iterations[1].verification.checks.filter(c => c.status === 'SKIP').length, 3);
+      assert.equal(run.iterations[1].verification.checks.filter(c => c.status === 'SKIP').length, 5);
       for (let i = 1; i <= 2; i++) {
         for (const file of ['agent.log', 'verify.log', 'result.json']) {
           assert.ok((await readFile(join(root, run.runDir, `iteration-${i}`, file), 'utf8')).length);
@@ -94,9 +77,10 @@ describe('Local Harness', () => {
     }));
     it('when a formerly missing app exists but lacks a configured verifier then never marks DONE', () => fixture(async root => {
       await writeFile(join(root, 'apps/api/Gemfile'), '# Rails');
+      await update(root, '.harness/state/sample-sbi.json', s => s.requiredVerifiers = ['rails']);
       const run = await runHarness({ root, quiet: true });
       assert.equal(run.status, 'ESCALATED');
-      assert.ok(run.iterations[0].verification.checks.some(c => c.id === 'rails' && c.status === 'FAIL'));
+      assert.ok(run.iterations[0].verification.checks.some(c => c.id === 'rails' && ['FAIL', 'NOT_CONFIGURED'].includes(c.status)));
     }));
     it('when acceptance criteria are empty then check rejects the SBI', () => fixture(async root => {
       await update(root, '.harness/state/sample-sbi.json', s => s.acceptanceCriteria = []);
