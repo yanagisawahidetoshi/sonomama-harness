@@ -61,7 +61,8 @@ describe('Lane quality and promotion enforcement',()=>{
       assert.equal((await resumeRun({root,runId:run.id,quiet:true})).status,'MERGE_ALLOWED');
       await recordDecision({root,runId:run.id,purpose:'design-approval',decision:'REVOKE',identityProvider:human('designer')});
       const revoked=await resumeRun({root,runId:run.id,quiet:true});
-      assert.equal(revoked.status,'WAITING_FOR_HUMAN_GATE');
+      assert.equal(revoked.status,'WAITING_FOR_DESIGN_APPROVAL');
+      assert.equal(revoked.merge.state,'WAITING_FOR_DESIGN_APPROVAL');
       assert.deepEqual(revoked.gate,{required:false,state:'NOT_REQUIRED'});
       assert.equal(revoked.designApproval.state,'WAITING_FOR_DESIGN_APPROVAL');
     }));

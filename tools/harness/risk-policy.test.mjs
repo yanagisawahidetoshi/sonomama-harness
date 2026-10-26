@@ -130,6 +130,12 @@ describe('Risk contract for prototype lanes', () => {
       const withoutRule={...policy,safeRules:[]};
       assert.equal(assessRisk({files:[file('prototypes/web/View.tsx')],lane},withoutRule).level,2);
     });
+    it('when design approval is still pending then waits for design approval instead of the implementation gate', () => {
+      const result=decide(2,[approval('A')],{lane:{name:'production',requiresSecurityGate:false,requiresDesignApproval:true,designApproved:false}});
+      assert.equal(result.decision,'WAITING_FOR_DESIGN_APPROVAL');
+      assert.equal(result.state,'WAITING_FOR_DESIGN_APPROVAL');
+      assert.deepEqual(result.reasons,['design_approval_not_approved']);
+    });
     it('when explicit safe prototype content is ordinary then selects level 1', () => {
       const result=risk([file('prototypes/web/View.tsx','Static dummy card')],{lane});
       assert.equal(result.level,1);assert.equal(result.autoMergeAllowed,false);
