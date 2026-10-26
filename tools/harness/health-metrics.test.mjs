@@ -26,6 +26,8 @@ describe('Health metrics signal collection', () => {
       assert.equal(metrics.startedAt, run.startedAt);
       assert.equal(metrics.finishedAt, run.events.at(-1).at);
       assert.equal(metrics.durationMs, Date.parse(metrics.finishedAt) - Date.parse(metrics.startedAt));
+      assert.equal(metrics.executionDurationMs, Date.parse(run.events.filter(e => e.phase === 'execution').at(-1).at) - Date.parse(run.startedAt));
+      assert.ok(metrics.executionDurationMs <= metrics.durationMs);
       assert.equal(metrics.executionStatus, 'DONE');
       assert.equal(metrics.mergeStatus, 'WAITING_FOR_HUMAN_REVIEW');
       assert.equal(metrics.riskLevel, 2);
@@ -57,6 +59,16 @@ describe('Health metrics signal collection', () => {
       assert.equal(metrics.mergeStatus, 'MERGE_ALLOWED');
       assert.deepEqual(metrics.approvals.merge, { required: 1, valid: 1, requestedChanges: false });
       assert.doesNotMatch(text, /alice-reviewer|reviewer/i);
+    }));
+    it('when the run resumes for approval then lifecycle duration grows while execution duration stays fixed', () => fixture(async root => {
+      const run = await runHarness({ root, quiet: true });
+      const before = await metricsOf(root, run);
+      await new Promise(resolve => setTimeout(resolve, 20));
+      await recordDecision({ root, runId: run.id, purpose: 'merge', identityProvider: human('A') });
+      await resumeRun({ root, runId: run.id, quiet: true });
+      const after = await metricsOf(root, run);
+      assert.ok(after.durationMs > before.durationMs);
+      assert.equal(after.executionDurationMs, before.executionDurationMs);
     }));
     it('when a human requests changes then records the rejection as a flag', () => fixture(async root => {
       const run = await runHarness({ root, quiet: true });
@@ -122,8 +134,7 @@ describe('Health metrics signal collection', () => {
       const metrics = await metricsOf(root, run);
       assert.equal(metrics.lane, null);
       assert.equal(metrics.riskLevel, null);
-      assert.equal(metrics.escalation.code, 'SPEC_AMBIGUOUS');
-      assert.equal(metrics.escalation.detail, run.reason);
+      assert.deepEqual(metrics.escalation, { code: 'SPEC_AMBIGUOUS' });
     }));
   });
   describe('given an escalated run', () => {
@@ -136,7 +147,7 @@ describe('Health metrics signal collection', () => {
       assert.equal(metrics.mergeStatus, 'BLOCKED');
       assert.deepEqual(metrics.iterations, { total: 3, failed: 3, done: false, limitReached: false, consecutiveFailure: true });
       assert.equal(metrics.verifiers.summary.fail, 1);
-      assert.deepEqual(metrics.escalation, { code: 'CONSECUTIVE_FAILURE', detail: run.reason });
+      assert.deepEqual(metrics.escalation, { code: 'CONSECUTIVE_FAILURE' });
       assert.equal(JSON.parse(await readFile(join(root, run.runDir, 'escalation.json'), 'utf8')).code, 'CONSECUTIVE_FAILURE');
     }));
     it('when a selected application verifier has no commands then records VERIFIER_NOT_CONFIGURED and counts it', () => fixture(async root => {
@@ -164,15 +175,18 @@ describe('Health metrics signal collection', () => {
       assert.equal(resumed.status, 'ESCALATED');
       assert.equal((await metricsOf(root, run)).escalation.code, 'WORKSPACE_CHANGED');
     }));
-    it('when an agent escalation carries a credential then the metrics keep only the redacted detail', () => fixture(async root => {
-      const run = await runHarness({ root, quiet: true, agent: async () => ({ escalation: 'cannot continue: token=abc123secretvalue', files: [] }) });
+    it('when an agent escalation carries PII or a credential then the metrics keep only the reason code', () => fixture(async root => {
+      const message = 'ask taro.yamada@example.com or 090-1234-5678; token=abc123secretvalue';
+      const run = await runHarness({ root, quiet: true, agent: async () => ({ escalation: message, files: [] }) });
       assert.equal(run.status, 'ESCALATED');
       const text = await readFile(join(root, run.runDir, 'health-metrics.json'), 'utf8');
-      assert.doesNotMatch(text, /abc123secretvalue/);
+      assert.doesNotMatch(text, /example\.com|yamada|090-1234-5678|abc123secretvalue|detail/);
       const metrics = JSON.parse(text);
-      assert.equal(metrics.escalation.code, 'AGENT_ESCALATION');
-      assert.match(metrics.escalation.detail, /\[REDACTED\]/);
+      assert.deepEqual(metrics.escalation, { code: 'AGENT_ESCALATION' });
       assert.doesNotMatch(text, /prompt|"files"/i);
+      const human = JSON.parse(await readFile(join(root, run.runDir, 'escalation.json'), 'utf8'));
+      assert.match(human.reason, /taro\.yamada@example\.com/);
+      assert.doesNotMatch(human.reason, /abc123secretvalue/);
     }));
   });
   describe('given a summary written before health metrics existed', () => {
@@ -183,6 +197,7 @@ describe('Health metrics signal collection', () => {
       assert.equal(metrics.lane, null);
       assert.equal(metrics.finishedAt, null);
       assert.equal(metrics.durationMs, null);
+      assert.equal(metrics.executionDurationMs, null);
       assert.equal(metrics.riskLevel, null);
       assert.equal(metrics.riskPhase, null);
       assert.deepEqual(metrics.approvals.design, { required: false, state: 'NOT_REQUIRED' });
