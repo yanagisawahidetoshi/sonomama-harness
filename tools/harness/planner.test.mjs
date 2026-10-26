@@ -72,7 +72,7 @@ async function mockGitHub(state, test) {
         const label = JSON.parse(input); state.labels.push(label.name); process.stdout.write(JSON.stringify(label));
       } else if (method === 'POST' && endpoint === 'repos/acme/app/issues') {
         const issue = JSON.parse(input); const number = 101 + state.created.length;
-        const created = { number, title: issue.title, body: issue.body, html_url: 'https://github.com/acme/app/issues/' + number, labels: (issue.labels || []).map(name => ({ name })) };
+        const created = { number, title: issue.title, body: issue.body, state: 'open', html_url: 'https://github.com/acme/app/issues/' + number, labels: (issue.labels || []).map(name => ({ name })) };
         state.created.push(created); process.stdout.write(JSON.stringify(created));
       } else if (method === 'POST' && (m = endpoint.match(/^repos\\/acme\\/app\\/issues\\/(\\d+)\\/comments$/))) {
         const id = 1 + state.comments.length;
@@ -219,7 +219,7 @@ describe('PBI → SBI Planner', () => {
       assert.equal(state.comments[0].updated, 1);
       assert.match(renderCreatedList(result.created), /#101 SBI-001/);
     })));
-    it('when an SBI Issue for another PBI carries the same SBI ID then does not reuse it', () => fixture(root => mockGitHub({ created: [{ number: 50, title: 'SBI-001 別PBIのSBI', body: sbiMarker('https://github.com/acme/app/issues/7', 'SBI-001', sbiDigest(sbi('SBI-001'))), html_url: 'https://github.com/acme/app/issues/50', labels: [{ name: 'sbi' }] }] }, async github => {
+    it('when an SBI Issue for another PBI carries the same SBI ID then does not reuse it', () => fixture(root => mockGitHub({ created: [{ number: 50, title: 'SBI-001 別PBIのSBI', body: sbiMarker('https://github.com/acme/app/issues/7', 'SBI-001', sbiDigest(sbi('SBI-001'))), state: 'open', html_url: 'https://github.com/acme/app/issues/50', labels: [{ name: 'sbi' }, { name: 'needs-review' }] }] }, async github => {
       const result = await plan(root);
       assert.deepEqual(result.created.map(c => [c.sbiId, c.reused]), [['SBI-001', false], ['SBI-002', false], ['SBI-003', false]]);
       assert.equal((await github.state()).created.length, 4);
@@ -236,7 +236,25 @@ describe('PBI → SBI Planner', () => {
       assert.ok(!(await github.calls()).some(call => call.args.includes('PATCH')));
       assert.equal((await github.calls()).filter(call => call.args.includes('POST')).length, 6, 'first run: 2 labels + 3 issues + 1 comment; second run: no POST');
     })));
-    it('when an existing SBI Issue carries a marker without a digest then does not reuse it silently', () => fixture(root => mockGitHub({ created: [{ number: 50, title: 'SBI-001 SBI-001の機能', body: '<!-- sonomama-sbi pbi=https://github.com/acme/app/issues/8 id=SBI-001 -->', html_url: 'https://github.com/acme/app/issues/50', labels: [{ name: 'sbi' }] }] }, async github => {
+    const tampered = [
+      ['a human edited the Issue body after generation', issue => { issue.body = issue.body.replace('登録済みの氏名が画面に表示される', '登録済みの氏名と所属が画面に表示される'); }, /本文/],
+      ['the Issue was moved from needs-review to ready', issue => { issue.labels = [{ name: 'sbi' }, { name: 'ready' }]; }, /needs-review/],
+      ['the Issue was closed', issue => { issue.state = 'closed'; }, /closed|open/],
+      ['the Issue title was changed', issue => { issue.title = 'SBI-001 改題されたSBI'; }, /title|タイトル/],
+    ];
+    for (const [condition, mutate, reason] of tampered) {
+      it(`when ${condition} then does not reuse it, writes nothing and asks for a human decision`, () => fixture(root => mockGitHub({}, async github => {
+        await plan(root);
+        const state = await github.state();
+        mutate(state.created[0]);
+        await writeFile(join(github.dir, 'state.json'), JSON.stringify(state));
+        const before = (await github.calls()).length;
+        await assert.rejects(plan(root), error => /#101/.test(error.message) && /SBI-001/.test(error.message) && reason.test(error.message));
+        assert.equal((await github.state()).created.length, 3);
+        assert.ok(!(await github.calls()).slice(before).some(call => call.args.includes('-X')), 'second run must not write');
+      })));
+    }
+    it('when an existing SBI Issue carries a marker without a digest then does not reuse it silently', () => fixture(root => mockGitHub({ created: [{ number: 50, title: 'SBI-001 SBI-001の機能', body: '<!-- sonomama-sbi pbi=https://github.com/acme/app/issues/8 id=SBI-001 -->', state: 'open', html_url: 'https://github.com/acme/app/issues/50', labels: [{ name: 'sbi' }, { name: 'needs-review' }] }] }, async github => {
       await assert.rejects(plan(root), /#50/);
       assert.equal((await github.state()).created.length, 1);
     })));
