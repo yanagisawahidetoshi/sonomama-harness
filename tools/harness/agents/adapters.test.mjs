@@ -55,3 +55,19 @@ describe('CLI adapter protocol', () => {
     });
   });
 });
+
+describe('Structured output contract', () => {
+  describe('given a caller that needs a different response shape', () => {
+    it('when a schema is supplied then writes it as the provider contract and returns the parsed response', () => mockCli('codex', `
+      const fs = require('node:fs');
+      const args = process.argv.slice(2);
+      const schema = JSON.parse(fs.readFileSync(args[args.indexOf('--output-schema') + 1], 'utf8'));
+      fs.writeFileSync(args[args.indexOf('--output-last-message') + 1], JSON.stringify({ sbis: [], escalation: null, keys: Object.keys(schema.properties) }));
+    `, async root => {
+      const schema = { type: 'object', additionalProperties: false, required: ['sbis', 'escalation'], properties: { sbis: { type: 'array' }, escalation: { type: ['string', 'null'] } } };
+      const response = await runAgent({ ...options(root), provider: 'codex', schema });
+      assert.deepEqual(response.keys, ['sbis', 'escalation']);
+      assert.deepEqual(await readJson(join(root, 'iteration/response.schema.json')), schema);
+    }));
+  });
+});
