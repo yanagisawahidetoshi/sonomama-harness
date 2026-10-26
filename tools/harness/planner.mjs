@@ -99,22 +99,34 @@ async function planProtected({ root, issueUrl, provider, quiet, agent, github, s
     if (hasSecret(JSON.stringify(response.sbis))) throw new Error('Secret/Credential detected in planner candidates; rejected before any GitHub write');
     summary.status = 'PUBLISHING'; await save();
     await github.ensureLabels(ref, sbiLabels);
+    // The marker only finds candidates. Reuse requires the Issue, as it exists now, to be exactly what this run generated and still awaiting review.
     const existing = new Map((await github.listIssues(ref, sbiLabels[0])).flatMap(issue => { const match = markerPattern.exec(issue.body || ''); return match && match[1] === ref.url ? [[match[2], { issue, digest: match[3] || null }]] : []; }));
-    const stale = response.sbis.filter(sbi => existing.has(sbi.id) && existing.get(sbi.id).digest !== sbiDigest(sbi));
-    if (stale.length) throw new Error(['既存のSBI Issueと今回の生成内容が一致しません（content digest不一致）。GitHubへは書き込んでいません。人間が差分を確認し、既存Issueを閉じるか内容を確定してから再実行してください。',
-      ...stale.map(sbi => `- ${sbi.id}: #${existing.get(sbi.id).issue.number} ${existing.get(sbi.id).issue.html_url}`)].join('\n'));
-    const issueNumbers = {};
+    const normalize = text => String(text ?? '').replaceAll('\r\n', '\n').trimEnd();
+    const issueNumbers = {}, publications = [], problems = [];
     for (const sbiId of creationOrder(response.sbis)) {
       const sbi = response.sbis.find(s => s.id === sbiId);
       const title = `${sbi.id} ${sbi.title}`;
+      const found = existing.get(sbi.id);
+      if (!found) { publications.push({ sbi, title, reuse: null }); continue; }
+      const reasons = [];
+      if (found.digest !== sbiDigest(sbi)) reasons.push('生成内容のdigestが異なる');
+      if (found.issue.state !== 'open') reasons.push(`stateが${found.issue.state ?? 'unknown'}でopenではない`);
+      if (!found.issue.labels.some(label => label.name === 'needs-review')) reasons.push('needs-reviewラベルがない（レビュー済みの可能性）');
+      if (found.issue.title !== title) reasons.push('titleが生成内容と異なる');
+      if (normalize(found.issue.body) !== normalize(renderSbiBody(sbi, pbi, issueNumbers))) reasons.push('本文が生成内容と異なる（人間の編集または依存Issueの変更）');
+      if (reasons.length) problems.push(`- ${sbi.id}: #${found.issue.number} ${found.issue.html_url}（${reasons.join('、')}）`);
+      issueNumbers[sbi.id] = found.issue.number;
+      publications.push({ sbi, title, reuse: found.issue });
+    }
+    if (problems.length) throw new Error(['既存のSBI Issueを再利用できません。GitHubへは書き込んでいません。人間が確認し、古いIssueを閉じて`sbi`ラベルを外すか、内容を確定してから再実行してください。', ...problems].join('\n'));
+    for (const { sbi, title, reuse } of publications) {
       const body = renderSbiBody(sbi, pbi, issueNumbers);
       if (hasSecret(title) || hasSecret(body)) throw new Error('Secret/Credential detected in rendered SBI Issue; rejected before any GitHub write');
-      const reused = existing.get(sbi.id)?.issue;
-      const issue = reused || await github.createIssue(ref, { title, body, labels: [...sbiLabels] });
+      const issue = reuse || await github.createIssue(ref, { title, body, labels: [...sbiLabels] });
       issueNumbers[sbi.id] = issue.number;
-      summary.created.push({ sbiId: sbi.id, number: issue.number, title: reused ? issue.title : title, url: issue.html_url, reused: Boolean(reused) });
+      summary.created.push({ sbiId: sbi.id, number: issue.number, title, url: issue.html_url, reused: Boolean(reuse) });
       await json(join(directory, 'issues.json'), { created: summary.created, comment: null });
-      await save(); log(`${reused ? 'Reused' : 'Created'} #${issue.number} ${title}`);
+      await save(); log(`${reuse ? 'Reused' : 'Created'} #${issue.number} ${title}`);
     }
     const comment = renderGeneratedComment(summary.created, pbi);
     if (hasSecret(comment)) throw new Error('Secret/Credential detected in PBI comment; rejected before any GitHub write');
