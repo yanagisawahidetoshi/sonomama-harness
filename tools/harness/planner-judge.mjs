@@ -1,6 +1,9 @@
 // Deterministic SBI Quality Judge. Structural rules are exact; granularity and wording rules are bounded heuristics.
 export const limits = Object.freeze({ acceptanceCriteria: 6, changeAreas: 4, scenarios: 8, purposeSentences: 2 });
-const vagueTerms = ['など', '等々', '適切', 'いい感じ', 'なるべく', '可能な限り', 'できれば', '使いやすい', 'わかりやすい', '十分', 'etc', 'appropriate', 'properly'];
+const vagueTerms = ['など', '等々', '適切', 'いい感じ', 'なるべく', '可能な限り', 'できれば', '使いやすい', 'わかりやすい', '十分'];
+const vagueWords = /\b(etc|appropriate|properly)\b/i;
+// Japanese terminators always end a sentence; ASCII ones only before whitespace or the end, so hosts and versions stay intact.
+const sentenceEnd = /[。！？]|[.!?](?=\s|$)/;
 const blank = value => typeof value !== 'string' || !value.trim();
 
 export function judgePlan(sbis) {
@@ -14,14 +17,14 @@ export function judgePlan(sbis) {
     if (sbi.acceptanceCriteria.length > limits.acceptanceCriteria) add(sbi.id, 'granularity', `粒度が過大です: 受け入れ要件が${sbi.acceptanceCriteria.length}件（上限${limits.acceptanceCriteria}）`);
     if (sbi.changeAreas.length > limits.changeAreas) add(sbi.id, 'granularity', `粒度が過大です: 想定変更範囲が${sbi.changeAreas.length}領域（上限${limits.changeAreas}）`);
     if (sbi.scenarios.length > limits.scenarios) add(sbi.id, 'granularity', `粒度が過大です: Scenarioが${sbi.scenarios.length}件（上限${limits.scenarios}）`);
-    const sentences = sbi.purpose.split(/[。.!?！？]/).filter(part => part.trim()).length;
+    const sentences = sbi.purpose.split(sentenceEnd).filter(part => part.trim()).length;
     if (sentences > limits.purposeSentences) add(sbi.id, 'single-purpose', `目的が1つに絞られていません（${sentences}文。${limits.purposeSentences}文以内）`);
     if (!sbi.acceptanceCriteria.length) add(sbi.id, 'acceptance-missing', '受け入れ要件がありません');
     const acceptanceIds = sbi.acceptanceCriteria.map(a => a.id);
     for (const id of new Set(acceptanceIds)) if (acceptanceIds.filter(other => other === id).length > 1) add(sbi.id, 'duplicate-acceptance', `受け入れ要件 ${id} が重複しています`);
     for (const criterion of sbi.acceptanceCriteria) {
       if (blank(criterion.description)) { add(sbi.id, 'acceptance-blank', `受け入れ要件 ${criterion.id} が空です`); continue; }
-      const term = vagueTerms.find(t => criterion.description.toLowerCase().includes(t));
+      const term = vagueTerms.find(t => criterion.description.includes(t)) || vagueWords.exec(criterion.description)?.[1];
       if (term) add(sbi.id, 'acceptance-verifiable', `受け入れ要件 ${criterion.id} が検証可能な表現ではありません（「${term}」を具体化してください）`);
     }
     if (!sbi.scenarios.length) add(sbi.id, 'gherkin-missing', 'Gherkin Scenarioがありません');
