@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fixture } from './test-fixture.mjs';
 import { exists, readJson } from './io.mjs';
-import { parseIssueUrl, planIssue, renderCreatedList } from './planner.mjs';
+import { parseIssueUrl, planIssue, renderCreatedList, sbiMarker, sbiDigest } from './planner.mjs';
 import { judgePlan, creationOrder } from './planner-judge.mjs';
 
 const pbiUrl = 'https://github.com/acme/app/issues/8';
@@ -128,7 +128,8 @@ describe('PBI → SBI Planner', () => {
       for (const issue of state.created) {
         assert.deepEqual(issue.labels.map(l => l.name).sort(), ['needs-review', 'sbi']);
         assert.match(issue.body, /#8/);
-        assert.ok(issue.body.includes(`<!-- sonomama-sbi pbi=${pbiUrl} id=${issue.title.split(' ')[0]} -->`), 'deterministic marker');
+        const sbiId = issue.title.split(' ')[0];
+        assert.ok(issue.body.includes(`<!-- sonomama-sbi pbi=${pbiUrl} id=${sbiId} digest=${sbiDigest(validPlan().find(s => s.id === sbiId))} -->`), 'deterministic marker with content digest');
         for (const heading of ['## 目的', '## 対象範囲', '## 受け入れ要件', '## Gherkin', '## 依存SBI', '## 想定変更範囲', '## Risk / Security Impact', '## 検証方法', '## 元PBI']) assert.ok(issue.body.includes(heading), `${issue.title} lacks ${heading}`);
         assert.match(issue.body, /Scenario: 登録済みプロフィールを表示する\n\s+Given ログイン済みの受講生がいる\n\s+And プロフィールが登録されている\n\s+When プロフィール画面を開く\n\s+Then 登録済みの氏名が表示される/);
         assert.match(issue.body, /- \[ \] AC-1: 登録済みの氏名が画面に表示される/);
@@ -218,11 +219,34 @@ describe('PBI → SBI Planner', () => {
       assert.equal(state.comments[0].updated, 1);
       assert.match(renderCreatedList(result.created), /#101 SBI-001/);
     })));
-    it('when an SBI Issue for another PBI carries the same SBI ID then does not reuse it', () => fixture(root => mockGitHub({ created: [{ number: 50, title: 'SBI-001 別PBIのSBI', body: '<!-- sonomama-sbi pbi=https://github.com/acme/app/issues/7 id=SBI-001 -->', html_url: 'https://github.com/acme/app/issues/50', labels: [{ name: 'sbi' }] }] }, async github => {
+    it('when an SBI Issue for another PBI carries the same SBI ID then does not reuse it', () => fixture(root => mockGitHub({ created: [{ number: 50, title: 'SBI-001 別PBIのSBI', body: sbiMarker('https://github.com/acme/app/issues/7', 'SBI-001', sbiDigest(sbi('SBI-001'))), html_url: 'https://github.com/acme/app/issues/50', labels: [{ name: 'sbi' }] }] }, async github => {
       const result = await plan(root);
       assert.deepEqual(result.created.map(c => [c.sbiId, c.reused]), [['SBI-001', false], ['SBI-002', false], ['SBI-003', false]]);
       assert.equal((await github.state()).created.length, 4);
     })));
+    it('when an existing SBI Issue was generated from different content then fails before any GitHub write and names the Issue', () => fixture(root => mockGitHub({}, async github => {
+      await plan(root);
+      const changed = validPlan();
+      changed[0].acceptanceCriteria.push({ id: 'AC-3', description: '氏名の変更が即時に反映される' });
+      changed[0].scenarios[0].acceptanceIds.push('AC-3');
+      await assert.rejects(plan(root, { agent: agentWith(changed) }), error => /#101/.test(error.message) && /SBI-001/.test(error.message) && /digest|内容/.test(error.message));
+      const state = await github.state();
+      assert.equal(state.created.length, 3);
+      assert.equal(state.comments[0].updated, undefined);
+      assert.ok(!(await github.calls()).some(call => call.args.includes('PATCH')));
+      assert.equal((await github.calls()).filter(call => call.args.includes('POST')).length, 5, 'first run: 2 labels + 3 issues; second run: no POST');
+    })));
+    it('when an existing SBI Issue carries a marker without a digest then does not reuse it silently', () => fixture(root => mockGitHub({ created: [{ number: 50, title: 'SBI-001 SBI-001の機能', body: '<!-- sonomama-sbi pbi=https://github.com/acme/app/issues/8 id=SBI-001 -->', html_url: 'https://github.com/acme/app/issues/50', labels: [{ name: 'sbi' }] }] }, async github => {
+      await assert.rejects(plan(root), /#50/);
+      assert.equal((await github.state()).created.length, 1);
+    })));
+    it('when the same content is rendered twice then the digest is stable and independent of key order', () => {
+      const a = sbi('SBI-001');
+      const b = Object.fromEntries(Object.entries(a).reverse());
+      assert.equal(sbiDigest(a), sbiDigest(b));
+      assert.match(sbiDigest(a), /^[0-9a-f]{64}$/);
+      assert.notEqual(sbiDigest(a), sbiDigest(sbi('SBI-001', { purpose: '別の目的。' })));
+    });
     it('when a candidate contains a credential then rejects it before any GitHub write', () => fixture(root => mockGitHub({}, async github => {
       const leaking = validPlan();
       leaking[1].acceptanceCriteria[0].description = `${fakeToken} で認証できる`;
