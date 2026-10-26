@@ -199,12 +199,12 @@ export時にも再検査し、旧run内の秘密ファイルから伏せるべ�
 
 | LEVEL | 必要な実装後Human Approval | autoMergeEligible |
 | --- | --- | --- |
-| 1 / LOW | 0人 | 必須チェック合格、Human Gateなしの場合のみtrue |
+| 1 / LOW | 0人 | 必須チェック合格、Human Gateなし、Prototype以外の場合のみtrue |
 | 2 / MEDIUM | 1人 | false |
 | 3 / HIGH | 異なる2人以上 | false |
 
 LEVEL 1への降格には明示的なsafe ruleが必要。
-初期ルールは、安全なdocsの追加・更新だけを候補とする。バイナリ、rename、削除は降格しない。
+安全なdocsの追加・更新と、後述の条件を満たす非機密prototypeを候補とする。バイナリ、rename、削除は降格しない。
 テストのみ、Storybookのみ、コメントのみ、refactor、feature flag付きという理由だけでは降格しない。
 意味上の安全性を機械的に確認できない変更はLEVEL 2に留める。
 
@@ -226,6 +226,7 @@ MERGED状態を生成するコードやGitHub merge APIは持たない。
 
 ## Human GateとMerge Approvalは別の承認
 
+- 試作採用時の設計承認: designApproval.state = NOT_REQUIRED / WAITING_FOR_DESIGN_APPROVAL / APPROVED / REJECTED
 - 実装前: gate.state = NOT_REQUIRED / WAITING_FOR_HUMAN_GATE / APPROVED / REJECTED
 - 実装: executionStatus = PENDING / IMPLEMENTING / VERIFYING / REVIEWING / JUDGING / FAILED / DONE / ESCALATED
 - 実装後: merge.state = NOT_ASSESSED / RISK_ASSESSING / WAITING_FOR_HUMAN_REVIEW / MERGE_ALLOWED / REJECTED / BLOCKED
