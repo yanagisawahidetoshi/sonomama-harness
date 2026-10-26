@@ -8,7 +8,7 @@ import { runAgent, makePrompt, providerCommand } from './agents/index.mjs';
 import { verify, checksPassed } from './verifier.mjs';
 import { review } from './reviewer.mjs';
 import { judge } from './completion-judge.mjs';
-import { humanGate } from './escalation.mjs';
+import { humanGate, classifyEscalation } from './escalation.mjs';
 import { assessRisk } from './risk-classifier.mjs';
 import { mergeDecision, validHumanApprovals } from './merge-policy.mjs';
 import { authenticatedRecords } from './human-approvals.mjs';
@@ -31,10 +31,11 @@ function controller(root, summary, quiet) {
     if (!quiet) console.log(redactText(`[${summary.id}] ${status}${detail ? `: ${detail}` : ''}`));
     await saveRun(root, summary);
   };
-  const escalate = async reason => {
+  const escalate = async (reason, code = classifyEscalation(reason)) => {
     summary.reason = reason;
+    summary.escalation = { code, detail: reason };
     summary.merge = { ...summary.merge, state: 'BLOCKED', decision: 'BLOCKED', autoMergeEligible: false };
-    await json(join(directory, 'escalation.json'), { reason, action: '人間が原因を確認して新しいrunを開始してください。mergeは実行しません。' });
+    await json(join(directory, 'escalation.json'), { reason, code, action: '人間が原因を確認して新しいrunを開始してください。mergeは実行しません。' });
     await transition('ESCALATED', reason);
     return summary;
   };
@@ -130,12 +131,12 @@ async function executeLoop({ root, summary, inputs, quiet, agent = runAgent, rev
       const response = responseSchema.parse(await agent({ provider: summary.provider, iteration, prompt, directory: iterDir, workspace, timeoutMs: config.timeoutMs }));
       await workspaceIntegrity(workspace, summary.headSha); // Reject a CLI that edited files directly.
       await evidenceText(join(iterDir, 'agent.log'), JSON.stringify(redact(response), null, 2) + '\n');
-      if (response.escalation) { result.agent = { status: 'ESCALATED', reason: response.escalation }; await record(); return escalate(response.escalation); }
+      if (response.escalation) { result.agent = { status: 'ESCALATED', reason: response.escalation }; await record(); return escalate(response.escalation, 'AGENT_ESCALATION'); }
       if (response.files.some(file => hasSecret(file.content))) {
         result.security = { id: 'security', required: true, status: 'FAIL', reasons: ['credential value rejected before writing'] };
         result.securityVerification = { status: 'FAIL', requiredVerifiers: ['secret-scan'], checks: [{id:'secret-scan',verifier:'secret-scan',required:true,status:'FAIL'}], violations: ['credential_proposal'] };
         await json(join(directory, 'security-verification.json'), result.securityVerification);
-        await record(); return escalate('Secret/Credential detected in agent response; rejected before workspace, commit, or raw Evidence write');
+        await record(); return escalate('Secret/Credential detected in agent response; rejected before workspace, commit, or raw Evidence write', 'SECRET_PROPOSAL');
       }
       for (const file of response.files) {
         assertWritablePath(file.path);
@@ -153,12 +154,12 @@ async function executeLoop({ root, summary, inputs, quiet, agent = runAgent, rev
       const newRules = proposedSecurity.matchedRules.filter(id => !summary.securityAssessment.matchedRules.includes(id));
       if (newRules.length) {
         await json(join(iterDir,'proposed-security.json'),proposedSecurity);
-        await record(); return escalate('New security scope detected before applying code; update SBI and obtain a new Human Gate');
+        await record(); return escalate('New security scope detected before applying code; update SBI and obtain a new Human Gate', 'NEW_SECURITY_SCOPE');
       }
       const proposed = assessRisk({ files: proposedFiles, metadata: metadata(sbi), humanGate: summary.gate.required, securityAssessment: proposedSecurity, lane:classifyLane(proposedFiles,sbi,inputs.lanePolicy) }, riskPolicy);
       if (proposed.level === 3 && !summary.gate.required) {
         await json(join(iterDir, 'proposed-risk.json'), proposed);
-        await record(); return escalate('New high risk detected before applying code; declare the risk in SBI and obtain an implementation gate in a new run');
+        await record(); return escalate('New high risk detected before applying code; declare the risk in SBI and obtain an implementation gate in a new run', 'NEW_HIGH_RISK');
       }
       for (const file of response.files) { const path = join(workspace, file.path); await mkdir(dirname(path), { recursive: true }); await writeFile(path, file.content); }
       summary.headSha = await commitWorkspace(workspace, `SBI ${sbi.id}, iteration ${iteration}`, sbi.allowedFiles);
@@ -186,7 +187,7 @@ async function executeLoop({ root, summary, inputs, quiet, agent = runAgent, rev
       await json(join(iterDir, 'security.json'), result.security);
       await evidenceText(join(iterDir, 'verify.log'), JSON.stringify(result.verification, null, 2) + '\n');
       if (result.securityVerification.checks.some(c=>c.required&&c.status==='NOT_CONFIGURED')) {
-        await record(); return escalate('Required Security Verifier is NOT_CONFIGURED; configure it before starting a new run');
+        await record(); return escalate('Required Security Verifier is NOT_CONFIGURED; configure it before starting a new run', 'SECURITY_VERIFIER_NOT_CONFIGURED');
       }
       if (!quiet) for (const c of result.verification.checks) console.log(`  ${c.id}: ${c.status}${c.reason ? ` (${c.reason})` : ''}`);
       if (result.verification.status === 'PASS' && result.security.status === 'PASS') {
@@ -215,13 +216,17 @@ async function executeLoop({ root, summary, inputs, quiet, agent = runAgent, rev
     } catch (error) {
       result.error = redactText(error.message);
       await evidenceText(join(iterDir, 'agent.log'), `\nERROR: ${error.stack}\n`, true);
-      await record(); return escalate(`Agent/runtime error: ${error.message}`);
+      await record(); return escalate(`Agent/runtime error: ${error.message}`, classifyEscalation(error.message));
     }
     summary.consecutiveFailures++;
     await record(); await transition('FAILED', `iteration ${iteration}; consecutive=${summary.consecutiveFailures}`);
-    if (summary.consecutiveFailures >= config.maxConsecutiveFailures) return escalate(`${summary.consecutiveFailures} consecutive failures; 人間による原因確認が必要です。`);
+    if (summary.consecutiveFailures >= config.maxConsecutiveFailures) {
+      // Retrying cannot repair a missing verifier, so count it separately from ordinary repeated failures.
+      const notConfigured = result.verification?.checks?.some(c => c.required && c.status === 'NOT_CONFIGURED');
+      return escalate(`${summary.consecutiveFailures} consecutive failures; 人間による原因確認が必要です。`, notConfigured ? 'VERIFIER_NOT_CONFIGURED' : 'CONSECUTIVE_FAILURE');
+    }
   }
-  return escalate(`iteration limit (${config.maxIterations}) reached`);
+  return escalate(`iteration limit (${config.maxIterations}) reached`, 'ITERATION_LIMIT');
 }
 async function runProtected({ root, provider, sbiPath, quiet = false, agent = runAgent, reviewer = review, semanticReviewer, full = false }) {
   root = await realpath(root);
@@ -241,7 +246,7 @@ async function runProtected({ root, provider, sbiPath, quiet = false, agent = ru
   await json(join(directory, 'inputs.json'), inputs);
   const { transition, escalate } = controller(root, summary, quiet);
   await transition('PENDING', sbi.title);
-  if (sbi.ambiguous || sbi.requiresDesignDecision) return escalate(humanGate(sbi, rules));
+  if (sbi.ambiguous || sbi.requiresDesignDecision) return escalate(humanGate(sbi, rules), sbi.ambiguous ? 'SPEC_AMBIGUOUS' : 'DESIGN_DECISION_REQUIRED');
   const excludedSources = await readJson(join(directory,'workspace-exclusions.json'));
   const preflightFiles = await Promise.all(sbi.allowedFiles.map(async path => {
     let added = ''; try { added = await readFile(join(workspace,path),'utf8'); } catch(e) { if(e.code!=='ENOENT') throw e; }
@@ -255,6 +260,7 @@ async function runProtected({ root, provider, sbiPath, quiet = false, agent = ru
   await json(join(directory,'security-verification.json'),{status:'NOT_RUN',requiredVerifiers:summary.securityAssessment.requiredVerifiers,checks:[],violations:[]});
   const gateReason = humanGate(sbi, rules) || (summary.securityAssessment.requiresPreImplementationGate ? 'Human Gate: Security rule requires approval before implementation' : null);
   const preflight = assessRisk({ files: preflightFiles, metadata: metadata(sbi), humanGate: Boolean(gateReason), securityAssessment:summary.securityAssessment, lane:summary.lane }, riskPolicy);
+  summary.riskPreflight = preflight;
   if (gateReason || preflight.level === 3) {
     summary.gate = { required: true, state: 'WAITING_FOR_HUMAN_GATE', approvalState:'WAITING_FOR_HUMAN_APPROVAL', reason: gateReason || (summary.designApproval.required ? 'Human Gate: Design Approval for prototype promotion' : null) || `Human Gate: ${preflight.reasons.join(', ')}`,
       headSha: baselineSha, contextDigest: digest({ inputsDigest: summary.inputsDigest, baselineSha, allowedFiles: sbi.allowedFiles, reasons: preflight.reasons, securityAssessment:summary.securityAssessment }) };

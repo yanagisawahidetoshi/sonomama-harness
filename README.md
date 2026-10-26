@@ -290,7 +290,8 @@ LEVEL 3を複数人で承認する本運用には、認証済みの別人を返�
   changes.json                  # baseline → HEADの差分情報（実装後）
   approvals.json                # 署名付き台帳からの投影。承認の正本ではない
   merge-decision.json
-  escalation.json               # 異常停止時
+  escalation.json               # 異常停止時。reasonCodeを併記
+  health-metrics.json           # Observer用の観測データ。判定には使わない
   workspace/                    # 独立Git、アプリplaceholder、生成成果物
   iteration-N/
     prompt.txt
@@ -306,6 +307,32 @@ LEVEL 3を複数人で承認する本運用には、認証済みの別人を返�
 未実行のフェーズはNOT_RUNとし、成功結果を捏造しない。ゲート待ちでも初期リスクと承認・マージ未評価を保存する。
 Stateは.harness/state/runsにも保存する。resume時には同じrunを再評価する。
 実行証跡・ローカル承認はGit管理対象外。
+
+## Health MetricsとHarness Observerの責務分離
+
+各runは`health-metrics.json`（schema `version: 1`）をEvidence配下へ保存する。summary.jsonから派生した
+機械集計用の観測データで、run基本情報、iteration、Verifier件数、Security、承認3種、Review、escalationを持つ。
+
+- Signal Collection（今回）: Harnessが各runのMetricsを保存するところまで。Completion / Risk / Merge Judgeは
+  この値を読まない。壊れていても判定は変わらず、次のsaveで再生成する。
+- Harness Observer（将来・別コンポーネント）: 複数runのMetricsを横断集計し、改善候補を人間へ提示する。
+  Harnessの自動変更・自動Issue作成・自動mergeは行わない。
+
+ESCALATEDはsummary.escalation.codeとescalation.json.codeに機械集計可能なreasonCodeを持つ。
+人間向けのreason文は従来どおり残す。Reviewer名・prompt・agent応答・秘密値はMetricsに含めず、
+他のEvidenceと同じredactionを通す。Gate / Design Approvalの拒否はescalationではなく各approvalのstateで追う。
+
+| code | 発生点 |
+| --- | --- |
+| SPEC_AMBIGUOUS / DESIGN_DECISION_REQUIRED | SBIの曖昧・設計判断フラグ |
+| AGENT_ESCALATION | agentが人間の判断を要求 |
+| SECRET_PROPOSAL / NEW_SECURITY_SCOPE / NEW_HIGH_RISK | 適用前の提案内容を拒否 |
+| SECURITY_VERIFIER_NOT_CONFIGURED | 必須Security VerifierがNOT_CONFIGURED |
+| VERIFIER_NOT_CONFIGURED / CONSECUTIVE_FAILURE | 連続失敗。最終iterationに必須VerifierのNOT_CONFIGUREDがあれば前者 |
+| ITERATION_LIMIT | iteration上限 |
+| SCOPE_VIOLATION / LANE_ESCALATION | 許可範囲外のpath、prototype範囲の逸脱 |
+| SOURCE_CHANGED / WORKSPACE_CHANGED | 元リポジトリ・入力・worktreeの変化 |
+| UNKNOWN | 上記に分類できない実行時エラー |
 
 ## provider切り替え
 

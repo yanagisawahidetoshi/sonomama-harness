@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { json, readJson } from './io.mjs';
 import { digest, toolFingerprint, workspaceIntegrity, workspaceFingerprint, sourceIntegrity, assertWorktreeOwner } from './workspace.mjs';
 import { check } from './check.mjs';
+import { healthMetrics } from './health-metrics.mjs';
 export function runPaths(root, runId) {
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{1,150}$/.test(runId)) throw new Error('Invalid run ID');
   const directory = join(root, '.harness/runs', runId);
@@ -18,7 +19,9 @@ export async function withRunLock(root, runId, fn) {
   try { return await fn(); } finally { await rm(lock, { recursive: true, force: true }); }
 }
 export async function saveRun(root, summary) {
-  await json(runPaths(root, summary.id).summary, summary);
+  const paths = runPaths(root, summary.id);
+  await json(paths.summary, summary);
+  await json(join(paths.directory, 'health-metrics.json'), healthMetrics(summary));
   await json(join(root, '.harness/state/runs', `${summary.id}.json`), summary);
 }
 export async function loadRun(root, runId) {

@@ -139,10 +139,10 @@ describe('Health metrics signal collection', () => {
       assert.deepEqual(metrics.escalation, { code: 'CONSECUTIVE_FAILURE', detail: run.reason });
       assert.equal(JSON.parse(await readFile(join(root, run.runDir, 'escalation.json'), 'utf8')).code, 'CONSECUTIVE_FAILURE');
     }));
-    it('when a required verifier is not configured then records VERIFIER_NOT_CONFIGURED and counts it', () => fixture(async root => {
+    it('when a selected application verifier has no commands then records VERIFIER_NOT_CONFIGURED and counts it', () => fixture(async root => {
       await writeFile(join(root, 'apps/api/Gemfile'), '# Rails');
-      await update(root, sbiPath, s => s.requiredVerifiers = ['rails']);
-      const run = await runHarness({ root, quiet: true });
+      await update(root, sbiPath, s => s.allowedFiles = ['greeting.mjs', 'apps/api/note.txt']);
+      const run = await runHarness({ root, quiet: true, agent: async () => ({ files: [{ path: 'greeting.mjs', content: 'export const greet = () => "wrong";' }, { path: 'apps/api/note.txt', content: 'note' }] }) });
       assert.equal(run.status, 'ESCALATED');
       const metrics = await metricsOf(root, run);
       assert.equal(metrics.escalation.code, 'VERIFIER_NOT_CONFIGURED');
