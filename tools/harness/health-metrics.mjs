@@ -11,8 +11,9 @@ const count = checks => {
 export function healthMetrics(summary) {
   const last = summary.iterations?.at(-1) ?? null;
   const finishedAt = summary.cleanedAt ?? summary.events?.at(-1)?.at ?? null;
-  const executionEndedAt = summary.events?.filter(e => e.phase === 'execution').at(-1)?.at ?? null;
-  const elapsed = until => summary.startedAt && until ? Date.parse(until) - Date.parse(summary.startedAt) : null;
+  const execution = summary.events?.filter(e => e.phase === 'execution') ?? [];
+  const implementingAt = execution.find(e => e.status === 'IMPLEMENTING')?.at ?? null;
+  const elapsed = (from, until) => from && until ? Date.parse(until) - Date.parse(from) : null;
   const risk = summary.risk ? { level: summary.risk.level, phase: 'post-execution' } : summary.riskPreflight ? { level: summary.riskPreflight.level, phase: 'preflight' } : { level: null, phase: null };
   const security = summary.securityAssessment ?? null;
   const merge = summary.merge ?? {};
@@ -22,8 +23,9 @@ export function healthMetrics(summary) {
     version: healthMetricsVersion,
     runId: summary.id, sbiId: summary.sbi ?? null, lane: summary.lane?.name ?? null, provider: summary.provider ?? null,
     startedAt: summary.startedAt ?? null, finishedAt,
-    // durationMs is lifecycle elapsed time including human waits; executionDurationMs stops at the last execution-phase event.
-    durationMs: elapsed(finishedAt), executionDurationMs: elapsed(executionEndedAt),
+    // durationMs is lifecycle elapsed time including human waits. executionDurationMs spans the first IMPLEMENTING
+    // event to the last execution-phase event, so gate waits before implementation are excluded; null if never implemented.
+    durationMs: elapsed(summary.startedAt, finishedAt), executionDurationMs: elapsed(implementingAt, execution.at(-1)?.at),
     executionStatus: summary.executionStatus ?? null, mergeStatus: merge.state ?? null,
     riskLevel: risk.level, riskPhase: risk.phase, autoMergeEligible: merge.autoMergeEligible === true,
     cleaned: Boolean(summary.cleanedAt),

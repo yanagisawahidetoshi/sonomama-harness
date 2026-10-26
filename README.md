@@ -313,7 +313,8 @@ Stateは.harness/state/runsにも保存する。resume時には同じrunを再�
 各runは`health-metrics.json`（schema `version: 1`）をEvidence配下へ保存する。summary.jsonから派生した
 機械集計用の観測データで、run基本情報、iteration、Verifier件数、Security、承認3種、Review、escalationを持つ。
 `durationMs`は開始から最終更新までのlifecycle経過時間で、人間の承認待ちを含む。実装・検証・判定だけの
-時間は`executionDurationMs`（最後のexecution phase遷移まで）で見る。
+時間は`executionDurationMs`で見る。最初のIMPLEMENTING遷移から最後のexecution phase遷移までを測り、
+実装前のGate / Design Approval待ちは含めない。実装に入らず停止したrunではnull。
 
 - Signal Collection（今回）: Harnessが各runのMetricsを保存するところまで。Completion / Risk / Merge Judgeは
   この値を読まない。壊れていても判定は変わらず、次のsaveで再生成する。
