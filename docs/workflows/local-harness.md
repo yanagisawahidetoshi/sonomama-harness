@@ -4,6 +4,7 @@
 2. pnpm harness:checkで検証する。
 3. pnpm harness:demoまたはpnpm harness:runを実行する。
 4. WAITING_FOR_HUMAN_GATEなら、人間が設計・作業範囲を確認し、approve --phase gateを実行する。
+   WAITING_FOR_DESIGN_APPROVALなら、試作採用の設計を確認し、approve --phase designを実行する。
 5. resume --run IDで着手する。失敗は修正→再検証。連続3回失敗などはESCALATED。
 6. executionStatus=DONE後、risk-assessmentとHEADの差分を人間が確認する。
 7. LEVEL 2は1人、LEVEL 3は異なる2人以上がapprove --phase mergeで承認する。

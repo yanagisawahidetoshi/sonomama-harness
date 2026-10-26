@@ -229,9 +229,10 @@ MERGED状態を生成するコードやGitHub merge APIは持たない。
 - 試作採用時の設計承認: designApproval.state = NOT_REQUIRED / WAITING_FOR_DESIGN_APPROVAL / APPROVED / REJECTED
 - 実装前: gate.state = NOT_REQUIRED / WAITING_FOR_HUMAN_GATE / APPROVED / REJECTED
 - 実装: executionStatus = PENDING / IMPLEMENTING / VERIFYING / REVIEWING / JUDGING / FAILED / DONE / ESCALATED
-- 実装後: merge.state = NOT_ASSESSED / RISK_ASSESSING / WAITING_FOR_HUMAN_REVIEW / MERGE_ALLOWED / REJECTED / BLOCKED
+- 実装後: merge.state = NOT_ASSESSED / RISK_ASSESSING / WAITING_FOR_DESIGN_APPROVAL / WAITING_FOR_HUMAN_GATE / WAITING_FOR_HUMAN_REVIEW / MERGE_ALLOWED / REJECTED / BLOCKED
 
 Human Gate未充足ならMerge JudgeもWAITING_FOR_HUMAN_GATEを返す。
+Design Approval未充足（未承認・撤回後）ならMerge JudgeはWAITING_FOR_DESIGN_APPROVALを返し、WAITING_FOR_HUMAN_GATEを流用しない。
 ゲート対象のSBIはagentを一度も動かさず停止し、人間が着手範囲・設計を確認して承認する。
 ゲート承認のpurposeはimplementation-gate。baseline SHAとSBI/設計/Rulesのdigestに紐付ける。
 
