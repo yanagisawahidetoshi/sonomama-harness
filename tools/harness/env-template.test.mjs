@@ -2,7 +2,7 @@ import {describe,it} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdir,writeFile,readFile} from 'node:fs/promises';
 import {join} from 'node:path';
-import {fixture,commitFixture} from './test-fixture.mjs';
+import {fixture,commitFixture,runFixture} from './test-fixture.mjs';
 import {prepareWorkspace,git,assertWritablePath} from './workspace.mjs';
 import {isSecretPath} from './evidence-protection.mjs';
 
@@ -22,10 +22,18 @@ describe('Tracked environment templates',()=>{
       }));
     }
   });
+    it('when Harness starts with a tracked template then redaction discovery preserves safe inputs',()=>fixture(async root=>{
+      await writeFile(join(root,'apps/admin/.env.example'),'API_URL=http://localhost:3000\nAPI_KEY=your_api_key_here\n');
+      await git(root,['add','--force','--','apps/admin/.env.example']);
+      const run=await runFixture({root,quiet:true});
+      assert.equal(run.executionStatus,'DONE');
+      assert.equal(await readFile(join(root,run.runDir,'workspace/apps/admin/.env.example'),'utf8'),'API_URL=http://localhost:3000\nAPI_KEY=your_api_key_here\n');
+    }));
   describe('given real credentials or a live environment filename',()=>{
     for(const [name,content] of [
       ['.env.example','API_KEY=ghp_'+'x'.repeat(36)],
       ['.env.sample','PASSWORD=actual-sensitive-value'],
+      ['.env.example','TOKEN=<your-token> # API_KEY=actual-sensitive-value'],
       ['.env.template','DATABASE_URL=postgres://user:private-password@localhost/db'],
       ['.env.example','# ghp_'+'y'.repeat(36)],
       ['.env.example','API_KEY=your_ghp_'+'z'.repeat(36)+'_here'],
