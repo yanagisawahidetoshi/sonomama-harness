@@ -73,7 +73,9 @@ export const githubIssueSchema = z.object({
   number: z.number().int().positive(), title: z.string(), body: z.string().nullable().default(null), html_url: z.url(),
   state: z.string().optional(), labels: z.array(z.object({ name: z.string() })).default([]), pull_request: z.unknown().optional(),
 });
-export const githubCommentSchema = z.object({ html_url: z.url() });
+export const githubIssueListSchema = z.array(githubIssueSchema);
+export const githubCommentSchema = z.object({ id: z.number().int().positive(), body: z.string().nullable().default(null), html_url: z.url() });
+export const githubCommentListSchema = z.array(githubCommentSchema);
 
 export const riskPolicySchema = z.strictObject({
   version: z.literal(1), defaultLevel: z.literal(2),

@@ -7,11 +7,14 @@ import { runAgent } from './agents/index.mjs';
 import { planResponseSchema, planJsonSchema } from './schemas.mjs';
 import { judgePlan, creationOrder, limits } from './planner-judge.mjs';
 import { githubCli } from './planner-github.mjs';
-import { withEvidenceProtection, redactText } from './evidence-protection.mjs';
+import { withEvidenceProtection, redactText, hasSecret } from './evidence-protection.mjs';
 
 // Every generated SBI carries both labels. A human removes needs-review and adds ready; the Planner never does.
 export const sbiLabels = Object.freeze(['sbi', 'needs-review']);
 
+// Deterministic markers make re-runs idempotent: an SBI Issue is keyed by PBI URL + SBI ID, the PBI comment by PBI URL.
+export const sbiMarker = (pbiUrl, id) => `<!-- sonomama-sbi pbi=${pbiUrl} id=${id} -->`;
+export const listMarker = pbiUrl => `<!-- sonomama-sbi-list pbi=${pbiUrl} -->`;
 export function parseIssueUrl(url) {
   const match = /^https:\/\/github\.com\/([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)\/([A-Za-z0-9_.-]+)\/issues\/([1-9]\d*)\/?$/.exec(String(url).trim());
   if (!match) throw new Error('Invalid GitHub Issue URL; expected https://github.com/<owner>/<repo>/issues/<number>');
@@ -25,6 +28,7 @@ export function renderGherkin(scenarios) {
 export function renderSbiBody(sbi, pbi, issueNumbers = {}) {
   const security = sbi.securityImpact.filter(category => category !== 'None');
   return [
+    sbiMarker(pbi.url, sbi.id),
     '## 目的', '', sbi.purpose, '',
     '## 対象範囲', '', ...sbi.scope.included.map(item => `- ${item}`),
     ...(sbi.scope.excluded.length ? ['', '対象外:', ...sbi.scope.excluded.map(item => `- ${item}`)] : []), '',
@@ -38,11 +42,11 @@ export function renderSbiBody(sbi, pbi, issueNumbers = {}) {
     '_SONOMAMA Harness Plannerが生成。最終Risk判定はExecution Harnessが行う。`needs-review`の間はExecution Harnessの対象外。_', '',
   ].join('\n');
 }
-export function renderGeneratedComment(created) {
-  return ['## Generated SBI', '', ...created.map(c => `- #${c.number} ${c.title}`), ''].join('\n');
+export function renderGeneratedComment(created, pbi) {
+  return [listMarker(pbi.url), '## Generated SBI', '', ...created.map(c => `- #${c.number} ${c.title}`), ''].join('\n');
 }
 export function renderCreatedList(created) {
-  return ['Created SBI Issues', '', ...created.flatMap(c => [`✓ #${c.number} ${c.title}`, `  ${c.url}`, ''])].join('\n');
+  return ['Created SBI Issues', '', ...created.flatMap(c => [`✓ #${c.number} ${c.title}${c.reused ? '（既存を再利用）' : ''}`, `  ${c.url}`, ''])].join('\n');
 }
 export function renderJobSummary(created, pbi) {
   return ['## Created SBI Issues', '', `PBI: [#${pbi.number} ${pbi.title}](${pbi.url})`, '', ...created.map(c => `- [#${c.number} ${c.title}](${c.url})`), ''].join('\n');
@@ -83,23 +87,32 @@ async function planProtected({ root, issueUrl, provider, quiet, agent, github, s
     await json(join(directory, 'candidates.json'), response);
     if (response.escalation) throw new Error(`Planner escalation: ${response.escalation}`);
     summary.status = 'JUDGING'; await save();
-    summary.quality = judgePlan(response.sbis);
+    summary.quality = judgePlan(response.sbis, { securityCategories });
     await json(join(directory, 'quality.json'), summary.quality);
     if (summary.quality.status !== 'PASS') throw new Error(['SBI Quality Judge: FAIL。SBI Issueは作成していません。', ...summary.quality.findings.map(f => `- ${f.sbi}: ${f.reason}`)].join('\n'));
     log(`SBI Quality Judge: PASS (${response.sbis.length} SBI)`);
+    // Provider output is published outside the Harness. Reject credential-like values before any GitHub write, as the execution loop does before applying files.
+    if (hasSecret(JSON.stringify(response.sbis))) throw new Error('Secret/Credential detected in planner candidates; rejected before any GitHub write');
     summary.status = 'PUBLISHING'; await save();
     await github.ensureLabels(ref, sbiLabels);
+    const existing = new Map((await github.listIssues(ref, sbiLabels[0])).flatMap(issue => { const match = /<!-- sonomama-sbi pbi=(\S+) id=(SBI-\d{3}) -->/.exec(issue.body || ''); return match && match[1] === ref.url ? [[match[2], issue]] : []; }));
     const issueNumbers = {};
     for (const sbiId of creationOrder(response.sbis)) {
       const sbi = response.sbis.find(s => s.id === sbiId);
       const title = `${sbi.id} ${sbi.title}`;
-      const created = await github.createIssue(ref, { title, body: renderSbiBody(sbi, pbi, issueNumbers), labels: [...sbiLabels] });
-      issueNumbers[sbi.id] = created.number;
-      summary.created.push({ sbiId: sbi.id, number: created.number, title, url: created.html_url });
+      const body = renderSbiBody(sbi, pbi, issueNumbers);
+      if (hasSecret(title) || hasSecret(body)) throw new Error('Secret/Credential detected in rendered SBI Issue; rejected before any GitHub write');
+      const reused = existing.get(sbi.id);
+      const issue = reused || await github.createIssue(ref, { title, body, labels: [...sbiLabels] });
+      issueNumbers[sbi.id] = issue.number;
+      summary.created.push({ sbiId: sbi.id, number: issue.number, title: reused ? issue.title : title, url: issue.html_url, reused: Boolean(reused) });
       await json(join(directory, 'issues.json'), { created: summary.created, comment: null });
-      await save(); log(`Created #${created.number} ${title}`);
+      await save(); log(`${reused ? 'Reused' : 'Created'} #${issue.number} ${title}`);
     }
-    summary.comment = (await github.addComment(ref, renderGeneratedComment(summary.created))).html_url;
+    const comment = renderGeneratedComment(summary.created, pbi);
+    if (hasSecret(comment)) throw new Error('Secret/Credential detected in PBI comment; rejected before any GitHub write');
+    const previous = (await github.listComments(ref)).find(c => (c.body || '').includes(listMarker(ref.url)));
+    summary.comment = (previous ? await github.updateComment(ref, previous.id, comment) : await github.addComment(ref, comment)).html_url;
     summary.status = 'DONE'; summary.finishedAt = new Date().toISOString();
     await json(join(directory, 'issues.json'), { created: summary.created, comment: summary.comment });
     await save();

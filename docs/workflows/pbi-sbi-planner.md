@@ -19,8 +19,9 @@ Risk / Security Impact、検証方法、元PBI。詳細設計・関数名・実�
 
 - 不正なURL、取得失敗、Pull RequestのURL: exit 1。GitHubへは書き込まない。
 - providerのescalation（PBIが曖昧など）: exit 1。確認事項を表示する。
+- providerの出力に秘密値らしき文字列: exit 1。GitHubへは書き込まない。
 - Issue作成の途中失敗: 作成済みのIssue一覧を表示してexit 1。元PBIへのコメントは投稿しない。
-  同じPBIで再実行すると重複Issueになるため、作成済みを人間が整理してから再実行する。
+  再実行すると本文のmarker（PBI URL + SBI ID）で既存Issueを再利用し、未作成分だけを作る。既存Issueの本文は更新しない。
 
 ## GitHub Actionsで実行する場合
 

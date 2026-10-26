@@ -6,7 +6,7 @@ const vagueWords = /\b(etc|appropriate|properly)\b/i;
 const sentenceEnd = /[。！？]|[.!?](?=\s|$)/;
 const blank = value => typeof value !== 'string' || !value.trim();
 
-export function judgePlan(sbis) {
+export function judgePlan(sbis, { securityCategories = null } = {}) {
   const findings = [];
   const add = (sbi, rule, reason) => findings.push({ sbi, rule, reason });
   if (!sbis.length) add('*', 'empty-plan', 'SBI候補が1件も生成されていません');
@@ -14,6 +14,10 @@ export function judgePlan(sbis) {
   for (const id of new Set(ids)) if (ids.filter(other => other === id).length > 1) add(id, 'duplicate-id', `SBI ID ${id} が重複しています`);
   for (const sbi of sbis) {
     if (!/^SBI-\d{3}$/.test(sbi.id)) add(sbi.id, 'id-format', `SBI IDは SBI-001 の形式にしてください（${sbi.id}）`);
+    if (blank(sbi.title)) add(sbi.id, 'title-blank', 'タイトルが空です');
+    if (blank(sbi.purpose)) add(sbi.id, 'purpose-blank', '目的が空です');
+    if (!sbi.scope.included.length || sbi.scope.included.some(blank)) add(sbi.id, 'scope-blank', '対象範囲が空です');
+    if (sbi.scope.excluded.some(blank)) add(sbi.id, 'scope-blank', '対象範囲（対象外）に空の項目があります');
     if (sbi.acceptanceCriteria.length > limits.acceptanceCriteria) add(sbi.id, 'granularity', `粒度が過大です: 受け入れ要件が${sbi.acceptanceCriteria.length}件（上限${limits.acceptanceCriteria}）`);
     if (sbi.changeAreas.length > limits.changeAreas) add(sbi.id, 'granularity', `粒度が過大です: 想定変更範囲が${sbi.changeAreas.length}領域（上限${limits.changeAreas}）`);
     if (sbi.scenarios.length > limits.scenarios) add(sbi.id, 'granularity', `粒度が過大です: Scenarioが${sbi.scenarios.length}件（上限${limits.scenarios}）`);
@@ -48,6 +52,7 @@ export function judgePlan(sbis) {
     const categories = sbi.securityImpact.filter(category => category !== 'None');
     if (sbi.securityImpact.some(blank)) add(sbi.id, 'security-blank', 'Security Impactに空の項目があります');
     if (categories.length && sbi.securityImpact.includes('None')) add(sbi.id, 'security-mixed', 'Security ImpactにNoneと分類が混在しています');
+    for (const category of categories) if (securityCategories && !securityCategories.includes(category)) add(sbi.id, 'security-unknown', `Security Impact ${category} はsecurity.jsonに定義された分類ではありません`);
     if (categories.length && sbi.riskCandidate !== 'L3') add(sbi.id, 'risk-security', `Security Impact（${categories.join(', ')}）があるためRisk candidateはL3が必要です（現在 ${sbi.riskCandidate}）`);
     for (const [key, label] of [['applicationTest', 'Application Test'], ['acceptance', '受け入れ要件'], ['e2e', 'E2E']]) {
       if (blank(sbi.verification[key])) add(sbi.id, 'verification', `検証方法（${label}）が未記載です`);
