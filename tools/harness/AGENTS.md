@@ -19,7 +19,7 @@
 - AI自己申告は採用せずVerifier・Reviewer・Completion Judgeが完了判定する。
 - 3回連続失敗、仕様曖昧、重要設計判断で停止する。
 - AuthN/AuthZ/RLS/PII/Migration/ADR変更はHuman Gate。人間が判断をSBI/ADRに残す。
-- agentの許可ファイルにテスト・設定・ルール・証跡を含めない。
+- Agentの許可ファイルにTrusted Acceptance・設定・ルール・証跡を含めない。Application Testは後述の範囲で許可する。
 - 自動mergeは禁止。最終mergeは人間が行う。
 - 読み取り・通常編集・テスト・型確認・lint・format・通常add/commit/push・PR作成は確認不要。
   merge/rebase/force push/reset --hard/ブランチ・タグ削除等は実行前に確認する。
@@ -32,7 +32,7 @@
 - 実装前gateと実装後merge approvalは別state・別purpose・別contextで管理する。
 - 承認は信頼するidentity adapter経由だけ。agentのJSONや証跡ファイルを承認の正本にしない。
 - LEVEL 2は1人、LEVEL 3は異なる2人以上。重複、AI、旧SHA、撤回済みの承認は無効。
-- 必須チェックはすべてPASS。対象外と明示したmissing appだけSKIP可能。
+- 必須チェックはすべてPASS。任意の非該当チェックと未生成placeholderだけSKIP可能。
 - 出力はMERGE_ALLOWEDとautoMergeEligibleまで。実mergeとMERGED遷移は実装しない。
 - 承認待ちのresumeと実装の再試行は分離し、Plannerより実行・判定の整合性を優先する。
 
@@ -57,3 +57,7 @@
 - 試作の本番移行は新しいProduction SBIと実装前Design Approvalを必要とし、本番検証を省略しない。
 - runは元のHEADからdetached Git worktreeで実行する。元リポジトリはcleanで開始し、証跡と承認台帳をrunのGit履歴に入れない。
 - cleanupはcleanなworktreeだけを削除し、証跡とrefs/harness/runs/<run-id>を保持する。force/remove/resetは使わない。
+
+- 通常prototypeのLEVEL 1候補はpr-risk.jsonの明示的safe ruleで定義する。laneだけで承認数を減らさない。LEVEL 2=1人、LEVEL 3=2人以上を守り、prototypeのautoMergeEligibleは常にfalse。
+- .env.*の保護は維持する。trackedのexample/sample/templateだけ、秘密値がないことを内容検査してworktreeへ取り込む。Agentの書込許可やexport許可には転用しない。
+- Design Approvalの待機はWAITING_FOR_DESIGN_APPROVALとして別phaseに記録する。Implementation Gateのstateを表示目的で流用しない。

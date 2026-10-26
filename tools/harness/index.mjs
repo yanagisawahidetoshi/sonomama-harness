@@ -23,7 +23,7 @@ export { check, judge, providerCommand };
 function controller(root, summary, quiet) {
   const directory = runPaths(root, summary.id).directory;
   const transition = async (status, detail = '', phase = 'execution') => {
-    assertState(phase === 'implementation-gate' ? 'gate' : phase, status);
+    assertState(phase === 'implementation-gate' ? 'gate' : phase === 'design-approval' ? 'design' : phase, status);
     summary.status = status;
     if (phase === 'execution') summary.executionStatus = status;
     if (phase === 'merge') summary.merge = { ...summary.merge, state: status, decision: status, autoMergeEligible: status === 'MERGE_ALLOWED' && summary.merge.autoMergeEligible === true };
@@ -48,16 +48,20 @@ async function resolveGate(root, summary) {
   const records = await authenticatedRecords(root, summary.id);
   if (summary.designApproval?.required) {
     const design = validHumanApprovals(records, { purpose:'design-approval', headSha:summary.baselineSha, contextDigest:summary.designApproval.contextDigest });
-    summary.designApproval.state = design.rejected ? 'REJECTED' : design.approvals.length ? 'APPROVED' : 'WAITING_FOR_HUMAN_GATE';
+    summary.designApproval.state = design.rejected ? 'REJECTED' : design.approvals.length ? 'APPROVED' : 'WAITING_FOR_DESIGN_APPROVAL';
     summary.lane.designApproved = summary.designApproval.state === 'APPROVED';
-    if (!summary.lane.designApproved) { summary.gate.state = summary.designApproval.state; return false; }
   }
-  if (!summary.gate.required) return true;
-  const { approvals, rejected } = validHumanApprovals(records, { purpose: 'implementation-gate', headSha: summary.gate.headSha, contextDigest: summary.gate.contextDigest });
-  summary.gate.state = rejected ? 'REJECTED' : approvals.length ? 'APPROVED' : 'WAITING_FOR_HUMAN_GATE';
-  summary.gate.reviewers = approvals.map(a => a.reviewer);
-  summary.gate.approvalState = summary.gate.state === 'WAITING_FOR_HUMAN_GATE' ? 'WAITING_FOR_HUMAN_APPROVAL' : summary.gate.state;
-  return summary.gate.state === 'APPROVED';
+  if (summary.gate.required) {
+    const { approvals, rejected } = validHumanApprovals(records, { purpose: 'implementation-gate', headSha: summary.gate.headSha, contextDigest: summary.gate.contextDigest });
+    summary.gate.state = rejected ? 'REJECTED' : approvals.length ? 'APPROVED' : 'WAITING_FOR_HUMAN_GATE';
+    summary.gate.reviewers = approvals.map(a => a.reviewer);
+    summary.gate.approvalState = summary.gate.state === 'WAITING_FOR_HUMAN_GATE' ? 'WAITING_FOR_HUMAN_APPROVAL' : summary.gate.state;
+  }
+  const { directory } = runPaths(root,summary.id);
+  await json(join(directory,'design-approval.json'),summary.designApproval);
+  await json(join(directory,'human-gate.json'),summary.gate);
+  return (!summary.designApproval?.required || summary.designApproval.state === 'APPROVED')
+    && (!summary.gate.required || summary.gate.state === 'APPROVED');
 }
 async function assessMerge(root, summary, inputs, quiet) {
   const { directory, workspace } = runPaths(root, summary.id);
@@ -72,7 +76,7 @@ async function assessMerge(root, summary, inputs, quiet) {
   const last = summary.iterations.at(-1);
   summary.securityAssessment = combineSecurity(summary.securityAssessment, classifySecurity({ files, sbi: inputs.sbi }, inputs.securityPolicy));
   await json(join(directory, 'security-assessment.json'), { ...summary.securityAssessment, headSha: summary.headSha });
-  summary.risk = assessRisk({ files, metadata: metadata(inputs.sbi), humanGate: summary.gate.required, aiRisk: last.semanticReview?.riskLevel ?? null, securityAssessment: summary.securityAssessment }, inputs.riskPolicy);
+  summary.risk = assessRisk({ files, metadata: metadata(inputs.sbi), humanGate: summary.gate.required, aiRisk: last.semanticReview?.riskLevel ?? null, securityAssessment: summary.securityAssessment, lane:summary.lane }, inputs.riskPolicy);
   await json(join(directory, 'risk-assessment.json'), { ...summary.risk, phase: 'post-execution', headSha: summary.headSha, inputsDigest: summary.inputsDigest });
   const securityVerification = last.securityVerification;
   if (summary.securityAssessment.requiredVerifiers.some(id => !securityVerification.requiredVerifiers.includes(id))) throw new Error('Required security checks changed; re-verification required');
@@ -102,7 +106,8 @@ async function executeLoop({ root, summary, inputs, quiet, agent = runAgent, rev
     summary.reason = summary.gate.reason || 'Human Gate: Design Approval for prototype promotion';
     await json(join(directory, 'design-approval.json'), summary.designApproval);
     await json(join(directory, 'human-gate.json'), summary.gate);
-    await transition(summary.gate.state, summary.reason, 'implementation-gate');
+    const designWaiting = summary.designApproval?.required && summary.designApproval.state !== 'APPROVED';
+    await transition(designWaiting ? summary.designApproval.state : summary.gate.state, summary.reason, designWaiting ? 'design-approval' : 'implementation-gate');
     return summary;
   }
   await json(join(directory, 'design-approval.json'), summary.designApproval);
@@ -150,7 +155,7 @@ async function executeLoop({ root, summary, inputs, quiet, agent = runAgent, rev
         await json(join(iterDir,'proposed-security.json'),proposedSecurity);
         await record(); return escalate('New security scope detected before applying code; update SBI and obtain a new Human Gate');
       }
-      const proposed = assessRisk({ files: proposedFiles, metadata: metadata(sbi), humanGate: summary.gate.required, securityAssessment: proposedSecurity }, riskPolicy);
+      const proposed = assessRisk({ files: proposedFiles, metadata: metadata(sbi), humanGate: summary.gate.required, securityAssessment: proposedSecurity, lane:classifyLane(proposedFiles,sbi,inputs.lanePolicy) }, riskPolicy);
       if (proposed.level === 3 && !summary.gate.required) {
         await json(join(iterDir, 'proposed-risk.json'), proposed);
         await record(); return escalate('New high risk detected before applying code; declare the risk in SBI and obtain an implementation gate in a new run');
@@ -243,20 +248,19 @@ async function runProtected({ root, provider, sbiPath, quiet = false, agent = ru
     return {path,status:'M',binary:false,added,excludedSecret:excludedSources.some(f=>f.path===path)};
   }));
   summary.lane = classifyLane(preflightFiles,sbi,lanePolicy);
-  summary.designApproval = {required:summary.lane.requiresDesignApproval,state:summary.lane.requiresDesignApproval?'WAITING_FOR_HUMAN_GATE':'NOT_REQUIRED',contextDigest:digest({inputsDigest:summary.inputsDigest,baselineSha,promotion:sbi.promotion || null})};
+  summary.designApproval = {required:summary.lane.requiresDesignApproval,state:summary.lane.requiresDesignApproval?'WAITING_FOR_DESIGN_APPROVAL':'NOT_REQUIRED',contextDigest:digest({inputsDigest:summary.inputsDigest,baselineSha,promotion:sbi.promotion || null})};
   await json(join(directory,'lane-assessment.json'),summary.lane);
   summary.securityAssessment = classifySecurity({files:preflightFiles,sbi},securityPolicy);
   await json(join(directory,'security-assessment.json'),{...summary.securityAssessment,phase:'preflight',headSha:baselineSha});
   await json(join(directory,'security-verification.json'),{status:'NOT_RUN',requiredVerifiers:summary.securityAssessment.requiredVerifiers,checks:[],violations:[]});
   const gateReason = humanGate(sbi, rules) || (summary.securityAssessment.requiresPreImplementationGate ? 'Human Gate: Security rule requires approval before implementation' : null);
-  const preflight = assessRisk({ files: preflightFiles, metadata: metadata(sbi), humanGate: Boolean(gateReason), securityAssessment:summary.securityAssessment }, riskPolicy);
+  const preflight = assessRisk({ files: preflightFiles, metadata: metadata(sbi), humanGate: Boolean(gateReason), securityAssessment:summary.securityAssessment, lane:summary.lane }, riskPolicy);
   if (gateReason || preflight.level === 3) {
     summary.gate = { required: true, state: 'WAITING_FOR_HUMAN_GATE', approvalState:'WAITING_FOR_HUMAN_APPROVAL', reason: gateReason || (summary.designApproval.required ? 'Human Gate: Design Approval for prototype promotion' : null) || `Human Gate: ${preflight.reasons.join(', ')}`,
       headSha: baselineSha, contextDigest: digest({ inputsDigest: summary.inputsDigest, baselineSha, allowedFiles: sbi.allowedFiles, reasons: preflight.reasons, securityAssessment:summary.securityAssessment }) };
     summary.reason = summary.gate.reason || 'Human Gate: Design Approval for prototype promotion';
     await json(join(directory, 'risk-preflight.json'), preflight);
   }
-  if (summary.designApproval.required && !summary.gate.required) summary.gate.state = 'WAITING_FOR_HUMAN_GATE';
   await json(join(directory, 'design-approval.json'), summary.designApproval);
   await json(join(directory, 'risk-assessment.json'), { ...preflight, phase: 'preflight', headSha: baselineSha });
   await json(join(directory, 'approvals.json'), { headSha: baselineSha, approvals: [], source: 'authenticated local ledger' });

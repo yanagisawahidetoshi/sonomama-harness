@@ -13,8 +13,7 @@ export function mergeDecision({ risk, checks, approvals = [], headSha, contextDi
   const { approvals: valid, rejected } = validHumanApprovals(approvals, { purpose: 'merge', headSha, contextDigest });
   const checkOk = Array.isArray(checks) && checksPassed(checks) && required.every(id => checks.some(c => c.id === id && c.required === true && c.status === 'PASS'));
   const effectiveLevel = humanGate ? Math.max(risk.level, 3) : risk.level;
-  const lightweight = lane?.name === 'prototype' && !lane.requiresSecurityGate && !humanGate && !lane.requiresDesignApproval;
-  const requiredApprovals = lightweight ? 0 : Math.max(risk.requiredHumanApprovals ?? 0, effectiveLevel === 3 ? 2 : effectiveLevel === 2 ? 1 : 0);
+  const requiredApprovals = Math.max(risk.requiredHumanApprovals ?? 0, effectiveLevel === 3 ? 2 : effectiveLevel === 2 ? 1 : 0);
   let decision = 'BLOCKED';
   const reasons = [];
   if (!/^[0-9a-f]{40,64}$/.test(headSha || '') || !contextDigest || ![1, 2, 3].includes(risk.level)) reasons.push('missing_or_invalid_snapshot');
@@ -27,5 +26,5 @@ export function mergeDecision({ risk, checks, approvals = [], headSha, contextDi
   else { decision = 'MERGE_ALLOWED'; reasons.push('all_conditions_satisfied'); }
   return { state: decision, decision, riskLevel: effectiveLevel, headSha, contextDigest, requiredApprovals,
     validApprovals: valid.length, validReviewers: valid.map(a => a.reviewer), reasons,
-    autoMergeEligible: decision === 'MERGE_ALLOWED' && effectiveLevel === 1 && risk.autoMergeAllowed !== false && !humanGate && checkOk };
+    autoMergeEligible: lane?.name !== 'prototype' && decision === 'MERGE_ALLOWED' && effectiveLevel === 1 && risk.autoMergeAllowed !== false && !humanGate && checkOk };
 }

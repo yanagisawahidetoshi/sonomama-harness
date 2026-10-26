@@ -15,6 +15,28 @@ export function isSecretPath(path) {
   if (/(^|\/)docs\/security\/secrets\.md$/i.test(normalized)) return false;
   return normalized.split('/').some(name => /^\.env(?:\.|$)|\.(pem|key|p12|pfx)$|^(credentials|secrets)|^\.upload-access-key$/i.test(name));
 }
+// Only narrowly named dotenv templates are eligible. Live env paths remain protected everywhere else.
+export function isSafeEnvTemplate(path, content) {
+  const parts = path.replaceAll('\\','/').split('/');
+  const name = parts.pop();
+  if (!/^\.env(?:\.[A-Za-z0-9_-]+)*\.(example|sample|template)$/i.test(name || '') || isSecretPath(parts.join('/'))) return false;
+  if (Buffer.byteLength(content) > 65536 || content.includes('\u0000')) return false;
+  // Scan the original content before removing placeholders; a comment or placeholder cannot conceal a token.
+  if ([...defaults, ...(storage.getStore()?.patterns || [])].some(pattern => new RegExp(pattern).test(content)) || /[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:[^\s/@]+@/i.test(content)) return false;
+  let invalid = false;
+  const inspected = content.split(/\r?\n/).map(line => {
+    const match = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+    if (!match) return line;
+    const value = match[2].replace(/\s+#.*$/, '').trim().replace(/^(['"])(.*)\1$/, '$2');
+    const placeholder = value === '' || /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(value)
+      || /^<your[-_][A-Za-z0-9_-]+>$/.test(value)
+      || /^(your_(api_key|access_key|token|password|secret)(_here)?|replace[-_]me|changeme|example|placeholder)$/i.test(value);
+    if (placeholder) return match[2].match(/\s+(#.*)$/)?.[1] || '';
+    if (/(^|_)(password|passwd|token|secret|credentials?|api_key|access_key|private_key)(_|$)/i.test(match[1])) invalid = true;
+    return line;
+  }).join('\n');
+  return !invalid && !hasSecret(inspected);
+}
 export function redactText(input) {
   let text = String(input);
   const context = storage.getStore();
@@ -78,7 +100,7 @@ export async function withEvidenceProtection(root, fn, { extensions = [] } = {})
         if (info.isDirectory()) await scan(path);
         else if (info.isFile() && isSecretPath(relative(root, path)) && info.size < 65536) {
           const content = await readFile(path, 'utf8');
-          if (!content.includes('\u0000')) rememberSecret(content);
+          if (!content.includes('\u0000') && !isSafeEnvTemplate(path,content)) rememberSecret(content);
         }
       }
     }
@@ -95,7 +117,7 @@ export async function discoverEvidenceSecrets(directory) {
     if (info.isDirectory()) await discoverEvidenceSecrets(path);
     else if (info.isFile() && isSecretPath(path) && info.size<65536) {
       const text=await readFile(path,'utf8');
-      if (!text.includes('\u0000')) rememberSecret(text);
+      if (!text.includes('\u0000') && !isSafeEnvTemplate(path,text)) rememberSecret(text);
     }
   }
 }

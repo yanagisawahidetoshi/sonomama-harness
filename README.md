@@ -169,6 +169,11 @@ docs/securityとdocs/adrはdocs-onlyのLOW候補より保護ルールを優先�
 Git管理しない。未追跡・ignoredの秘密ファイルはworktreeに現れず、レビューexportからも除外する。
 仕様で必要なdocs/security/secrets.mdだけは文書として残し、内容は検査する。
 trackedファイルに秘密パスやcredentialを検知した場合は、worktree作成前に停止する。
+例外は`.env.example` / `.env.sample` / `.env.template`と`.env.development.example`のように同じ接尾辞を持つdotenvテンプレート。
+64 KiB以下のテキストを検査し、キーやパスワードは空欄・`${ENV_VAR}`・`<your-token>`・`your_api_key_here`・`replace-me`等の既知placeholderだけを許可する。
+トークン形式、鍵、認証情報入りURL、実値のある機密項目、コメント内の秘密は拒否する。
+実運用の`.env` / `.env.local`や機密ディレクトリ内のテンプレートは引き続き拒否する。
+この例外はtrackedファイルの取込専用で、Agent書込やレビューexportの許可には使わない。
 保護されたHarnessテストに含まれる検出用文字列は一般ソースの代入検出と分け、実際のトークン形式と鍵を検査する。
 共有Git object DBの過去履歴を秘密情報の隔離境界にはできないため、秘密をcommitした履歴の除去は人間が別途行う。
 Agentは読取専用／ツール無効のproviderからJSONだけを返す。これは信頼したローカルOSでの実行であり、敵対プロセスのOS隔離ではない。
@@ -352,8 +357,10 @@ CIはこのfullモードを使う。アプリ実装・依存環境ができた�
 通常の試作はtypecheck・lint・format:check・build・secret-scanが必須。
 prototypeのpackage.jsonにはこの4スクリプトを用意する。mobileのbuildはExpo exportに接続する。
 統合テスト・E2E・Maestro・VRT・本番向けSecurityコマンドは通常は必須にしない。
-ただしACの独立検証と軽量の禁止パターン検査は行う。普通の試作はRiskの既定LEVEL 2を保ちつつ、
-Production相当のmerge人間承認を要求しない。MERGE_ALLOWEDでもautoMergeEligibleはfalseで、merge実行はしない。
+ただしACの独立検証と軽量の禁止パターン検査は行う。Riskの既定はLEVEL 2。通常の試作はpr-risk.jsonの`explicit_safe_prototype_only`に一致し、
+非機密のprototype lane内・通常の追加/変更・許可拡張子・サイズ上限・通常ファイルmodeという条件を満たす場合だけLEVEL 1候補になる。
+LEVEL 3の保護ルールやAIによる引き上げは常に優先する。LEVEL 1=0人、LEVEL 2=1人、LEVEL 3=異なる2人以上という承認契約は共通。
+PrototypeはLEVEL 1でMERGE_ALLOWEDになってもautoMergeEligibleはfalseで、merge実行はしない。
 
 認証・権限・PII・Secret/Credential・本番データ/API・Cognito User Pool・機密設定への影響は
 試作でもProduction/Securityへ昇格し、実装前Human Gate・LEVEL 3・必須Security検証を強制する。
@@ -362,7 +369,9 @@ packagesへの変更を含むSBIも常にProduction。本番共有packageの検�
 
 試作を本番へ移す場合は、新しいProduction SBIに`promotion: {"source":"prototypes/web"}`を設定する。
 Design Approval待ちで実装を止め、`pnpm harness:approve --run RUN_ID --phase design`で人間が承認してからresumeする。
-Design Approvalは`design-approval`という独立した署名済みstate。SBIやSHAを変えたら取り直す。
+Design Approvalは`design-approval`という独立した署名済みstate。待機状態は`WAITING_FOR_DESIGN_APPROVAL`。
+実装前Human Gateが不要なら、Design Approvalの待機・承認・拒否・撤回の間もgate.stateは`NOT_REQUIRED`を保つ。
+証跡はdesign-approval.jsonとhuman-gate.jsonで分離する。SBIやSHAを変えたら取り直す。
 その後apps配下で本番実装→Production検証→実装後のMerge Approval→MERGE_ALLOWED。
 Design Approvalは実装前Human GateやMerge Approvalの代わりにはならない。
 既存の本番SBI全てに試作を強制するものではない。試作の採用時にpromotionを宣言する。
@@ -371,6 +380,9 @@ Design Approvalは実装前Human GateやMerge Approvalの代わりにはなら�
 
 runのHEADを`refs/harness/runs/<run-id>`で保持するので、レビュー・将来のPR Adapterも同じSHAを参照できる。
 元リポジトリのHEADが進んだ場合、dirty workspace、検証ソースの変更、入力の変更があれば承認を再利用しない。
+現在のLocal Phaseではresume・merge可否の再判定もroot HEAD==baselineを要求する。
+別PRをpullしただけでも既存runは無効になるため、新しいHEADでrunと承認を作り直す。
+並行run / Factory向けのbase追跡は今後の拡張とする。
 証跡・承認台帳・秘密値・node_modulesはiteration commitに含めない。
 
 ```sh

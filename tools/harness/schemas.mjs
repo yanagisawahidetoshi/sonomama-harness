@@ -52,7 +52,7 @@ export const riskPolicySchema = z.strictObject({
   }),
   pathRules: z.array(z.strictObject({ id: text, pattern: text, minimumLevel: z.union([z.literal(2), z.literal(3)]) })).min(1),
   metadataRules: z.array(z.strictObject({ id: text, pattern: text, minimumLevel: z.union([z.literal(2), z.literal(3)]) })).min(1),
-  safeRules: z.array(z.strictObject({ id: text, pattern: text, candidateLevel: z.literal(1), allowedStatuses: z.array(z.enum(['A', 'M'])), maxChangedBytes: z.number().int().positive() })),
+  safeRules: z.array(z.strictObject({ id: text, pattern: text, candidateLevel: z.literal(1), requiredLane: z.enum(['prototype', 'production']).optional(), allowedStatuses: z.array(z.enum(['A', 'M'])), maxChangedBytes: z.number().int().positive() })),
 });
 export const approvalRecordSchema = z.strictObject({
   id: text, runId: text, purpose: z.enum(['implementation-gate', 'design-approval', 'merge']),
