@@ -78,6 +78,13 @@ describe('API Mock Server', () => {
     })));
   });
 
+  describe('given an approved OpenAPI and no Prism installed', () => {
+    it('when api:mock starts then refuses and tells to run pnpm install instead of exiting silently', () => fixture(root => mockGitHub({}, async () => {
+      await approved(root);
+      await refused(root, /pnpm install/, { prism: join(root, 'node_modules/.bin/prism') });
+    })));
+  });
+
   describe('given a proposal that is not approved', () => {
     it('when api:mock starts then refuses and explains that the API schema is not approved', () => fixture(root => mockGitHub({}, async () => {
       await plan(root); await commitFixture(root); await reflect(root);
@@ -167,7 +174,7 @@ describe('API Mock Server', () => {
           try { await fetch(`${base}/api/v1/courses`); break; } catch (error) { if (i > 100) throw error; await new Promise(r => setTimeout(r, 100)); }
         }
         await test(base);
-      } finally { child.kill(); }
+      } finally { child?.kill(); }
     }
     it('when a client calls the authenticated endpoint without a bearer token then responds 401 with the shared Error schema', () => fixture(root => mockGitHub({}, () => serving(root, async base => {
       const res = await fetch(`${base}/api/v1/me/profile`);
