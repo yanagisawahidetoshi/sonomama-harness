@@ -104,7 +104,8 @@
     "prototypes/mobile/src/components/LessonCard/styles.ts",
     "prototypes/mobile/src/components/LessonCard/LessonCard.stories.tsx",
     "prototypes/mobile/src/mocks/lessons.ts",
-    "pnpm-lock.yaml"
+    "pnpm-lock.yaml",
+    "package.json"
   ],
   "risks": [
     "pnpm-lock.yamlの更新はworkspace全体に影響する"

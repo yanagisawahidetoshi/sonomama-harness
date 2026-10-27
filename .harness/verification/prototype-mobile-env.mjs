@@ -43,7 +43,10 @@ try {
       assert.ok(files(join(app, 'src/app')).some(p => p.endsWith('_layout.tsx')), 'root layout');
     }],
     ['PMOB-AC-5', 'Given the package, When designers open Storybook, Then React Native Storybook is configured', () => {
-      hasDeps(['@storybook/react-native', 'storybook']);
+      hasDeps(['@storybook/react-native']);
+      // storybook is the peer of @storybook/react-native; it is resolved from the workspace root so its bin does not shadow the storybook script.
+      const rootPkg = JSON.parse(read('package.json'));
+      assert.ok(deps().storybook || rootPkg.devDependencies?.storybook, 'storybook available to the package');
       assert.ok(existsSync(join(app, '.rnstorybook/main.ts')), '.rnstorybook/main.ts');
       assert.match(pkg().scripts.storybook, /STORYBOOK/);
     }],
