@@ -33,7 +33,9 @@ API Schemaを利用する後続処理は、必ず`planner:api-schema-status`（`
 - 承認記録は、Proposal 3ファイル（openapi.yaml・proposal.json・summary.md）のdigestと、承認時のcommit SHAを持つ。
 - 判定時は現在のファイルのdigestと一致し、記録したcommitの内容とも一致する承認だけを数える。内容が変われば承認は無効になる。
 - Proposalが未commit、人間が生成物を編集した、Quality JudgeがPASSしていない場合は承認を記録しない。
-- Security Impactがあれば異なる人間2人、なければ1人が必要。同じ人の承認は1人と数え、各人の最新の判断だけを使う。
+- 生成物の改変は、Plannerが`.harness/state/api-schema/`（Git管理対象外）に署名して残した生成記録の3ファイルのdigestと比べて判定する。proposal.json自身の`files`は参考情報で、改変の判定には使わない。
+- 生成記録は生成したPCにだけある。別のPCやcloneでは生成記録がないため承認を記録しない（承認台帳と同じくローカルの信頼状態）。
+- Security Impactがあれば異なる人間2人、なければ1人が必要。必要人数は署名付きの生成記録から読み、proposal.jsonからは読まない。同じ人の承認は1人と数え、各人の最新の判断だけを使う。
 - 識別は既存の承認台帳と同じくOSユーザー。1台のPCの同じOSユーザーでは2人分にならない。複数人の本運用には認証済み承認adapterを接続する。
 - 有効な承認がある間、Plannerは再生成しない。変更する場合は承認者が`--decision revoke`してから再実行する。
 
@@ -53,7 +55,7 @@ API Schemaを利用する後続処理は、必ず`planner:api-schema-status`（`
 | Security | Security Impact（security.jsonの分類）、PII（`x-sonomama-pii` / `x-sonomama-data`）、ログ出力注意 |
 | 変更種別 | 既存OpenAPIとの比較による破壊的変更の候補と非破壊の変更 |
 
-proposal.jsonはmachine-readableな提案本体、Quality Judgeの結果、生成ファイルのdigestを持つ。
+proposal.jsonはmachine-readableな提案本体、Quality Judgeの結果、生成ファイルのdigest（参考情報）を持つ。
 
 ## Quality Judgeが拒否するもの
 
@@ -74,8 +76,8 @@ Secret / Credentialらしき値、成功responseでのpassword / secret等の返
 
 ## 再実行
 
-- 生成済みディレクトリは、proposal.jsonに記録したdigestとopenapi.yaml・summary.mdが一致する場合だけ上書きする。
-  人間が編集していたら上書きせずexit 1。
+- 生成済みディレクトリは、署名付きの生成記録と3ファイル（openapi.yaml・proposal.json・summary.md）のdigestが一致する場合だけ上書きする。
+  人間が編集していた場合や生成記録がない場合は、上書きせずexit 1。
 - 別リポジトリの同じ番号のIssueのProposalがあれば上書きしない。
 - 署名付き台帳に有効な承認があれば再生成しない。Issueに`api-schema-approved`がある場合も再生成しない。
 - Issueコメントはmarkerで探して同じコメントを更新する。

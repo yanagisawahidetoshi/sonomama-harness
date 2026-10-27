@@ -7,7 +7,7 @@ import { signingKey, sign, equal, localHumanIdentity } from './human-approvals.m
 import { apiSchemaApprovalRecordSchema } from './schemas.mjs';
 import { parseIssueUrl } from './planner.mjs';
 import { githubCli } from './planner-github.mjs';
-import { reviewLabels, approvedLabel, proposalFiles, proposalDirectory, proposalDigest, assertGenerated, readProposalMeta } from './api-schema-files.mjs';
+import { reviewLabels, approvedLabel, proposalFiles, proposalDirectory, proposalDigest, assertGenerated, readProposalMeta, readGeneration } from './api-schema-files.mjs';
 
 // API Schema Approval is a signed, content-addressed record outside Git and the agent workspace.
 // It is separate from implementation-gate / design-approval / merge records and never substitutes for them. Labels are only a projection.
@@ -38,7 +38,8 @@ export async function apiSchemaApprovalStatus({ root, issueUrl }) {
   const ref = parseIssueUrl(issueUrl), directory = proposalDirectory(ref);
   const ledger = await records(root, ref);
   const meta = await readProposalMeta(root, directory);
-  const required = meta?.proposal?.securityImpact?.length ? 2 : 1;
+  // The required count comes from the signed generation record, never from the editable proposal.json.
+  const required = (await readGeneration(root, ref.url))?.required ?? 2;
   if (!meta) return { status: 'NOT_APPROVED', approvals: 0, required, proposalDigest: null, commitSha: null, reasons: [`${directory} にproposalがありません`] };
   const current = await proposalDigest(root, directory), reasons = [];
   if (!ledger.length) return { status: 'NOT_APPROVED', approvals: 0, required, proposalDigest: current, commitSha: null, reasons };

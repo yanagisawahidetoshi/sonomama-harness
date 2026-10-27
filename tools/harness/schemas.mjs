@@ -153,6 +153,11 @@ export const apiSchemaApprovalRecordSchema = z.strictObject({
   decision: z.enum(['APPROVE', 'REQUEST_CHANGES', 'REVOKE']), decidedAt: z.iso.datetime(),
   commitSha: z.string().regex(/^[0-9a-f]{40,64}$/), proposalDigest: z.string().regex(/^[0-9a-f]{64}$/), signature: text,
 });
+export const apiSchemaGenerationRecordSchema = z.strictObject({
+  purpose: z.literal('api-schema-generation'), issueUrl: z.url(), runId: text, required: z.union([z.literal(1), z.literal(2)]),
+  files: z.strictObject({ 'openapi.yaml': z.string().regex(/^[0-9a-f]{64}$/), 'proposal.json': z.string().regex(/^[0-9a-f]{64}$/), 'summary.md': z.string().regex(/^[0-9a-f]{64}$/) }),
+  signature: text,
+});
 
 export const securityPolicySchema = z.strictObject({
   version: z.literal(1), alwaysRequiredVerifiers: z.array(text).min(1),

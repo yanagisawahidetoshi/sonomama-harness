@@ -50,6 +50,7 @@ SBI → 意図的な誤実装 → Verifier FAIL
 | .harness/api-schema/ | API Schema Proposal（Issue番号別）。Git管理対象 |
 | .harness/state/runs/ | run別の状態保存 |
 | .harness/state/human/ | 信頼する人間用CLIの承認台帳と署名鍵。Git管理対象外 |
+| .harness/state/api-schema/ | API Schema Plannerが署名した生成記録。Git管理対象外 |
 | .harness/runs/ | 実行証跡と元リポジトリを共有するGit worktree |
 | tools/harness/ | 実行ループ・分類・承認・マージ可否の判定、PBI → SBI Planner、API Schema Planner |
 | docs/ | アーキテクチャ、SBI、ADR、workflow |

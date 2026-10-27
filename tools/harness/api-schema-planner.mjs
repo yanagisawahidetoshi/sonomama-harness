@@ -11,7 +11,7 @@ import { githubCli } from './planner-github.mjs';
 import { readExistingSchema, schemaExtract, contractExtract } from './api-schema-reader.mjs';
 import { diffContract } from './api-schema-diff.mjs';
 import { apiSchemaApprovalStatus } from './api-schema-approval.mjs';
-import { reviewLabels, approvedLabel, proposalDirectory, sha256, assertReplaceable } from './api-schema-files.mjs';
+import { reviewLabels, approvedLabel, proposalDirectory, sha256, assertReplaceable, recordGeneration } from './api-schema-files.mjs';
 import { judgeApiSchema, reservedComponents, supportedStatuses, limits } from './api-schema-judge.mjs';
 import { renderOpenApi, renderSummary } from './api-schema-render.mjs';
 import { withEvidenceProtection, redactText, hasSecret } from './evidence-protection.mjs';
@@ -97,11 +97,13 @@ async function proposeProtected({ root, issueUrl, provider, quiet, agent, github
     await mkdir(join(root, proposalDir), { recursive: true });
     await writeText(join(root, proposalDir, 'openapi.yaml'), yamlText);
     await writeText(join(root, proposalDir, 'summary.md'), summaryText);
+    // files in proposal.json is for reviewers only. Integrity is checked against the signed generation record.
     await json(join(root, proposalDir, 'proposal.json'), {
       version: 1, status: 'NEEDS_REVIEW', issue: { url: ref.url, number: ref.number, title: issue.title },
       generatedBy: { runId: id, provider }, generatedAt: new Date().toISOString(), existingSchema: existing?.path ?? null,
       quality, contractDiff, proposal: response.proposal, files: { 'openapi.yaml': sha256(yamlText), 'summary.md': sha256(summaryText) },
     });
+    await recordGeneration(root, ref, { runId: id, required: response.proposal.securityImpact.length ? 2 : 1 });
     summary.proposalDir = proposalDir;
     await save(); log(`Proposal: ${proposalDir}/openapi.yaml`);
     await github.ensureLabels(ref, reviewLabels);
