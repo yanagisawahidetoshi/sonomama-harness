@@ -2,14 +2,14 @@
 
 運営・CS・MG・講師向け管理画面。React 19 + TypeScript + Vite。業務画面は後続SBIで追加する。
 
-| 用途 | ライブラリ |
-| --- | --- |
-| Routing | TanStack Router |
-| Server state | TanStack Query (staleTime 5分 / gcTime 10分 / 4xxはretryなし・その他は最大3回) |
-| HTTP | Axios (`src/shared/api`) |
-| Form | React Hook Form + Zod (`@hookform/resolvers`) |
-| Lint / Format | Biome (ESLint / Prettierは使わない) |
-| Test | Vitest + React Testing Library + jsdom |
+| 用途          | ライブラリ                                                                     |
+| ------------- | ------------------------------------------------------------------------------ |
+| Routing       | TanStack Router                                                                |
+| Server state  | TanStack Query (staleTime 5分 / gcTime 10分 / 4xxはretryなし・その他は最大3回) |
+| HTTP          | Axios (`src/shared/api`)                                                       |
+| Form          | React Hook Form + Zod (`@hookform/resolvers`)                                  |
+| Lint / Format | Biome (ESLint / Prettierは使わない)                                            |
+| Test          | Vitest + React Testing Library + jsdom                                         |
 
 UI component libraryはDesign System方針が決まるまで導入しない。
 

@@ -45,6 +45,19 @@ describe('Verifier applicability', () => {
         assert.ok(result.checks.find(c=>c.id===id).selectionReasons.includes('changed-path'));
       }));
     }
+    it('when only a shared root file changes then a missing app is skipped as a placeholder', () => fixture(async root => {
+      const {config,sbi}=await check(root);
+      const result=await verify({root,workspace:root,config,sbi:{...sbi,acceptanceCriteria:[]},files:[{path:'pnpm-lock.yaml'}]});
+      for (const id of ['rails','expo','prototype-web','prototype-mobile']) {
+        const rails=result.checks.find(c=>c.id===id);
+        assert.equal(rails.status,'SKIP'); assert.equal(rails.required,false); assert.equal(rails.reason,'missing app (placeholder)');
+      }
+    }));
+    it('when a file inside a missing app directory changes then the missing app fails', () => fixture(async root => {
+      const {config,sbi}=await check(root);
+      const result=await verify({root,workspace:root,config,sbi,files:[{path:'apps/api/config/routes.rb'},{path:'pnpm-lock.yaml'}]});
+      assert.equal(result.checks.find(c=>c.id==='rails').status,'FAIL');
+    }));
     it('when an explicit required check is outside changed paths then missing app fails', () => fixture(async root => {
       const {config,sbi}=await check(root);
       const result=await verify({root,workspace:root,config,sbi:{...sbi,requiredVerifiers:['rails']},files:[{path:'docs/product/a.md'}]});
