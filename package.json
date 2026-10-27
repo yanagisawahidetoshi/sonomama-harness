@@ -12,7 +12,10 @@
     "harness:check": "node tools/harness/cli.mjs check",
     "harness:demo": "node tools/harness/cli.mjs demo",
     "harness:run": "node tools/harness/cli.mjs run",
-    "harness:plan": "node tools/harness/cli.mjs plan",
+    "planner:sbi": "node tools/harness/cli.mjs plan",
+    "planner:api-schema": "node tools/harness/cli.mjs api-schema",
+    "planner:api-schema-approve": "node tools/harness/cli.mjs api-schema-approve",
+    "planner:api-schema-status": "node tools/harness/cli.mjs api-schema-status",
     "harness:test": "node --test tools/harness/*.test.mjs tools/harness/agents/*.test.mjs",
     "harness:approve": "node tools/harness/cli.mjs approve",
     "harness:resume": "node tools/harness/cli.mjs resume",
@@ -22,6 +25,7 @@
     "harness:cleanup": "node tools/harness/cli.mjs cleanup"
   },
   "dependencies": {
+    "yaml": "2.9.1",
     "zod": "4.1.12"
   }
 }

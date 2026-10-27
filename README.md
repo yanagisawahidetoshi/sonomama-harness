@@ -46,10 +46,13 @@ SBI → 意図的な誤実装 → Verifier FAIL
 | .harness/rules/human-gates.json | 事前承認が必要なSecurity rule IDへの参照 |
 | .harness/skills/implement.md | agentへの実装手順 |
 | .harness/skills/plan.md | PlannerへのPBI → SBI分割手順 |
+| .harness/skills/api-schema.md | API Schema PlannerへのAPI契約提案の手順 |
+| .harness/api-schema/ | API Schema Proposal（Issue番号別）。Git管理対象 |
 | .harness/state/runs/ | run別の状態保存 |
 | .harness/state/human/ | 信頼する人間用CLIの承認台帳と署名鍵。Git管理対象外 |
+| .harness/state/api-schema/ | API Schema Plannerが署名した生成記録。Git管理対象外 |
 | .harness/runs/ | 実行証跡と元リポジトリを共有するGit worktree |
-| tools/harness/ | 実行ループ・分類・承認・マージ可否の判定、PBI → SBI Planner |
+| tools/harness/ | 実行ループ・分類・承認・マージ可否の判定、PBI → SBI Planner、API Schema Planner |
 | docs/ | アーキテクチャ、SBI、ADR、workflow |
 
 開発指示は[AGENTS.md](AGENTS.md)、Harness配下の指示は[tools/harness/AGENTS.md](tools/harness/AGENTS.md)。
@@ -365,7 +368,7 @@ CLIの仕様は[Codex公式資料](https://developers.openai.com/codex/cli/refer
 GitHub IssueのPBIをBDDベースのSBIへ分割し、レビュー待ちのSBI Issueとして登録する。
 
 ```sh
-pnpm harness:plan https://github.com/<owner>/<repo>/issues/<number> --provider claude
+pnpm planner:sbi https://github.com/<owner>/<repo>/issues/<number> --provider claude
 ```
 
 ```text
@@ -393,6 +396,32 @@ digest不一致（PBIやモデル出力が変わった）、人間による本�
 Plannerは`needs-review`のSBIをExecution Harnessへ投入しない。人間がレビューして`needs-review`を外し`ready`を付ける。
 Execution Harnessは引き続きSBI JSONを入力にし、Issueからの自動実行・`ready`への自動遷移・Risk確定・mergeは行わない。
 手順は[docs/workflows/pbi-sbi-planner.md](docs/workflows/pbi-sbi-planner.md)。
+
+## API Schema Planner
+
+API変更を伴うIssueから、実装前に合意するOpenAPI 3.1の契約案を作る。Rails / Frontendの実装はしない。
+
+```sh
+pnpm planner:api-schema https://github.com/<owner>/<repo>/issues/<number> --provider claude
+```
+
+```text
+GitHub Issue → 既存OpenAPI（packages/api-schema）→ API Schema Planner（codex / claude）→ API Schema Quality Judge
+  → PASS: .harness/api-schema/<number>/{openapi.yaml, proposal.json, summary.md}
+          Issueへ [api-schema][needs-api-schema-review] と要約コメント → Human Review → 署名付き承認（digest + commit SHA）
+  → FAIL: ファイルもGitHubも書かずexit 1で理由を表示
+```
+
+providerはOpenAPIそのものではなく、閉じたJSON（endpoint・component・propertyの配列）を返す。
+OpenAPIへの変換、Cognito JWTのsecurityScheme、共通Error schemaはHarnessが持つ。
+Quality Judgeは決定的なルールで構造・認証認可・Security Impact・秘密値・既存endpointとの衝突を検査し、破壊的変更の候補を列挙する。
+
+`modify`で既存の内容が消える場合は、既存OpenAPIとの構造差分から破壊的変更の候補として必ず表示する。
+
+承認は`pnpm planner:api-schema-approve <Issue URL>`で署名付き台帳に記録し、Proposalのdigestとcommit SHAに紐づける。
+判定は`pnpm planner:api-schema-status <Issue URL>`。Issueの`api-schema-approved`ラベルは目印で、承認の正本ではない。
+Execution Harnessの実装前Gate・Merge Approvalとは別で、どちらの代わりにもならない。承認後に人間がpackages/api-schemaへ反映し、実装SBIを作る。
+手順は[docs/workflows/api-schema-planner.md](docs/workflows/api-schema-planner.md)。
 
 
 ## 変更範囲によるVerifier選択

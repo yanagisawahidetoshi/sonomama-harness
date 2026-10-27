@@ -1,6 +1,6 @@
 import { execute } from './io.mjs';
 import { redactText } from './evidence-protection.mjs';
-import { githubIssueSchema, githubCommentSchema, githubIssueListSchema, githubCommentListSchema } from './schemas.mjs';
+import { githubIssueSchema, githubCommentSchema, githubIssueListSchema, githubCommentListSchema, githubLabelListSchema } from './schemas.mjs';
 
 // GitHub access goes through the authenticated gh CLI. Request bodies are JSON on stdin; no shell expansion, no token handling here.
 async function api(method, endpoint, body) {
@@ -27,6 +27,9 @@ async function listAll(endpoint, query, schema) {
 const labelDefinitions = {
   sbi: { color: '0e8a16', description: 'Planner-generated SBI' },
   'needs-review': { color: 'fbca04', description: 'SBI awaiting human review; not ready for the Execution Harness' },
+  'api-schema': { color: '1d76db', description: 'Issue with a Planner-generated API Schema Proposal' },
+  'needs-api-schema-review': { color: 'fbca04', description: 'API Schema Proposal awaiting human review; implementation must wait' },
+  'api-schema-approved': { color: '0e8a16', description: 'Projection of a signed API Schema approval; not the source of truth' },
 };
 export const githubCli = {
   async fetchIssue({ owner, repo, number }) {
@@ -52,6 +55,12 @@ export const githubCli = {
   },
   async createIssue({ owner, repo }, { title, body, labels }) {
     return githubIssueSchema.parse(await api('POST', `repos/${owner}/${repo}/issues`, { title, body, labels }));
+  },
+  async addLabels({ owner, repo, number }, labels) {
+    return githubLabelListSchema.parse(await api('POST', `repos/${owner}/${repo}/issues/${number}/labels`, { labels }));
+  },
+  async removeLabel({ owner, repo, number }, name) {
+    return githubLabelListSchema.parse(await api('DELETE', `repos/${owner}/${repo}/issues/${number}/labels/${encodeURIComponent(name)}`));
   },
   async addComment({ owner, repo, number }, body) {
     return githubCommentSchema.parse(await api('POST', `repos/${owner}/${repo}/issues/${number}/comments`, { body }));
