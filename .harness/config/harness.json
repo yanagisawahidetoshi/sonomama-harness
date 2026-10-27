@@ -363,11 +363,19 @@
       ],
       "planned": [
         "TypeScript",
-        "ESLint",
-        "Prettier",
-        "build/export"
+        "Biome",
+        "Vite build",
+        "Storybook build"
       ],
       "commands": [
+        [
+          "pnpm",
+          "install",
+          "--frozen-lockfile",
+          "--prefer-offline",
+          "--filter",
+          "prototype-web"
+        ],
         [
           "pnpm",
           "run",
@@ -376,19 +384,56 @@
         [
           "pnpm",
           "run",
-          "lint"
+          "check"
         ],
         [
           "pnpm",
           "run",
-          "format:check"
+          "build",
+          "--outDir",
+          "node_modules/.harness/dist",
+          "--emptyOutDir"
         ],
         [
           "pnpm",
           "run",
-          "build"
+          "build-storybook",
+          "--output-dir",
+          "node_modules/.harness/storybook-static",
+          "--quiet"
         ]
       ]
+    },
+    {
+      "id": "prototype-web-acceptance",
+      "directory": "prototypes/web",
+      "marker": "package.json",
+      "planned": [
+        "Trusted Acceptance"
+      ],
+      "commands": [],
+      "acceptanceIds": [
+        "PWEB-AC-1",
+        "PWEB-AC-2",
+        "PWEB-AC-3",
+        "PWEB-AC-4",
+        "PWEB-AC-5",
+        "PWEB-AC-6",
+        "PWEB-AC-7",
+        "PWEB-AC-8",
+        "PWEB-AC-9",
+        "PWEB-AC-10",
+        "PWEB-AC-11",
+        "PWEB-AC-12",
+        "PWEB-AC-13"
+      ],
+      "appliesTo": [],
+      "lanes": [
+        "prototype",
+        "production"
+      ],
+      "trust": "acceptance",
+      "trustedScript": ".harness/verification/prototype-web-env.mjs"
     },
     {
       "id": "prototype-mobile",

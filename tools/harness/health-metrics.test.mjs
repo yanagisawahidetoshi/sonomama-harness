@@ -36,7 +36,7 @@ describe('Health metrics signal collection', () => {
       assert.equal(metrics.autoMergeEligible, false);
       assert.equal(metrics.cleaned, false);
       assert.deepEqual(metrics.iterations, { total: 2, failed: 1, done: true, limitReached: false, consecutiveFailure: false });
-      assert.deepEqual(metrics.verifiers.summary, { pass: 1, fail: 0, skip: 8, notConfigured: 0 });
+      assert.deepEqual(metrics.verifiers.summary, { pass: 1, fail: 0, skip: 9, notConfigured: 0 });
       assert.deepEqual(metrics.verifiers.checks.find(c => c.id === 'sample-bdd'), { id: 'sample-bdd', status: 'PASS', required: true });
       assert.equal(metrics.security.securitySensitive, false);
       assert.deepEqual(metrics.security.matchedRules, []);

@@ -1,0 +1,106 @@
+{
+  "id": "SBI-PROTOTYPE-WEB-ENV",
+  "title": "デザイナー用React Executable Design Workspaceを prototypes/web に構築する",
+  "description": "Issue #24。prototypes/webにReact + TypeScript + Vite + Storybook + Biomeの試作環境を作る。表示はlocal mock dataのみで、本番・Staging APIには接続しない。apps/adminへの昇格はDesign Approval後のProduction SBIで行う。",
+  "gherkin": "Feature: デザイナー用Webプロトタイプ環境\n  Scenario: StorybookでUIを確認できる\n    Given prototypes/webにサンプルcomponentとstoryがある\n    When pnpm --filter prototype-web storybook を実行する\n    Then mock dataだけで各stateを確認できる\n  Scenario: Harnessのprototype laneで検証できる\n    Given harness.jsonのprototype-web verifierにコマンドが登録されている\n    When Harnessがprototypes/webの変更を検証する\n    Then typecheck / Biome check / Vite build / Storybook buildがPASSする\n  Scenario: 本番と分離されている\n    Given prototypeは本番コードではない\n    When 依存とimportを確認する\n    Then apps/adminやAPI clientに依存せず、secretを持たない",
+  "acceptanceCriteria": [
+    {
+      "id": "PWEB-AC-1",
+      "description": "prototypes/webが存在する",
+      "verifier": "prototype-web-acceptance"
+    },
+    {
+      "id": "PWEB-AC-2",
+      "description": "pnpm workspaceに参加している",
+      "verifier": "prototype-web-acceptance"
+    },
+    {
+      "id": "PWEB-AC-3",
+      "description": "React + TypeScript + Viteで起動できる",
+      "verifier": "prototype-web-acceptance"
+    },
+    {
+      "id": "PWEB-AC-4",
+      "description": "Storybookを起動できる",
+      "verifier": "prototype-web-acceptance"
+    },
+    {
+      "id": "PWEB-AC-5",
+      "description": "Storybook static buildがPASSする",
+      "verifier": "prototype-web-acceptance"
+    },
+    {
+      "id": "PWEB-AC-6",
+      "description": "Biomeでlint / format checkできる",
+      "verifier": "prototype-web-acceptance"
+    },
+    {
+      "id": "PWEB-AC-7",
+      "description": "TypeScript typecheckがPASSする",
+      "verifier": "prototype-web-acceptance"
+    },
+    {
+      "id": "PWEB-AC-8",
+      "description": "最低1つのサンプルcomponent / storyが存在する",
+      "verifier": "prototype-web-acceptance"
+    },
+    {
+      "id": "PWEB-AC-9",
+      "description": "mock dataのみで表示確認できる",
+      "verifier": "prototype-web-acceptance"
+    },
+    {
+      "id": "PWEB-AC-10",
+      "description": "Production / Staging APIへ自動接続しない",
+      "verifier": "prototype-web-acceptance"
+    },
+    {
+      "id": "PWEB-AC-11",
+      "description": "secret / tokenを保持しない",
+      "verifier": "prototype-web-acceptance"
+    },
+    {
+      "id": "PWEB-AC-12",
+      "description": "apps/adminと責務が分離されている",
+      "verifier": "prototype-web-acceptance"
+    },
+    {
+      "id": "PWEB-AC-13",
+      "description": "prototypeからproductionへのPromotion FlowがREADMEに記載されている",
+      "verifier": "prototype-web-acceptance"
+    }
+  ],
+  "allowedFiles": [
+    "prototypes/web/package.json",
+    "prototypes/web/README.md",
+    "prototypes/web/.gitignore",
+    "prototypes/web/biome.json",
+    "prototypes/web/index.html",
+    "prototypes/web/tsconfig.json",
+    "prototypes/web/tsconfig.app.json",
+    "prototypes/web/tsconfig.node.json",
+    "prototypes/web/vite.config.ts",
+    "prototypes/web/.storybook/main.ts",
+    "prototypes/web/.storybook/preview.ts",
+    "prototypes/web/src/main.tsx",
+    "prototypes/web/src/App.tsx",
+    "prototypes/web/src/tokens.css",
+    "prototypes/web/src/components/LessonCard/index.tsx",
+    "prototypes/web/src/components/LessonCard/styles.ts",
+    "prototypes/web/src/components/LessonCard/LessonCard.stories.tsx",
+    "prototypes/web/src/mocks/lessons.ts",
+    "pnpm-lock.yaml"
+  ],
+  "risks": [
+    "pnpm-lock.yamlの更新はworkspace全体に影響する"
+  ],
+  "ambiguous": false,
+  "requiresDesignDecision": false,
+  "securityImpact": [],
+  "requiredSecurityRules": [],
+  "requiredVerifiers": [
+    "prototype-web"
+  ],
+  "preImplementationGate": false,
+  "minimumRiskLevel": 2
+}

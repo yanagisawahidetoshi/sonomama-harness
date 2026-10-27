@@ -49,6 +49,8 @@ export async function prototype(root,{promotion=false,failing=false}={}) {
   await update(root,'.harness/config/harness.json',c=>{
     c.verifiers.push({id:'visual',trust:'acceptance',trustedScript:'.harness/verification/visual.mjs',directory:'.',planned:['independent visual assertion'],commands:[],acceptanceIds:['VISUAL'],appliesTo:['^never/']});
     if(promotion)c.verifiers.find(v=>v.id==='admin').commands=[[process.execPath,'-e','process.exit(0)']];
+    // The fixture package has stub scripts only; the real verifier also installs dependencies and builds Storybook.
+    c.verifiers.find(v=>v.id==='prototype-web').commands=['typecheck','lint','format:check','build'].map(script=>['pnpm','run',script]);
   });
   return {file,agent:async()=>({files:[{path:file,content:'visual'}]})};
 }
