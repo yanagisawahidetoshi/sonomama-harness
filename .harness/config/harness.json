@@ -39,12 +39,41 @@
       "marker": "package.json",
       "planned": [
         "TypeScript",
-        "ESLint",
+        "Biome",
+        "Jest",
         "RNTL",
-        "Storybook",
-        "Maestro"
+        "Expo Doctor"
       ],
-      "commands": [],
+      "commands": [
+        [
+          "pnpm",
+          "install",
+          "--frozen-lockfile",
+          "--prefer-offline",
+          "--filter",
+          "mobile"
+        ],
+        [
+          "pnpm",
+          "run",
+          "typecheck"
+        ],
+        [
+          "pnpm",
+          "run",
+          "check"
+        ],
+        [
+          "pnpm",
+          "run",
+          "test"
+        ],
+        [
+          "pnpm",
+          "run",
+          "doctor"
+        ]
+      ],
       "appliesTo": [
         "^apps/mobile/",
         "^packages/",
@@ -53,6 +82,43 @@
       "lanes": [
         "production"
       ]
+    },
+    {
+      "id": "mobile-acceptance",
+      "directory": "apps/mobile",
+      "marker": "package.json",
+      "planned": [
+        "Trusted Acceptance"
+      ],
+      "commands": [],
+      "acceptanceIds": [
+        "MOBILE-AC-1",
+        "MOBILE-AC-2",
+        "MOBILE-AC-3",
+        "MOBILE-AC-4",
+        "MOBILE-AC-5",
+        "MOBILE-AC-6",
+        "MOBILE-AC-7",
+        "MOBILE-AC-8",
+        "MOBILE-AC-9",
+        "MOBILE-AC-10",
+        "MOBILE-AC-11",
+        "MOBILE-AC-12",
+        "MOBILE-AC-13",
+        "MOBILE-AC-14",
+        "MOBILE-AC-15",
+        "MOBILE-AC-16",
+        "MOBILE-AC-17",
+        "MOBILE-AC-18",
+        "MOBILE-AC-19",
+        "MOBILE-AC-20"
+      ],
+      "appliesTo": [],
+      "lanes": [
+        "production"
+      ],
+      "trust": "acceptance",
+      "trustedScript": ".harness/verification/mobile-env.mjs"
     },
     {
       "id": "admin",
