@@ -9,7 +9,7 @@ export function validHumanApprovals(records, { purpose, headSha, contextDigest }
 }
 // Pure policy evaluation. Authentication of records is the approval adapter's responsibility.
 // With a GitHub pull request (PR mode) the merge approval comes only from GitHub Review; local merge records are not counted (ADR-0001).
-export function mergeDecision({ risk, checks, approvals = [], headSha, contextDigest, humanGate = false, gateApproved = false, semanticEnabled = false, securityVerification, lane, github = null }) {
+export function mergeDecision({ risk, checks, approvals = [], headSha, contextDigest, humanGate = false, gateApproved = false, semanticEnabled = false, securityVerification, lane, github = null, baseline = null }) {
   const required = ['verification', 'policy-review', 'security', 'completion', ...(semanticEnabled ? ['semantic-review'] : [])];
   const local = validHumanApprovals(approvals, { purpose: 'merge', headSha, contextDigest });
   const valid = github ? (github.reviews?.approvedHumans ?? []).map(login => ({ reviewer: `github:${login}` })) : local.approvals;
@@ -27,6 +27,8 @@ export function mergeDecision({ risk, checks, approvals = [], headSha, contextDi
   else if (!securityPassed(securityVerification) || (securityVerification.headSha && securityVerification.headSha !== headSha)) reasons.push('required_security_checks_not_passed');
   else if (github?.unavailable) reasons.push('github_state_unavailable');
   else if (github && (pull?.state !== 'open' || pull?.merged)) reasons.push('pull_request_not_open');
+  // The tested SHA is the merge result only while the base is still the run baseline (ADR-0001).
+  else if (github && (!baseline?.sha || pull?.baseRef !== baseline.ref || pull?.baseSha !== baseline.sha || pull?.remoteBaseSha !== baseline.sha)) reasons.push('base_not_baseline');
   else if (github && (pull?.testedShaMatches !== true || pull?.headSha !== headSha)) reasons.push('tested_sha_mismatch');
   else if (github && github.ci?.status !== 'PASS') reasons.push('required_ci_not_passed');
   else if (rejected) { decision = 'REJECTED'; reasons.push(github ? 'github_changes_requested' : 'human_requested_changes'); }

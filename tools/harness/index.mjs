@@ -66,11 +66,11 @@ async function resolveGate(root, summary) {
     && (!summary.gate.required || summary.gate.state === 'APPROVED');
 }
 // PR mode reads GitHub on every assessment. A read failure blocks; it never reuses an earlier GitHub state or escalates the run.
-async function readGitHub(summary, inputs, github) {
+async function readGitHub(root, summary, inputs, github) {
   if (!summary.pullRequest) return null;
   const [owner, repo] = summary.pullRequest.repository.split('/');
   try {
-    return await githubState({ github, repository: { owner, repo }, pullRequest: summary.pullRequest, headSha: summary.headSha, requiredChecks: inputs.config.github.requiredChecks });
+    return await githubState({ github, root, remote: inputs.config.github.remote, repository: { owner, repo }, pullRequest: summary.pullRequest, headSha: summary.headSha, requiredChecks: inputs.config.github.requiredChecks });
   } catch (error) { return { unavailable: redactText(error.message) }; }
 }
 async function assessMerge(root, summary, inputs, quiet, github = githubPrCli) {
@@ -100,10 +100,11 @@ async function assessMerge(root, summary, inputs, quiet, github = githubPrCli) {
   const contextDigest = digest({ headSha: summary.headSha, workspaceDigest: summary.workspaceDigest, inputsDigest: summary.inputsDigest, risk: summary.risk, checks, iterations: summary.iterations });
   const records = await authenticatedRecords(root, summary.id);
   const gateApproved = await resolveGate(root, summary);
-  const githubPr = await readGitHub(summary, inputs, github);
+  const githubPr = await readGitHub(root, summary, inputs, github);
   if (githubPr) await json(join(directory, 'github-state.json'), redact({ ...githubPr, readAt: new Date().toISOString(), source: 'GitHub API projection; GitHub is the source of truth' }));
   summary.merge = mergeDecision({ risk: summary.risk, checks, approvals: records, headSha: summary.headSha, contextDigest,
-    humanGate: summary.gate.required, gateApproved, securityVerification, semanticEnabled: inputs.config.semanticReview.enabled, lane:summary.lane, github: githubPr });
+    humanGate: summary.gate.required, gateApproved, securityVerification, semanticEnabled: inputs.config.semanticReview.enabled, lane:summary.lane, github: githubPr,
+    baseline: summary.pullRequest ? { ref: summary.pullRequest.base, sha: summary.baselineSha } : null });
   await json(join(directory, 'approvals.json'), { headSha: summary.headSha, approvals: records, source: 'authenticated local ledger; this file is not an authority' });
   await json(join(directory, 'merge-decision.json'), { ...summary.merge, checks });
   summary.reason = summary.merge.reasons.join(', ');
@@ -311,17 +312,18 @@ async function publishProtected({ root, runId, quiet = false, github = githubPrC
     const { remote, base } = inputs.config.github;
     const repository = await github.repository(root, remote);
     if (summary.pullRequest && summary.pullRequest.repository !== repository.name) throw new Error(`run is bound to ${summary.pullRequest.repository}, not ${repository.name}`);
-    await github.assertBaselinePublished(root, { remote, base, baselineSha: summary.baselineSha });
+    await github.assertBaseIsBaseline(root, { remote, base, baselineSha: summary.baselineSha });
     const files = await changedFiles(workspace, summary.baselineSha, summary.headSha);
     if (files.some(f => isSecretPath(f.path) || hasSecret(f.added))) throw new Error('changed files contain sensitive material; refusing to push');
     const body = pullRequestBody({ summary, sbi: inputs.sbi });
     if (hasSecret(body)) throw new Error('pull request body contains sensitive material; refusing to publish');
     const branch = `harness/${runId}`;
+    const open = await github.findOpenPull(repository, branch);
+    if (open && open.base.ref !== base) throw new Error(`${branch} のPR #${open.number} は${open.base.ref}向けです。${base}向けとして再利用しません`);
     const remoteHead = await github.remoteBranchSha(root, remote, branch);
     if (remoteHead && remoteHead !== summary.headSha) throw new Error(`${branch} は既に別のcommit ${remoteHead.slice(0, 12)} を指しています。force pushしません`);
     if (!remoteHead) await github.push(root, remote, summary.headSha, branch);
-    const pull = await github.findOpenPull(repository, branch)
-      ?? await github.createPull(repository, { title: `[Harness] ${inputs.sbi.id}: ${inputs.sbi.title}`, head: branch, base, body, draft: false });
+    const pull = open ?? await github.createPull(repository, { title: `[Harness] ${inputs.sbi.id}: ${inputs.sbi.title}`, head: branch, base, body, draft: false });
     summary.pullRequest = { number: pull.number, url: pull.html_url, branch, base, repository: repository.name };
     summary.events.push({ status: summary.status, phase: 'pull-request', detail: `${pull.html_url} (${summary.headSha})`, at: new Date().toISOString() });
     await saveRun(root, summary);

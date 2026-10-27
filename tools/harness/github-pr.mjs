@@ -5,14 +5,16 @@ import { git } from './workspace.mjs';
 // GitHub is the Source of Truth for the pull request, its reviews and CI. Only reviews on the Harness tested SHA count as approvals.
 const decisive = new Set(['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED']);
 const isBot = user => user?.type === 'Bot' || /\[bot\]$/.test(user?.login ?? '');
-export function reviewApprovals({ reviews, headSha, author }) {
+// GitHub counts reviews only from people with write access; an unreadable permission never grants an approval but still blocks.
+const canMerge = permission => ['admin', 'write'].includes(permission);
+export function reviewApprovals({ reviews, headSha, author, permissions }) {
   const latest = new Map();
   for (const review of [...reviews].sort((a, b) => a.id - b.id)) {
     const login = review.user?.login;
     if (!login || isBot(review.user) || login === author || !decisive.has(review.state)) continue;
     latest.set(login, review);
   }
-  const effective = [...latest.values()];
+  const effective = [...latest.values()].filter(r => canMerge(permissions[r.user.login]) || (r.state === 'CHANGES_REQUESTED' && !['read', 'none'].includes(permissions[r.user.login])));
   // An approval of an older commit grants nothing; a request for changes stands until the reviewer re-reviews or it is dismissed.
   const approvedHumans = effective.filter(r => r.state === 'APPROVED' && r.commit_id === headSha).map(r => r.user.login).sort();
   const changesRequestedBy = effective.filter(r => r.state === 'CHANGES_REQUESTED').map(r => r.user.login).sort();
@@ -21,11 +23,13 @@ export function reviewApprovals({ reviews, headSha, author }) {
 
 export function ciStatus({ checkRuns, required }) {
   if (!required.length) return { status: 'NOT_CONFIGURED', checks: [] };
-  const checks = required.map(name => {
-    const run = checkRuns.filter(r => r.name === name).sort((a, b) => b.id - a.id)[0];
-    if (!run) return { name, status: 'MISSING' };
-    if (run.status !== 'completed') return { name, status: 'PENDING' };
-    return { name, status: run.conclusion === 'success' ? 'SUCCESS' : run.conclusion === 'cancelled' ? 'CANCELLED' : 'FAILURE', conclusion: run.conclusion };
+  // A ruleset may pin a check to the GitHub App expected to report it; a same-named check from another app does not satisfy it.
+  const checks = required.map(({ context: name, integrationId = null }) => {
+    const id = integrationId === null ? {} : { integrationId };
+    const run = checkRuns.filter(r => r.name === name && (integrationId === null || r.app?.id === integrationId)).sort((a, b) => b.id - a.id)[0];
+    if (!run) return { name, ...id, status: 'MISSING' };
+    if (run.status !== 'completed') return { name, ...id, status: 'PENDING' };
+    return { name, ...id, status: run.conclusion === 'success' ? 'SUCCESS' : run.conclusion === 'cancelled' ? 'CANCELLED' : 'FAILURE', conclusion: run.conclusion };
   });
   const status = checks.every(c => c.status === 'SUCCESS') ? 'PASS' : checks.some(c => c.status === 'PENDING') && checks.every(c => ['SUCCESS', 'PENDING'].includes(c.status)) ? 'PENDING' : 'FAIL';
   return { status, checks };
@@ -33,9 +37,9 @@ export function ciStatus({ checkRuns, required }) {
 
 const user = z.looseObject({ login: z.string(), type: z.string().optional() });
 const pullSchema = z.looseObject({ number: z.number().int(), html_url: z.url(), state: z.string(), merged: z.boolean().optional(), merged_at: z.string().nullable().optional(),
-  user, head: z.looseObject({ ref: z.string(), sha: z.string() }), base: z.looseObject({ ref: z.string() }) });
+  user, head: z.looseObject({ ref: z.string(), sha: z.string() }), base: z.looseObject({ ref: z.string(), sha: z.string() }) });
 const reviewSchema = z.looseObject({ id: z.number(), user: user.nullable(), state: z.string(), commit_id: z.string().nullable() });
-const checkRunSchema = z.looseObject({ id: z.number(), name: z.string(), status: z.string(), conclusion: z.string().nullable() });
+const checkRunSchema = z.looseObject({ id: z.number(), name: z.string(), status: z.string(), conclusion: z.string().nullable(), app: z.looseObject({ id: z.number() }).nullable().optional() });
 const ruleSchema = z.looseObject({ type: z.string(), parameters: z.looseObject({}).optional() });
 async function pages(endpoint, query, pick) {
   const items = [];
@@ -55,13 +59,14 @@ export const githubPrCli = {
     if (!match) throw new Error(`git remote ${remote} はGitHubのリポジトリではありません`);
     return { owner: match[1], repo: match[2], name: `${match[1]}/${match[2]}` };
   },
-  async assertBaselinePublished(root, { remote, base, baselineSha }) {
-    const fetched = await git(root, ['fetch', '--quiet', remote, `refs/heads/${base}`], true);
-    const ancestor = fetched.ok && (await git(root, ['merge-base', '--is-ancestor', baselineSha, 'FETCH_HEAD'], true)).ok;
-    if (!ancestor) throw new Error(`${remote}/${base} にrunのbaseline ${baselineSha.slice(0, 12)} が含まれていません。PRにHarnessが検証していないcommitが混ざるため作成しません`);
+  // The merge result equals the tested SHA only while the base branch is still the run baseline.
+  async assertBaseIsBaseline(root, { remote, base, baselineSha }) {
+    const tip = await this.remoteBranchSha(root, remote, base);
+    if (tip !== baselineSha) throw new Error(`${remote}/${base} (${tip?.slice(0, 12) ?? 'なし'}) がrunのbaseline ${baselineSha.slice(0, 12)} と一致しません。mergeの結果をHarnessが検証していないため作成しません。最新の${base}からrunを作り直してください`);
   },
   async remoteBranchSha(root, remote, branch) {
-    const listed = await git(root, ['ls-remote', '--heads', remote, `refs/heads/${branch}`]);
+    const listed = await git(root, ['ls-remote', '--heads', '--exit-code', remote, `refs/heads/${branch}`], true);
+    if (!listed.ok && listed.code !== 2) throw new Error(`git ls-remote ${remote} ${branch} failed`);
     return listed.stdout.trim().split(/\s+/)[0] || null;
   },
   async push(root, remote, sha, branch) { await git(root, ['push', '--quiet', remote, `${sha}:refs/heads/${branch}`]); },
@@ -71,25 +76,39 @@ export const githubPrCli = {
   async createPull({ owner, repo }, body) { return pullSchema.parse(await api('POST', `repos/${owner}/${repo}/pulls`, body)); },
   async pull({ owner, repo }, number) { return pullSchema.parse(await api('GET', `repos/${owner}/${repo}/pulls/${number}`)); },
   reviews: ({ owner, repo }, number) => pages(`repos/${owner}/${repo}/pulls/${number}/reviews`, {}, value => z.array(reviewSchema).parse(value)),
+  // GitHub reports maintain as write and triage as read. A non-collaborator is none.
+  async permission({ owner, repo }, login) {
+    return z.looseObject({ permission: z.string() }).parse(await api('GET', `repos/${owner}/${repo}/collaborators/${encodeURIComponent(login)}/permission`)).permission;
+  },
   checkRuns: ({ owner, repo }, sha) => pages(`repos/${owner}/${repo}/commits/${sha}/check-runs`, {}, value => z.array(checkRunSchema).parse(value.check_runs)),
   // Rulesets are optional; without one (or without access) the configured check names still apply.
   async rulesetChecks({ owner, repo }, base) {
     let rules;
     try { rules = await pages(`repos/${owner}/${repo}/rules/branches/${encodeURIComponent(base)}`, {}, value => z.array(ruleSchema).parse(value)); }
     catch (error) { if (['403', '404'].includes(error.httpStatus)) return []; throw error; }
-    return rules.filter(r => r.type === 'required_status_checks').flatMap(r => (r.parameters?.required_status_checks ?? []).map(c => c.context)).filter(Boolean);
+    return rules.filter(r => r.type === 'required_status_checks').flatMap(r => r.parameters?.required_status_checks ?? [])
+      .filter(c => c.context).map(c => ({ context: c.context, integrationId: c.integration_id ?? null }));
   },
 };
 
 // The projection handed to the Merge Policy Judge. Raw API responses are never written to the run.
-export async function githubState({ github = githubPrCli, repository, pullRequest, headSha, requiredChecks }) {
+// The pull request base SHA is checked together with the live base branch tip, because the base SHA on the pull request may lag behind.
+export async function githubState({ github = githubPrCli, root, remote, repository, pullRequest, headSha, requiredChecks }) {
   const pull = await github.pull(repository, pullRequest.number);
-  const required = [...new Set([...requiredChecks, ...await github.rulesetChecks(repository, pullRequest.base)])].sort();
+  const remoteBaseSha = await github.remoteBranchSha(root, remote, pull.base.ref);
+  const configured = requiredChecks.map(context => ({ context, integrationId: null }));
+  const required = [...new Map([...configured, ...await github.rulesetChecks(repository, pullRequest.base)].map(c => [`${c.context}\0${c.integrationId}`, c])).values()]
+    .sort((a, b) => a.context.localeCompare(b.context) || String(a.integrationId).localeCompare(String(b.integrationId)));
+  const reviews = await github.reviews(repository, pull.number);
+  const permissions = {};
+  for (const login of [...new Set(reviews.filter(r => r.user && decisive.has(r.state) && !isBot(r.user) && r.user.login !== pull.user.login).map(r => r.user.login))].sort()) {
+    try { permissions[login] = await github.permission(repository, login); } catch { permissions[login] = 'unknown'; }
+  }
   return {
     pullRequest: { number: pull.number, url: pull.html_url, headSha: pull.head.sha, state: pull.state, merged: pull.merged === true || Boolean(pull.merged_at),
-      author: pull.user.login, testedShaMatches: pull.head.sha === headSha },
+      author: pull.user.login, testedShaMatches: pull.head.sha === headSha, baseRef: pull.base.ref, baseSha: pull.base.sha, remoteBaseSha },
     ci: { requiredChecks: required, ...ciStatus({ checkRuns: await github.checkRuns(repository, pull.head.sha), required }) },
-    reviews: reviewApprovals({ reviews: await github.reviews(repository, pull.number), headSha, author: pull.user.login }),
+    reviews: { ...reviewApprovals({ reviews, headSha, author: pull.user.login, permissions }), permissions },
   };
 }
 
