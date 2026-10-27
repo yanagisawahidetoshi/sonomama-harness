@@ -1,6 +1,6 @@
 # ADR-0001: 実装後Merge ApprovalのSource of TruthをGitHub Reviewにする
 
-- 状態: Proposed（人間がPRレビューでAcceptedにする）
+- 状態: Accepted（2026-10-27、柳沢英俊がPR #18の再レビュー後に承認）
 - 日付: 2026-10-27
 - 判断者: 柳沢英俊
 - 関連SBI: Issue #15（GitHub PR Adapter）
