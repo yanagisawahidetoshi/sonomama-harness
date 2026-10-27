@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { check, runHarness, resumeRun, cleanupRun } from './index.mjs';
+import { check, runHarness, resumeRun, cleanupRun, openPullRequest } from './index.mjs';
 import { recordDecision } from './human-approvals.mjs';
 import { withEvidenceProtection, redactText } from './evidence-protection.mjs';
 import { exportRun } from './review-export.mjs';
@@ -12,8 +12,8 @@ const root = fileURLToPath(new URL('../../', import.meta.url));
 await withEvidenceProtection(root, async () => {
 try {
   const [command, ...args] = process.argv.slice(2);
-  const allowed = { check: ['--sbi'], demo: ['--sbi', '--full'], run: ['--provider', '--sbi', '--full'], plan: ['--provider'], 'api-schema': ['--provider'], 'api-schema-approve': ['--decision'], 'api-schema-status': [], 'api-mock': ['--dynamic'], cleanup:['--run'], resume: ['--run'], approve: ['--run', '--phase', '--decision'], export: ['--run','--out'] };
-  if (!allowed[command]) throw new Error('Usage: check | demo [--full] | run [--full] | plan ISSUE_URL [--provider codex|claude] | api-schema ISSUE_URL [--provider codex|claude] | api-schema-approve ISSUE_URL [--decision approve|revoke|request-changes] | api-schema-status ISSUE_URL | api-mock ISSUE_URL [--dynamic] | cleanup --run ID | resume --run ID | approve --run ID --phase gate|design|merge [--decision approve|revoke|request-changes]');
+  const allowed = { check: ['--sbi'], demo: ['--sbi', '--full'], run: ['--provider', '--sbi', '--full'], plan: ['--provider'], 'api-schema': ['--provider'], 'api-schema-approve': ['--decision'], 'api-schema-status': [], 'api-mock': ['--dynamic'], cleanup:['--run'], resume: ['--run'], pr: ['--run'], approve: ['--run', '--phase', '--decision'], export: ['--run','--out'] };
+  if (!allowed[command]) throw new Error('Usage: check | demo [--full] | run [--full] | plan ISSUE_URL [--provider codex|claude] | api-schema ISSUE_URL [--provider codex|claude] | api-schema-approve ISSUE_URL [--decision approve|revoke|request-changes] | api-schema-status ISSUE_URL | api-mock ISSUE_URL [--dynamic] | cleanup --run ID | resume --run ID | pr --run ID | approve --run ID --phase gate|design|merge [--decision approve|revoke|request-changes]');
   const options = {};
   const positional = ['plan', 'api-schema', 'api-schema-approve', 'api-schema-status', 'api-mock'].includes(command) && args.length && !args[0].startsWith('--') ? args.shift() : null;
   for (let i = 0; i < args.length; i += 2) {
@@ -49,6 +49,12 @@ try {
     const mock = await startApiMock({ root, issueUrl: positional, dynamic: options['--dynamic'] === true });
     console.log(`API Mock: ${mock.url} (${mock.schemaPath} digest=${mock.digest})`);
     process.exitCode = await new Promise(resolve => mock.child.on('exit', code => resolve(code ?? 0)).on('error', () => resolve(1)));
+  } else if (command === 'pr') {
+    if (!options['--run']) throw new Error('pr requires --run ID');
+    const run = await openPullRequest({ root, runId: options['--run'] });
+    console.log(`Pull request: ${run.pullRequest.url} (tested SHA ${run.headSha})`);
+    console.log(`Evidence: ${run.runDir}/github-state.json`);
+    process.exitCode = run.status === 'MERGE_ALLOWED' ? 0 : 2;
   } else if (command === 'cleanup') {
     if (!options['--run']) throw new Error('cleanup requires --run ID');
     await cleanupRun({root,runId:options['--run']});

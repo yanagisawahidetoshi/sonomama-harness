@@ -13,7 +13,8 @@ import { assessRisk } from './risk-classifier.mjs';
 import { mergeDecision, validHumanApprovals } from './merge-policy.mjs';
 import { authenticatedRecords } from './human-approvals.mjs';
 import { classifySecurity, verifySecurity, combineSecurity, securityPassed } from './security-enforcement.mjs';
-import { withEvidenceProtection, redact, redactText, hasSecret, assertSafeInput } from './evidence-protection.mjs';
+import { withEvidenceProtection, redact, redactText, hasSecret, assertSafeInput, isSecretPath } from './evidence-protection.mjs';
+import { githubPrCli, githubState, pullRequestBody } from './github-pr.mjs';
 import { digest, prepareWorkspace, commitWorkspace, changedFiles, workspaceIntegrity, toolFingerprint, assertWritablePath, workspaceFingerprint, sourceIntegrity, assertWorktreeOwner, git } from './workspace.mjs';
 import { saveRun, loadRun, runPaths, withRunLock } from './run-store.mjs';
 import { classifyLane } from './lanes.mjs';
@@ -64,7 +65,15 @@ async function resolveGate(root, summary) {
   return (!summary.designApproval?.required || summary.designApproval.state === 'APPROVED')
     && (!summary.gate.required || summary.gate.state === 'APPROVED');
 }
-async function assessMerge(root, summary, inputs, quiet) {
+// PR mode reads GitHub on every assessment. A read failure blocks; it never reuses an earlier GitHub state or escalates the run.
+async function readGitHub(summary, inputs, github) {
+  if (!summary.pullRequest) return null;
+  const [owner, repo] = summary.pullRequest.repository.split('/');
+  try {
+    return await githubState({ github, repository: { owner, repo }, pullRequest: summary.pullRequest, headSha: summary.headSha, requiredChecks: inputs.config.github.requiredChecks });
+  } catch (error) { return { unavailable: redactText(error.message) }; }
+}
+async function assessMerge(root, summary, inputs, quiet, github = githubPrCli) {
   const { directory, workspace } = runPaths(root, summary.id);
   const { transition } = controller(root, summary, quiet);
   await sourceIntegrity(root, summary.baselineSha);
@@ -91,12 +100,14 @@ async function assessMerge(root, summary, inputs, quiet) {
   const contextDigest = digest({ headSha: summary.headSha, workspaceDigest: summary.workspaceDigest, inputsDigest: summary.inputsDigest, risk: summary.risk, checks, iterations: summary.iterations });
   const records = await authenticatedRecords(root, summary.id);
   const gateApproved = await resolveGate(root, summary);
+  const githubPr = await readGitHub(summary, inputs, github);
+  if (githubPr) await json(join(directory, 'github-state.json'), redact({ ...githubPr, readAt: new Date().toISOString(), source: 'GitHub API projection; GitHub is the source of truth' }));
   summary.merge = mergeDecision({ risk: summary.risk, checks, approvals: records, headSha: summary.headSha, contextDigest,
-    humanGate: summary.gate.required, gateApproved, securityVerification, semanticEnabled: inputs.config.semanticReview.enabled, lane:summary.lane });
+    humanGate: summary.gate.required, gateApproved, securityVerification, semanticEnabled: inputs.config.semanticReview.enabled, lane:summary.lane, github: githubPr });
   await json(join(directory, 'approvals.json'), { headSha: summary.headSha, approvals: records, source: 'authenticated local ledger; this file is not an authority' });
   await json(join(directory, 'merge-decision.json'), { ...summary.merge, checks });
   summary.reason = summary.merge.reasons.join(', ');
-  await transition(summary.merge.decision, `LEVEL ${summary.risk.level}; human approvals ${summary.merge.validApprovals}/${summary.merge.requiredApprovals}; autoMergeEligible=${summary.merge.autoMergeEligible}`, 'merge');
+  await transition(summary.merge.decision, `LEVEL ${summary.risk.level}; human approvals ${summary.merge.validApprovals}/${summary.merge.requiredApprovals} (${summary.merge.approvalSource}); autoMergeEligible=${summary.merge.autoMergeEligible}`, 'merge');
   return summary;
 }
 async function executeLoop({ root, summary, inputs, quiet, agent = runAgent, reviewer = review, semanticReviewer }) {
@@ -273,14 +284,14 @@ async function runProtected({ root, provider, sbiPath, quiet = false, agent = ru
   await json(join(directory, 'merge-decision.json'), summary.merge);
   return withRunLock(root, id, () => executeLoop({ root, summary, inputs, quiet, agent, reviewer, semanticReviewer }));
 }
-async function resumeProtected({ root, runId, quiet = false, agent = runAgent, reviewer = review, semanticReviewer }) {
+async function resumeProtected({ root, runId, quiet = false, agent = runAgent, reviewer = review, semanticReviewer, github = githubPrCli }) {
   root = await realpath(root);
   return withRunLock(root, runId, async () => {
     let summary;
     try {
       const loaded = await loadRun(root, runId);
       summary = loaded.summary;
-      if (summary.executionStatus === 'DONE') return await assessMerge(root, summary, loaded.inputs, quiet);
+      if (summary.executionStatus === 'DONE') return await assessMerge(root, summary, loaded.inputs, quiet, github);
       if (summary.executionStatus !== 'PENDING' || summary.iterations.length) throw new Error('Only an unstarted implementation gate or completed execution can resume; start a new run');
       return await executeLoop({ root, summary, inputs: loaded.inputs, quiet, agent, reviewer, semanticReviewer });
     } catch (error) {
@@ -290,9 +301,41 @@ async function resumeProtected({ root, runId, quiet = false, agent = runAgent, r
   });
 }
 
+// Publishes exactly the tested commit as harness/<run-id> and binds the run to that pull request. Never force-pushes, never merges.
+async function publishProtected({ root, runId, quiet = false, github = githubPrCli }) {
+  await withRunLock(root, runId, async () => {
+    const { summary, inputs } = await loadRun(root, runId);
+    if (summary.executionStatus !== 'DONE') throw new Error(`Execution must be DONE before opening a pull request (now ${summary.executionStatus})`);
+    const { workspace } = runPaths(root, runId);
+    await workspaceIntegrity(workspace, summary.headSha);
+    const { remote, base } = inputs.config.github;
+    const repository = await github.repository(root, remote);
+    if (summary.pullRequest && summary.pullRequest.repository !== repository.name) throw new Error(`run is bound to ${summary.pullRequest.repository}, not ${repository.name}`);
+    await github.assertBaselinePublished(root, { remote, base, baselineSha: summary.baselineSha });
+    const files = await changedFiles(workspace, summary.baselineSha, summary.headSha);
+    if (files.some(f => isSecretPath(f.path) || hasSecret(f.added))) throw new Error('changed files contain sensitive material; refusing to push');
+    const body = pullRequestBody({ summary, sbi: inputs.sbi });
+    if (hasSecret(body)) throw new Error('pull request body contains sensitive material; refusing to publish');
+    const branch = `harness/${runId}`;
+    const remoteHead = await github.remoteBranchSha(root, remote, branch);
+    if (remoteHead && remoteHead !== summary.headSha) throw new Error(`${branch} は既に別のcommit ${remoteHead.slice(0, 12)} を指しています。force pushしません`);
+    if (!remoteHead) await github.push(root, remote, summary.headSha, branch);
+    const pull = await github.findOpenPull(repository, branch)
+      ?? await github.createPull(repository, { title: `[Harness] ${inputs.sbi.id}: ${inputs.sbi.title}`, head: branch, base, body, draft: false });
+    summary.pullRequest = { number: pull.number, url: pull.html_url, branch, base, repository: repository.name };
+    summary.events.push({ status: summary.status, phase: 'pull-request', detail: `${pull.html_url} (${summary.headSha})`, at: new Date().toISOString() });
+    await saveRun(root, summary);
+  });
+  return resumeProtected({ root, runId, quiet, github });
+}
+
 export async function runHarness(options) {
   const root = await realpath(options.root);
   return withEvidenceProtection(root, () => runProtected({...options,root}), { extensions: options.redactionExtensions || [] });
+}
+export async function openPullRequest(options) {
+  const root = await realpath(options.root);
+  return withEvidenceProtection(root, () => publishProtected({...options,root}), { extensions: options.redactionExtensions || [] });
 }
 export async function resumeRun(options) {
   const root = await realpath(options.root);
@@ -319,4 +362,3 @@ export async function cleanupRun({root,runId}) {
     return summary;
   });
 }
-export async function openPullRequest() { throw new Error('not implemented'); }

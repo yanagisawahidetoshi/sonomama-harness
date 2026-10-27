@@ -11,6 +11,7 @@ export const sbiSchema = z.strictObject({
   requiredVerifiers: z.array(text).default([]), preImplementationGate: z.boolean().default(false),
   promotion: z.strictObject({ source: relativePath.refine(p => /^prototypes\/(web|mobile)(\/|$)/.test(p)), designApproval: z.null().optional() }).optional(),
   minimumRiskLevel: z.union([z.literal(2), z.literal(3)]).default(2),
+  issueUrl: z.url().optional(),
 }).refine(s => new Set(s.acceptanceCriteria.map(a => a.id)).size === s.acceptanceCriteria.length, 'duplicate acceptance criteria');
 export const configSchema = z.strictObject({
   version: z.literal(1), provider: z.enum(['fake', 'codex', 'claude']), sbi: relativePath,
@@ -18,6 +19,8 @@ export const configSchema = z.strictObject({
   timeoutMs: z.number().int().min(100).max(600000),
   securityVerifiers: z.array(z.strictObject({ id: text, directory: z.union([z.literal('.'), relativePath]), commands: z.array(z.array(text).min(1)) })).default([]),
   semanticReview: z.strictObject({ enabled: z.boolean() }).default({ enabled: false }),
+  // GitHub PR mode. requiredChecks are combined with the ruleset's required status checks of the base branch.
+  github: z.strictObject({ remote: text, base: text, requiredChecks: z.array(text) }).default({ remote: 'origin', base: 'main', requiredChecks: ['harness'] }),
   verifiers: z.array(z.strictObject({ id: text, directory: z.union([z.literal('.'), relativePath]), marker: relativePath.optional(),
     allowMissing: z.boolean().default(true), planned: z.array(text).min(1), commands: z.array(z.array(text).min(1)),
     acceptanceIds: z.array(text).default([]),

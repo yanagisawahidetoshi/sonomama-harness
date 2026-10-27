@@ -41,6 +41,7 @@ export async function recordDecision({ root, runId, purpose, decision = 'APPROVE
     if (!['implementation-gate', 'design-approval', 'merge'].includes(purpose) || !['APPROVE', 'REVOKE', 'REQUEST_CHANGES'].includes(decision)) throw new Error('Invalid approval purpose/decision');
     const { summary } = await loadRun(root, runId);
     if (purpose === 'merge' && summary.executionStatus !== 'DONE') throw new Error('Execution/gate must complete before merge approval');
+    if (purpose === 'merge' && summary.pullRequest) throw new Error(`GitHub PR mode: merge approval comes from GitHub Review on ${summary.pullRequest.url}; harness:approve --phase merge is not used`);
     if (purpose === 'implementation-gate' && (!summary.gate.required || (summary.executionStatus !== 'PENDING' && decision !== 'REVOKE'))) throw new Error('Implementation gate cannot be granted after execution');
     if (purpose === 'design-approval' && (!summary.designApproval?.required || (summary.executionStatus !== 'PENDING' && decision !== 'REVOKE'))) throw new Error('Design Approval must precede production implementation');
     const identity = await identityProvider();

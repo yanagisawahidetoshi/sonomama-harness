@@ -20,6 +20,7 @@
     "harness:test": "node --test tools/harness/*.test.mjs tools/harness/agents/*.test.mjs",
     "harness:approve": "node tools/harness/cli.mjs approve",
     "harness:resume": "node tools/harness/cli.mjs resume",
+    "harness:pr": "node tools/harness/cli.mjs pr",
     "harness:export": "node tools/harness/cli.mjs export",
     "hooks:install": "node tools/harness/install-hooks.mjs",
     "prepare": "node tools/harness/install-hooks.mjs",

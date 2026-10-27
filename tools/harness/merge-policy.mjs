@@ -8,9 +8,13 @@ export function validHumanApprovals(records, { purpose, headSha, contextDigest }
   return { approvals: [...latest.values()].filter(a => a.decision === 'APPROVE'), rejected: [...latest.values()].some(a => a.decision === 'REQUEST_CHANGES') };
 }
 // Pure policy evaluation. Authentication of records is the approval adapter's responsibility.
-export function mergeDecision({ risk, checks, approvals = [], headSha, contextDigest, humanGate = false, gateApproved = false, semanticEnabled = false, securityVerification, lane }) {
+// With a GitHub pull request (PR mode) the merge approval comes only from GitHub Review; local merge records are not counted (ADR-0001).
+export function mergeDecision({ risk, checks, approvals = [], headSha, contextDigest, humanGate = false, gateApproved = false, semanticEnabled = false, securityVerification, lane, github = null }) {
   const required = ['verification', 'policy-review', 'security', 'completion', ...(semanticEnabled ? ['semantic-review'] : [])];
-  const { approvals: valid, rejected } = validHumanApprovals(approvals, { purpose: 'merge', headSha, contextDigest });
+  const local = validHumanApprovals(approvals, { purpose: 'merge', headSha, contextDigest });
+  const valid = github ? (github.reviews?.approvedHumans ?? []).map(login => ({ reviewer: `github:${login}` })) : local.approvals;
+  const rejected = github ? github.reviews?.changesRequested === true : local.rejected;
+  const pull = github?.pullRequest;
   const checkOk = Array.isArray(checks) && checksPassed(checks) && required.every(id => checks.some(c => c.id === id && c.required === true && c.status === 'PASS'));
   const effectiveLevel = humanGate ? Math.max(risk.level, 3) : risk.level;
   const requiredApprovals = Math.max(risk.requiredHumanApprovals ?? 0, effectiveLevel === 3 ? 2 : effectiveLevel === 2 ? 1 : 0);
@@ -21,10 +25,14 @@ export function mergeDecision({ risk, checks, approvals = [], headSha, contextDi
   else if (humanGate && !gateApproved) { decision = 'WAITING_FOR_HUMAN_GATE'; reasons.push('implementation_gate_not_approved'); }
   else if (!checkOk) reasons.push('required_checks_not_passed');
   else if (!securityPassed(securityVerification) || (securityVerification.headSha && securityVerification.headSha !== headSha)) reasons.push('required_security_checks_not_passed');
-  else if (rejected) { decision = 'REJECTED'; reasons.push('human_requested_changes'); }
+  else if (github?.unavailable) reasons.push('github_state_unavailable');
+  else if (github && (pull?.state !== 'open' || pull?.merged)) reasons.push('pull_request_not_open');
+  else if (github && (pull?.testedShaMatches !== true || pull?.headSha !== headSha)) reasons.push('tested_sha_mismatch');
+  else if (github && github.ci?.status !== 'PASS') reasons.push('required_ci_not_passed');
+  else if (rejected) { decision = 'REJECTED'; reasons.push(github ? 'github_changes_requested' : 'human_requested_changes'); }
   else if (valid.length < requiredApprovals) { decision = 'WAITING_FOR_HUMAN_REVIEW'; reasons.push('insufficient_human_approvals'); }
   else { decision = 'MERGE_ALLOWED'; reasons.push('all_conditions_satisfied'); }
   return { state: decision, decision, riskLevel: effectiveLevel, headSha, contextDigest, requiredApprovals,
-    validApprovals: valid.length, validReviewers: valid.map(a => a.reviewer), reasons,
+    validApprovals: valid.length, validReviewers: valid.map(a => a.reviewer), approvalSource: github ? 'github-review' : 'local-ledger', reasons,
     autoMergeEligible: lane?.name !== 'prototype' && decision === 'MERGE_ALLOWED' && effectiveLevel === 1 && risk.autoMergeAllowed !== false && !humanGate && checkOk };
 }

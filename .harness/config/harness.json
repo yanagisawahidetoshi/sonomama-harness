@@ -5,6 +5,13 @@
   "maxConsecutiveFailures": 3,
   "maxIterations": 5,
   "timeoutMs": 120000,
+  "github": {
+    "remote": "origin",
+    "base": "main",
+    "requiredChecks": [
+      "harness"
+    ]
+  },
   "verifiers": [
     {
       "id": "rails",

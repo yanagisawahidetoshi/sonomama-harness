@@ -68,15 +68,15 @@ export const githubMock = defaults => async (state, test) => {
         const sha = require('node:child_process').execFileSync('git', ['--git-dir', state.bare, 'rev-parse', 'refs/heads/' + body.head], { encoding: 'utf8' }).trim();
         const pull = { number, title: body.title, body: body.body, state: 'open', merged: false, html_url: 'https://github.com/acme/app/pull/' + number, user: { login: state.viewer, type: 'User' }, head: { ref: body.head, sha }, base: { ref: body.base } };
         state.pulls.push(pull); process.stdout.write(JSON.stringify(pull));
-      } else if (method === 'GET' && (m = endpoint.match(/^repos\/acme\/app\/pulls\/(\d+)$/))) {
+      } else if (method === 'GET' && (m = endpoint.match(/^repos\\/acme\\/app\\/pulls\\/(\\d+)$/))) {
         const pull = state.pulls.find(p => p.number === Number(m[1])); if (!pull) fail('gh: Not Found (HTTP 404)');
         process.stdout.write(JSON.stringify(pull));
-      } else if (method === 'GET' && (m = endpoint.match(/^repos\/acme\/app\/pulls\/(\d+)\/reviews$/))) {
+      } else if (method === 'GET' && (m = endpoint.match(/^repos\\/acme\\/app\\/pulls\\/(\\d+)\\/reviews$/))) {
         process.stdout.write(JSON.stringify(page(state.reviews[m[1]] || [])));
-      } else if (method === 'GET' && (m = endpoint.match(/^repos\/acme\/app\/commits\/([0-9a-f]+)\/check-runs$/))) {
+      } else if (method === 'GET' && (m = endpoint.match(/^repos\\/acme\\/app\\/commits\\/([0-9a-f]+)\\/check-runs$/))) {
         const runs = state.checkRuns[m[1]] || [];
         process.stdout.write(JSON.stringify({ total_count: runs.length, check_runs: page(runs) }));
-      } else if (method === 'GET' && (m = endpoint.match(/^repos\/acme\/app\/rules\/branches\/(.+)$/))) {
+      } else if (method === 'GET' && (m = endpoint.match(/^repos\\/acme\\/app\\/rules\\/branches\\/(.+)$/))) {
         process.stdout.write(JSON.stringify(page(state.rules)));
       } else fail('unexpected gh api call: ' + method + ' ' + endpoint);
       fs.writeFileSync(file, JSON.stringify(state));

@@ -260,6 +260,9 @@ pnpm harness:approve --run RUN_ID --phase merge --decision request-changes
 pnpm harness:resume --run RUN_ID
 ```
 
+`pnpm harness:pr --run RUN_ID`でPRを作ったrun（GitHub PR mode）では、実装後の承認はGitHub Reviewで判定し、`--phase merge`は使わない。
+tested SHAとPR HEADの一致、必須CIのPASS、CHANGES_REQUESTEDがないことも条件にする。手順は[docs/workflows/github-pr-adapter.md](docs/workflows/github-pr-adapter.md)。
+
 実装前承認は1人、実装後はRisk別の人数を要求する。承認待ちは連続失敗に数えない。
 実装前の仕様曖昧・未決の重要設計はESCALATED。agentが未宣言のHIGH変更を提案した場合も、
 適用前に停止してSBI更新と新しいゲートを要求する。
