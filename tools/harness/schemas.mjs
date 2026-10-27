@@ -128,6 +128,7 @@ export const githubIssueSchema = z.object({
 export const githubIssueListSchema = z.array(githubIssueSchema);
 export const githubCommentSchema = z.object({ id: z.number().int().positive(), body: z.string().nullable().default(null), html_url: z.url() });
 export const githubCommentListSchema = z.array(githubCommentSchema);
+export const githubLabelListSchema = z.array(z.object({ name: z.string() }));
 
 export const riskPolicySchema = z.strictObject({
   version: z.literal(1), defaultLevel: z.literal(2),

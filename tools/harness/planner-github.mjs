@@ -1,6 +1,6 @@
 import { execute } from './io.mjs';
 import { redactText } from './evidence-protection.mjs';
-import { githubIssueSchema, githubCommentSchema, githubIssueListSchema, githubCommentListSchema } from './schemas.mjs';
+import { githubIssueSchema, githubCommentSchema, githubIssueListSchema, githubCommentListSchema, githubLabelListSchema } from './schemas.mjs';
 
 // GitHub access goes through the authenticated gh CLI. Request bodies are JSON on stdin; no shell expansion, no token handling here.
 async function api(method, endpoint, body) {
@@ -56,7 +56,7 @@ export const githubCli = {
     return githubIssueSchema.parse(await api('POST', `repos/${owner}/${repo}/issues`, { title, body, labels }));
   },
   async addLabels({ owner, repo, number }, labels) {
-    return api('POST', `repos/${owner}/${repo}/issues/${number}/labels`, { labels });
+    return githubLabelListSchema.parse(await api('POST', `repos/${owner}/${repo}/issues/${number}/labels`, { labels }));
   },
   async addComment({ owner, repo, number }, body) {
     return githubCommentSchema.parse(await api('POST', `repos/${owner}/${repo}/issues/${number}/comments`, { body }));

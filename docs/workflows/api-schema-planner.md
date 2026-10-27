@@ -19,6 +19,8 @@ GitHub Issue → Requirement Reader → Existing API Schema Reader（packages/ap
 5. PASSなら`.harness/api-schema/<number>/summary.md`のHuman Reviewを人間が確認する。
    生成物はGit管理対象。commitしてPRで差分レビューする。Execution Harnessはcleanなリポジトリでしか起動しない。
 6. 承認する場合は`needs-api-schema-review`を外して`api-schema-approved`を付ける。
+   Plannerは承認ラベルを作成しないため、リポジトリで初回だけ人間が作成する。
+   `gh label create api-schema-approved --color 0e8a16 --description "Human-approved API Schema Proposal"`
    `gh issue edit <number> --remove-label needs-api-schema-review --add-label api-schema-approved`
 7. 承認後、人間がopenapi.yamlを`packages/api-schema/openapi.yaml`へ反映し、それを参照するFrontend / Backendの実装SBIを作る。
 
