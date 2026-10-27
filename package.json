@@ -22,6 +22,7 @@
     "harness:cleanup": "node tools/harness/cli.mjs cleanup"
   },
   "dependencies": {
+    "yaml": "2.9.1",
     "zod": "4.1.12"
   }
 }
