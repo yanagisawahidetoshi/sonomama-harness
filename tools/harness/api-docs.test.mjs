@@ -18,7 +18,8 @@ const prop = (name, overrides = {}) => ({ name, type: 'string', format: null, en
 const response = (status, component = null, array = false) => ({ status, description: `HTTP ${status}`, body: component ? { component, array } : null });
 const endpoint = overrides => ({ method: 'GET', path: '/api/v1/me/profile', tags: ['profile'], change: 'add', authN: 'cognito-jwt', authZ: { roles: [], rule: 'JWTのsubに対応する本人のプロフィールだけを扱う' },
   pii: true, logCaution: ['displayNameをログへ出さない'], parameters: [], requestBody: null, ...overrides });
-// Every shape the issue asks Swagger UI to display: parameters, a request body, Cognito JWT security, nullable, enum and an array response.
+// Every shape the issue asks Swagger UI to display: parameters, a request body, an authenticated endpoint, nullable, enum and an array response.
+// authN uses the value the API Schema Planner accepts today; the assertions below do not depend on the authentication provider.
 const proposal = {
   title: 'プロフィールAPI', summary: '受講生が自分のプロフィールを取得・更新する', version: 'v1', securityImpact: ['APIAuthentication', 'APIAuthorization', 'PII'],
   endpoints: [
@@ -109,7 +110,9 @@ describe('API Docs Server', () => {
         assert.equal(document.openapi, '3.1.0');
         assert.ok(document.paths['/api/v1/me/profile'].patch.requestBody);
         assert.equal(document.paths['/api/v1/courses/{courseId}/lessons'].get.parameters[0].in, 'path');
-        assert.equal(document.components.securitySchemes.cognitoJwt.scheme, 'bearer');
+        const used = document.paths['/api/v1/me/profile'].get.security.flatMap(Object.keys);
+        assert.ok(used.length > 0, 'the authenticated endpoint names a security scheme');
+        for (const name of used) assert.ok(document.components.securitySchemes[name]?.type, `securityScheme ${name} is defined`);
         assert.deepEqual(document.components.schemas.Profile.properties.bio.type, ['string', 'null']);
         assert.deepEqual(document.components.schemas.Profile.properties.role.enum, ['student', 'mentor']);
         await appendFile(join(root, docsSchemaPath), '# edited\n');

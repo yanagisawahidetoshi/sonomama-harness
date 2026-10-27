@@ -23,7 +23,7 @@ API Schemaの承認は確認しない。承認済みのOpenAPIだけを扱う必
 - URL入力欄のあるtop barを出さない。表示できるのはSSOTだけ。
 - Content Security Policyで、ブラウザが読み込みと通信をできる先を、このサーバだけに制限している。
 - Hostヘッダが`127.0.0.1:<port>`か`localhost:<port>`以外のリクエストは403にする（DNS rebinding対策）。
-- Authorizeボタンには`cognitoJwt`が表示される。Try it outがないので、tokenを入力しても使われない。実際のCognitoのtokenやCredentialは不要。
+- OpenAPIのsecurityScheme（Bearer / JWTなど）はAuthorizeボタンと鍵アイコンで表示される。Try it outがないので、tokenを入力しても使われない。認証Providerの実際のtokenやCredentialは不要。
 
 ## 起動を拒否する条件
 
@@ -34,4 +34,4 @@ API Schemaの承認は確認しない。承認済みのOpenAPIだけを扱う必
 
 ## やらないこと
 
-Try it out、Production / Staging APIへのproxy、Cognitoの実認証、外部公開、Redocなど別のドキュメントUI。
+Try it out、Production / Staging APIへのproxy、認証Providerの実認証、外部公開、Redocなど別のドキュメントUI。
