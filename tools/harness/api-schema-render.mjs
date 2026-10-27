@@ -75,7 +75,7 @@ export function renderOpenApi(proposal, existing) {
 
 const cell = value => String(value ?? '').replaceAll('|', '\\|').replaceAll('\n', ' ');
 const bodyName = body => body ? `${body.component}${body.array ? '[]' : ''}` : 'なし';
-export function renderSummary({ issue, proposal, quality, existing, directory, approvedLabel, reviewLabel }) {
+export function renderSummary({ issue, proposal, quality, contractDiff = { breaking: [], nonBreaking: [] }, existing, directory, approvedLabel, reviewLabel }) {
   const active = proposal.endpoints.filter(e => e.change !== 'remove');
   const impact = proposal.securityImpact.length ? proposal.securityImpact.join(', ') : 'None';
   const caution = [...new Set(active.flatMap(e => e.logCaution))];
@@ -83,6 +83,7 @@ export function renderSummary({ issue, proposal, quality, existing, directory, a
     `# API Schema Proposal: #${issue.number} ${issue.title}`, '',
     `- Issue: ${issue.url}`, `- 状態: Human Review待ち。承認まではFrontend / Backendの実装SBIへ進めない`,
     `- API Schema Quality Judge: ${quality.status}`, `- 既存OpenAPI: ${existing?.path ?? 'なし（新規）'}`, `- version: ${proposal.version}`,
+    `- 破壊的変更の候補: ${quality.changes.breaking.length + contractDiff.breaking.length}件（意味上 ${quality.changes.breaking.length}件、既存OpenAPIとの構造差分 ${contractDiff.breaking.length}件）`,
     `- Proposal: ${directory}/openapi.yaml（OpenAPI 3.1）、${directory}/proposal.json、${directory}/summary.md`, '',
     proposal.summary, '',
     '## Endpoint', '',
@@ -109,8 +110,16 @@ export function renderSummary({ issue, proposal, quality, existing, directory, a
     '## Breaking / Non-breaking', '',
     '破壊的変更の候補:', ...(quality.changes.breaking.length ? quality.changes.breaking.map(line => `- ${line}`) : ['- なし']), '',
     '非破壊の変更:', ...(quality.changes.nonBreaking.length ? quality.changes.nonBreaking.map(line => `- ${line}`) : ['- なし']), '',
+    ...(existing ? [
+      '### 既存OpenAPIとの構造差分', '',
+      'modifyは既存operation・同名componentを丸ごと置き換える。提案モデルで表現できない既存の内容も、消える場合はここに出る。', '',
+      '破壊的変更の候補（削除・変更・制約追加）:', ...(contractDiff.breaking.length ? contractDiff.breaking.map(line => `- ${line}`) : ['- なし']), '',
+      '非破壊（追加・説明の変更）:', ...(contractDiff.nonBreaking.length ? contractDiff.nonBreaking.map(line => `- ${line}`) : ['- なし']), '',
+    ] : []),
     '## Human Review', '',
     ...reviewChecklist.map(item => `- [ ] ${item}`), '',
-    `承認する場合は人間が \`${reviewLabel}\` を外して \`${approvedLabel}\` を付ける。Plannerは承認・実装・mergeを行わない。`, '',
+    `承認は Proposal をcommitしたうえで \`pnpm planner:api-schema-approve ${issue.url}\` で署名付き台帳に記録する。`,
+    `Security Impactがあれば異なる人間2人、なければ1人の承認が必要。承認はこの内容のdigestとcommit SHAに紐づき、内容が変われば無効になる。`,
+    `Issueの \`${approvedLabel}\` / \`${reviewLabel}\` は台帳の状態を映す目印で、承認の正本ではない。Plannerは承認・実装・mergeを行わない。`, '',
   ].join('\n');
 }

@@ -14,6 +14,8 @@
     "harness:run": "node tools/harness/cli.mjs run",
     "planner:sbi": "node tools/harness/cli.mjs plan",
     "planner:api-schema": "node tools/harness/cli.mjs api-schema",
+    "planner:api-schema-approve": "node tools/harness/cli.mjs api-schema-approve",
+    "planner:api-schema-status": "node tools/harness/cli.mjs api-schema-status",
     "harness:test": "node --test tools/harness/*.test.mjs tools/harness/agents/*.test.mjs",
     "harness:approve": "node tools/harness/cli.mjs approve",
     "harness:resume": "node tools/harness/cli.mjs resume",

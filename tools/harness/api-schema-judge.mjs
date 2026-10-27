@@ -62,15 +62,15 @@ export function judgeApiSchema(proposal, { securityCategories = null, existing =
     const before = existingEndpoints.get(target);
     if (endpoint.change === 'add' && before) add(target, 'existing-collision', `${target} は既存のendpoint（${existing.path}）と衝突します。変更する場合はchange=modifyにしてください`);
     if (endpoint.change !== 'add' && !before) add(target, 'existing-collision', `${target} は既存のOpenAPIにないため change=${endpoint.change} にできません`);
-    if (endpoint.change === 'remove') { if (before) changes.breaking.push(`${target}: endpoint削除`); continue; }
-    if (endpoint.change === 'add') changes.nonBreaking.push(`${target}: endpoint追加`);
+    if (endpoint.change === 'remove') { if (before) changes.breaking.push(`endpoint削除: ${target}`); continue; }
+    if (endpoint.change === 'add') changes.nonBreaking.push(`endpoint追加: ${target}`);
     else if (before) {
       const found = [];
-      for (const p of endpoint.parameters) if (p.required && !before.parameters.some(b => b.name === p.name && b.in === p.in && b.required)) found.push(`${target}: 必須parameter ${p.name} を追加`);
-      for (const status of before.successStatuses) if (!endpoint.responses.some(r => r.status === status)) found.push(`${target}: 成功status ${status} を削除`);
-      if (!before.authenticated && endpoint.authN === 'cognito-jwt') found.push(`${target}: 公開endpointを認証必須へ変更`);
+      for (const p of endpoint.parameters) if (p.required && !before.parameters.some(b => b.name === p.name && b.in === p.in && b.required)) found.push(`必須parameterを追加: ${target} ${p.name}`);
+      for (const status of before.successStatuses) if (!endpoint.responses.some(r => r.status === status)) found.push(`成功statusを削除: ${target} ${status}`);
+      if (!before.authenticated && endpoint.authN === 'cognito-jwt') found.push(`公開endpointを認証必須へ変更: ${target}`);
       if (found.length) changes.breaking.push(...found);
-      else changes.nonBreaking.push(`${target}: 既存endpointを変更（破壊的変更の候補は未検出）`);
+      else changes.nonBreaking.push(`既存endpointを変更（意味上の破壊的変更は未検出。構造差分も確認）: ${target}`);
     }
 
     const pathNames = placeholders(endpoint.path), params = new Set();
@@ -151,20 +151,20 @@ export function judgeApiSchema(proposal, { securityCategories = null, existing =
     }
 
     const before = existingComponents.get(component.name);
-    if (!before) { changes.nonBreaking.push(`${component.name}: component追加`); continue; }
+    if (!before) { changes.nonBreaking.push(`component追加: ${component.name}`); continue; }
     const found = [];
     for (const old of before.properties) {
       const now = component.properties.find(p => p.name === old.name);
-      if (!now) { found.push(`${component.name}.${old.name}: property削除`); continue; }
-      if (old.type && now.type !== old.type) found.push(`${component.name}.${old.name}: typeを ${old.type} から ${now.type} へ変更`);
+      if (!now) { found.push(`property削除: ${component.name}.${old.name}`); continue; }
+      if (old.type && now.type !== old.type) found.push(`type変更: ${component.name}.${old.name} ${old.type} → ${now.type}`);
       const removed = (old.enum ?? []).filter(value => now.enum && !now.enum.includes(value));
-      if (removed.length) found.push(`${component.name}.${old.name}: enum値 ${removed.join(', ')} を削除`);
-      if (now.required && !old.required) found.push(`${component.name}.${old.name}: 任意から必須へ変更`);
-      if (old.nullable && !now.nullable) found.push(`${component.name}.${old.name}: nullを許可しなくなった`);
+      if (removed.length) found.push(`enum値削除: ${component.name}.${old.name} ${removed.join(', ')}`);
+      if (now.required && !old.required) found.push(`任意から必須へ変更: ${component.name}.${old.name}`);
+      if (old.nullable && !now.nullable) found.push(`nullを許可しなくなった: ${component.name}.${old.name}`);
     }
-    for (const now of component.properties) if (now.required && !before.properties.some(p => p.name === now.name)) found.push(`${component.name}.${now.name}: 必須propertyを追加（requestで使う場合は破壊的）`);
+    for (const now of component.properties) if (now.required && !before.properties.some(p => p.name === now.name)) found.push(`必須propertyを追加（requestで使う場合は破壊的）: ${component.name}.${now.name}`);
     if (found.length) changes.breaking.push(...found);
-    else changes.nonBreaking.push(`${component.name}: component変更（破壊的変更の候補は未検出）`);
+    else changes.nonBreaking.push(`component変更（意味上の破壊的変更は未検出。構造差分も確認）: ${component.name}`);
   }
 
   const impact = new Set(proposal.securityImpact);

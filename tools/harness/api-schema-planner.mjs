@@ -1,40 +1,29 @@
 import { mkdir, readFile, writeFile, rename, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
-import { randomUUID, createHash } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { stringify as toYaml } from 'yaml';
 import { check } from './check.mjs';
-import { json, evidenceText, exists } from './io.mjs';
+import { json, evidenceText } from './io.mjs';
 import { runAgent } from './agents/index.mjs';
 import { apiSchemaResponseSchema, apiSchemaJsonSchema } from './schemas.mjs';
 import { parseIssueUrl } from './planner.mjs';
 import { githubCli } from './planner-github.mjs';
-import { readExistingSchema, schemaExtract } from './api-schema-reader.mjs';
+import { readExistingSchema, schemaExtract, contractExtract } from './api-schema-reader.mjs';
+import { diffContract } from './api-schema-diff.mjs';
+import { apiSchemaApprovalStatus } from './api-schema-approval.mjs';
+import { reviewLabels, approvedLabel, proposalDirectory, sha256, assertReplaceable } from './api-schema-files.mjs';
 import { judgeApiSchema, reservedComponents, supportedStatuses, limits } from './api-schema-judge.mjs';
 import { renderOpenApi, renderSummary } from './api-schema-render.mjs';
 import { withEvidenceProtection, redactText, hasSecret } from './evidence-protection.mjs';
 
-// The Planner adds the review labels only. A human swaps needs-api-schema-review for api-schema-approved; the Planner never approves.
-export const reviewLabels = Object.freeze(['api-schema', 'needs-api-schema-review']);
-export const approvedLabel = 'api-schema-approved';
+export { reviewLabels, approvedLabel };
 export const proposalMarker = issueUrl => `<!-- sonomama-api-schema issue=${issueUrl} -->`;
-const digest = text => createHash('sha256').update(text).digest('hex');
-const generatedFiles = ['openapi.yaml', 'summary.md'];
+// GitHub rejects comments over 65536 characters; summary.md always keeps the full text.
+const commentLimit = 60000;
 
 async function writeText(path, text) {
   await writeFile(`${path}.tmp`, text);
   await rename(`${path}.tmp`, path);
-}
-// A proposal directory is regenerated only when every generated file is byte-identical to what the Planner recorded for the same Issue.
-async function assertReplaceable(root, directory, issueUrl) {
-  if (!await exists(join(root, directory))) return;
-  let meta;
-  try { meta = JSON.parse(await readFile(join(root, directory, 'proposal.json'), 'utf8')); }
-  catch { throw new Error(`${directory} にPlannerが記録したproposal.jsonがありません。人間が作成・編集したファイルの可能性があるため上書きしません`); }
-  if (meta.issue?.url !== issueUrl) throw new Error(`${directory} は別のIssue（${meta.issue?.url ?? '不明'}）のProposalです。上書きしません。人間が退避してから再実行してください`);
-  for (const file of generatedFiles) {
-    const text = await readFile(join(root, directory, file), 'utf8').catch(() => null);
-    if (text === null || digest(text) !== meta.files?.[file]) throw new Error(`${directory}/${file} は生成後に人間が編集した可能性があります（digest不一致）。上書きしません。内容を確認し、不要ならディレクトリを退避してから再実行してください`);
-  }
 }
 // The merged document also carries the existing schema verbatim, so every key and string is inspected before it is written or published.
 function containsSecret(value) {
@@ -59,7 +48,7 @@ async function proposeProtected({ root, issueUrl, provider, quiet, agent, github
   if (!['codex', 'claude'].includes(provider)) throw new Error(`API Schema Planner provider must be codex or claude; the ${provider} provider cannot publish a proposal`);
   const id = `api-schema-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`;
   const runDir = `.harness/runs/${id}`, directory = join(root, runDir);
-  const proposalDir = `.harness/api-schema/${ref.number}`;
+  const proposalDir = proposalDirectory(ref);
   await mkdir(directory, { recursive: true });
   const summary = { id, runDir, issue: ref, provider, status: 'FETCHING', reason: null, quality: null, proposalDir: null, comment: null, startedAt: new Date().toISOString() };
   const save = () => json(join(directory, 'summary.json'), summary);
@@ -73,6 +62,9 @@ async function proposeProtected({ root, issueUrl, provider, quiet, agent, github
     summary.issue = { ...ref, title: issue.title };
     await json(join(directory, 'issue.json'), issue);
     if (issue.labels.includes(approvedLabel)) throw new Error(`#${issue.number} には${approvedLabel}が付いています。承認済みのAPI Schemaは再生成しません。変更する場合は人間がラベルを外してから実行してください`);
+    // The signed ledger, not the label, decides whether a proposal is approved. Regenerating would silently void an approval.
+    const approval = await apiSchemaApprovalStatus({ root, issueUrl: ref.url });
+    if (approval.approvals > 0) throw new Error(`#${issue.number} のAPI Schemaには有効な承認（${approval.approvals}/${approval.required}）があります。再生成する場合は人間が承認をREVOKEしてから実行してください`);
     await assertReplaceable(root, proposalDir, ref.url);
 
     summary.status = 'READING_SCHEMA'; await save();
@@ -80,7 +72,7 @@ async function proposeProtected({ root, issueUrl, provider, quiet, agent, github
     await json(join(directory, 'existing-schema.json'), schemaExtract(existing));
     summary.status = 'PROPOSING'; await save(); log(`PROPOSING: #${issue.number} ${issue.title}`);
     const securityCategories = [...new Set(securityPolicy.rules.flatMap(rule => rule.categories))];
-    const prompt = await makePrompt(root, { issue: { url: issue.url, number: issue.number, title: issue.title, body: issue.body, labels: issue.labels }, existing: schemaExtract(existing), securityCategories, reservedComponents, supportedStatuses, limits });
+    const prompt = await makePrompt(root, { issue: { url: issue.url, number: issue.number, title: issue.title, body: issue.body, labels: issue.labels }, existing: schemaExtract(existing), existingContract: contractExtract(existing), securityCategories, reservedComponents, supportedStatuses, limits });
     await evidenceText(join(directory, 'prompt.txt'), prompt);
     const response = apiSchemaResponseSchema.parse(await agent({ provider, prompt, directory, workspace: root, timeoutMs: config.timeoutMs, schema: apiSchemaJsonSchema }));
     await json(join(directory, 'candidates.json'), response);
@@ -94,9 +86,11 @@ async function proposeProtected({ root, issueUrl, provider, quiet, agent, github
     log('API Schema Quality Judge: PASS');
     const document = renderOpenApi(response.proposal, existing);
     if (containsSecret(document)) throw new Error('Secret/Credential detected in the rendered OpenAPI document; rejected before any file or GitHub write');
+    const contractDiff = existing ? diffContract(existing.document, document) : { breaking: [], nonBreaking: [] };
+    await json(join(directory, 'contract-diff.json'), contractDiff);
     const yamlText = toYaml(document, { lineWidth: 0 });
-    const summaryText = renderSummary({ issue, proposal: response.proposal, quality, existing, directory: proposalDir, approvedLabel, reviewLabel: reviewLabels[1] });
-    const comment = [proposalMarker(ref.url), summaryText].join('\n');
+    const summaryText = renderSummary({ issue, proposal: response.proposal, quality, contractDiff, existing, directory: proposalDir, approvedLabel, reviewLabel: reviewLabels[1] });
+    const comment = [proposalMarker(ref.url), summaryText.length > commentLimit ? `${summaryText.slice(0, commentLimit)}\n\n（長いため省略。全文は ${proposalDir}/summary.md）` : summaryText].join('\n');
     if (hasSecret(comment)) throw new Error('Secret/Credential detected in the proposal summary; rejected before any file or GitHub write');
 
     summary.status = 'PUBLISHING'; await save();
@@ -106,7 +100,7 @@ async function proposeProtected({ root, issueUrl, provider, quiet, agent, github
     await json(join(root, proposalDir, 'proposal.json'), {
       version: 1, status: 'NEEDS_REVIEW', issue: { url: ref.url, number: ref.number, title: issue.title },
       generatedBy: { runId: id, provider }, generatedAt: new Date().toISOString(), existingSchema: existing?.path ?? null,
-      quality, proposal: response.proposal, files: { 'openapi.yaml': digest(yamlText), 'summary.md': digest(summaryText) },
+      quality, contractDiff, proposal: response.proposal, files: { 'openapi.yaml': sha256(yamlText), 'summary.md': sha256(summaryText) },
     });
     summary.proposalDir = proposalDir;
     await save(); log(`Proposal: ${proposalDir}/openapi.yaml`);

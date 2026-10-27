@@ -10,7 +10,7 @@ export function localHumanIdentity() {
   const user = userInfo();
   return { id: `os:${user.uid}:${user.username}`, kind: 'human', source: 'local-os-user' };
 }
-async function signingKey(root, create = false) {
+export async function signingKey(root, create = false) {
   const path = join(root, '.harness/state/human/.key');
   if (create) {
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
@@ -19,8 +19,8 @@ async function signingKey(root, create = false) {
   }
   return readFile(path);
 }
-const sign = (key, value) => createHmac('sha256', key).update(JSON.stringify(value)).digest('hex');
-const equal = (a, b) => typeof a === 'string' && typeof b === 'string' && a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
+export const sign = (key, value) => createHmac('sha256', key).update(JSON.stringify(value)).digest('hex');
+export const equal = (a, b) => typeof a === 'string' && typeof b === 'string' && a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 export async function authenticatedRecords(root, runId) {
   const path = runPaths(root, runId).ledger;
   if (!await exists(path)) return [];

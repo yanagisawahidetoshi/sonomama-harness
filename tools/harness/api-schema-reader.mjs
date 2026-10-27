@@ -43,3 +43,16 @@ export async function readExistingSchema(root) {
 }
 // The provider receives this extract, never the raw document: examples and descriptions in the file are not needed to design a contract.
 export const schemaExtract = existing => existing && { path: existing.path, openapi: existing.openapi, endpoints: existing.endpoints, components: existing.components };
+// Structure for the provider to restate on modify: descriptions and examples are stripped, and properties maps become arrays,
+// so the prompt carries only OpenAPI keywords as keys and the redaction of key: value pairs cannot damage it.
+const omitted = new Set(['description', 'summary', 'example', 'examples']);
+function structure(value) {
+  if (Array.isArray(value)) return value.map(structure);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).filter(([key]) => !omitted.has(key)).map(([key, entry]) => [key,
+    key === 'properties' && entry && typeof entry === 'object' && !Array.isArray(entry) ? Object.entries(entry).map(([name, schema]) => ({ name, schema: structure(schema) })) : structure(entry)]));
+}
+export const contractExtract = existing => existing && {
+  paths: Object.entries(existing.document.paths ?? {}).map(([path, item]) => ({ path, item: structure(item) })),
+  schemas: Object.entries(existing.document.components?.schemas ?? {}).map(([name, schema]) => ({ name, schema: structure(schema) })),
+};

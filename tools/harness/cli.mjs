@@ -5,15 +5,16 @@ import { withEvidenceProtection, redactText } from './evidence-protection.mjs';
 import { exportRun } from './review-export.mjs';
 import { planIssue } from './planner.mjs';
 import { planApiSchema } from './api-schema-planner.mjs';
+import { recordApiSchemaDecision, apiSchemaApprovalStatus } from './api-schema-approval.mjs';
 import { relativePath } from './schemas.mjs';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 await withEvidenceProtection(root, async () => {
 try {
   const [command, ...args] = process.argv.slice(2);
-  const allowed = { check: ['--sbi'], demo: ['--sbi', '--full'], run: ['--provider', '--sbi', '--full'], plan: ['--provider'], 'api-schema': ['--provider'], cleanup:['--run'], resume: ['--run'], approve: ['--run', '--phase', '--decision'], export: ['--run','--out'] };
-  if (!allowed[command]) throw new Error('Usage: check | demo [--full] | run [--full] | plan ISSUE_URL [--provider codex|claude] | api-schema ISSUE_URL [--provider codex|claude] | cleanup --run ID | resume --run ID | approve --run ID --phase gate|design|merge [--decision approve|revoke|request-changes]');
+  const allowed = { check: ['--sbi'], demo: ['--sbi', '--full'], run: ['--provider', '--sbi', '--full'], plan: ['--provider'], 'api-schema': ['--provider'], 'api-schema-approve': ['--decision'], 'api-schema-status': [], cleanup:['--run'], resume: ['--run'], approve: ['--run', '--phase', '--decision'], export: ['--run','--out'] };
+  if (!allowed[command]) throw new Error('Usage: check | demo [--full] | run [--full] | plan ISSUE_URL [--provider codex|claude] | api-schema ISSUE_URL [--provider codex|claude] | api-schema-approve ISSUE_URL [--decision approve|revoke|request-changes] | api-schema-status ISSUE_URL | cleanup --run ID | resume --run ID | approve --run ID --phase gate|design|merge [--decision approve|revoke|request-changes]');
   const options = {};
-  const positional = ['plan', 'api-schema'].includes(command) && args.length && !args[0].startsWith('--') ? args.shift() : null;
+  const positional = ['plan', 'api-schema', 'api-schema-approve', 'api-schema-status'].includes(command) && args.length && !args[0].startsWith('--') ? args.shift() : null;
   for (let i = 0; i < args.length; i += 2) {
     if (args[i] === '--full' && allowed[command].includes('--full') && !options['--full']) { options['--full']=true; i--; continue; }
     if (!allowed[command].includes(args[i]) || !args[i + 1] || args[i + 1].startsWith('--') || options[args[i]]) throw new Error(`Invalid arguments for ${command}`);
@@ -31,6 +32,17 @@ try {
     if (!positional) throw new Error('api-schema requires a GitHub Issue URL: api-schema https://github.com/<owner>/<repo>/issues/<number>');
     const proposal = await planApiSchema({ root, issueUrl: positional, provider: options['--provider'] });
     console.log(`Evidence: ${proposal.runDir}/summary.json`);
+  } else if (command === 'api-schema-approve' || command === 'api-schema-status') {
+    if (!positional) throw new Error(`${command} requires a GitHub Issue URL`);
+    let result;
+    if (command === 'api-schema-approve') {
+      const decision = { approve: 'APPROVE', revoke: 'REVOKE', 'request-changes': 'REQUEST_CHANGES' }[options['--decision'] || 'approve'];
+      if (!decision) throw new Error('Unknown API schema decision');
+      result = await recordApiSchemaDecision({ root, issueUrl: positional, decision });
+    } else result = await apiSchemaApprovalStatus({ root, issueUrl: positional });
+    console.log(`API Schema: ${result.status} (${result.approvals}/${result.required}) digest=${result.proposalDigest ?? '-'} commit=${result.commitSha ?? '-'}`);
+    for (const reason of result.reasons) console.log(`- ${reason}`);
+    process.exitCode = result.status === 'APPROVED' ? 0 : 2;
   } else if (command === 'cleanup') {
     if (!options['--run']) throw new Error('cleanup requires --run ID');
     await cleanupRun({root,runId:options['--run']});
