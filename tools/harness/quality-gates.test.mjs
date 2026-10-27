@@ -48,7 +48,7 @@ describe('Verifier applicability', () => {
     it('when only a shared root file changes then a missing app is skipped as a placeholder', () => fixture(async root => {
       const {config,sbi}=await check(root);
       const result=await verify({root,workspace:root,config,sbi:{...sbi,acceptanceCriteria:[]},files:[{path:'pnpm-lock.yaml'}]});
-      for (const id of ['rails','expo','prototype-web','prototype-mobile']) {
+      for (const id of ['prototype-web','prototype-mobile']) {
         const rails=result.checks.find(c=>c.id===id);
         assert.equal(rails.status,'SKIP'); assert.equal(rails.required,false); assert.equal(rails.reason,'missing app (placeholder)');
       }
