@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fixture, update, commitFixture, runFixture } from './test-fixture.mjs';
 import { assertWritablePath, prepareWorkspace, git, workspaceIntegrity } from './workspace.mjs';
@@ -47,8 +47,11 @@ describe('Verifier applicability', () => {
     }
     it('when only a shared root file changes then a missing app is skipped as a placeholder', () => fixture(async root => {
       const {config,sbi}=await check(root);
+      const ids=['rails','expo','prototype-web','prototype-mobile'];
+      // Make every app ungenerated regardless of which apps this repository has already created.
+      for (const id of ids) { const v=config.verifiers.find(x=>x.id===id); await rm(join(root,v.directory,v.marker),{force:true}); }
       const result=await verify({root,workspace:root,config,sbi:{...sbi,acceptanceCriteria:[]},files:[{path:'pnpm-lock.yaml'}]});
-      for (const id of ['prototype-web','prototype-mobile']) {
+      for (const id of ids) {
         const rails=result.checks.find(c=>c.id===id);
         assert.equal(rails.status,'SKIP'); assert.equal(rails.required,false); assert.equal(rails.reason,'missing app (placeholder)');
       }
