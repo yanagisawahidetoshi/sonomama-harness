@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { exists } from './io.mjs';
 import { parseIssueUrl } from './planner.mjs';
 import { apiSchemaApprovalStatus } from './api-schema-approval.mjs';
 import { proposalDirectory, sha256 } from './api-schema-files.mjs';
@@ -47,9 +48,10 @@ export async function resolveMockContract({ root, issueUrl }) {
 
 const spawnPrism = (command, args, options) => spawn(command, args, { ...options, stdio: 'inherit' });
 // Static mode (examples, else values derived from the schema) is the default so responses stay stable. Proxy mode is never used.
-export async function startApiMock({ root, issueUrl, dynamic = false, port = mockPort, spawner = spawnPrism }) {
+export async function startApiMock({ root, issueUrl, dynamic = false, port = mockPort, spawner = spawnPrism, prism = prismBin }) {
   const contract = await resolveMockContract({ root, issueUrl });
+  if (!await exists(prism)) throw new Error('Prismがインストールされていません。pnpm installを実行してください');
   const args = ['mock', join(root, contract.schemaPath), '-h', mockHost, '-p', String(port), ...(dynamic ? ['-d'] : [])];
-  const child = spawner(prismBin, args, { cwd: root });
+  const child = spawner(prism, args, { cwd: root });
   return { ...contract, url: `http://${mockHost}:${port}`, child };
 }
