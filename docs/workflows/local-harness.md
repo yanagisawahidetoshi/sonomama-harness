@@ -7,7 +7,8 @@
    WAITING_FOR_DESIGN_APPROVALなら、試作採用の設計を確認し、approve --phase designを実行する。
 5. resume --run IDで着手する。失敗は修正→再検証。連続3回失敗などはESCALATED。
 6. executionStatus=DONE後、risk-assessmentとHEADの差分を人間が確認する。
-7. LEVEL 2は1人、LEVEL 3は異なる2人以上がapprove --phase mergeで承認する。
+7. GitHubで共有するなら`harness:pr --run ID`でPRを作り、GitHub Reviewで承認する（[github-pr-adapter.md](github-pr-adapter.md)）。
+   PRを作らないLocal modeでは、LEVEL 2は1人、LEVEL 3は異なる2人以上がapprove --phase mergeで承認する。
 8. resume --run IDで再評価し、MERGE_ALLOWEDとautoMergeEligibleを確認する。
 9. 実際のmergeは人間または別の将来adapterが行う。このHarnessはmergeしない。
 
@@ -18,4 +19,4 @@ OSユーザーの別名は別人として数えない。複数人の本運用に
 SHA・source・SBI・Rules・検証コードが変わったら新規runで再検証・再承認する。
 途中iterationはresumeしない。承認待ちだけを再開・再評価する。
 承認撤回後もresumeでMERGE_ALLOWEDを取り消せる。
-PBI → SBI Plannerは[pbi-sbi-planner.md](pbi-sbi-planner.md)。API変更を伴うSBIは実装前に[api-schema-planner.md](api-schema-planner.md)でAPI契約を承認する。GitHub PR、Ruleset、CODEOWNERS、実mergeは今回の対象外。
+PBI → SBI Plannerは[pbi-sbi-planner.md](pbi-sbi-planner.md)。API変更を伴うSBIは実装前に[api-schema-planner.md](api-schema-planner.md)でAPI契約を承認する。Ruleset・CODEOWNERSの設定と実mergeは対象外。

@@ -3,7 +3,7 @@ import { redactText } from './evidence-protection.mjs';
 import { githubIssueSchema, githubCommentSchema, githubIssueListSchema, githubCommentListSchema, githubLabelListSchema } from './schemas.mjs';
 
 // GitHub access goes through the authenticated gh CLI. Request bodies are JSON on stdin; no shell expansion, no token handling here.
-async function api(method, endpoint, body) {
+export async function api(method, endpoint, body) {
   const args = ['api', ...(method === 'GET' ? [] : ['-X', method]), endpoint, ...(body ? ['--input', '-'] : [])];
   const result = await execute('gh', args, { input: body ? JSON.stringify(body) : '', timeoutMs: 60000 });
   if (!result.ok) {
