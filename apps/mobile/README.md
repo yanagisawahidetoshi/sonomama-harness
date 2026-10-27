@@ -20,7 +20,7 @@ React / React Nativeのversionは`npx expo install`が解決したものを使�
 - Node 22 (`.node-version`)、pnpm 8 (root `package.json` の `packageManager`)
 - iOS: Xcode と iOS Simulator
 - Android: Android Studio と Android Emulator
-- Maestro CLI (E2Eを実行する場合)
+- Maestro CLI 2.x (E2Eを実行する場合。iOS 26系のSimulatorでは1.x系だとアプリの画面要素を取得できない。2.12.0で確認済み)
 
 ## セットアップ
 
@@ -95,11 +95,11 @@ pnpm api:mock <Issue URL>
 
 実行環境によってPCのlocalhostへの到達方法が違う。
 
-| 実行環境             | 設定値の例                                                                                                             |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| iOS Simulator        | `http://127.0.0.1:4010` (Macのlocalhostを共有する)                                                                     |
-| Android Emulator     | `http://10.0.2.2:4010` (Emulatorから見たホストPC)                                                                      |
-| 実機 (iOS / Android) | `http://<PCのLAN IP>:4010` 例: `http://192.168.0.10:4010`。PCと同じWi-Fiに接続し、Mock Serverを `0.0.0.0` で待ち受ける |
+| 実行環境             | 設定値の例                                                                                                                              |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| iOS Simulator        | `http://127.0.0.1:4010` (Macのlocalhostを共有する)                                                                                      |
+| Android Emulator     | `http://10.0.2.2:4010` (Emulatorから見たホストPC)                                                                                       |
+| 実機 (iOS / Android) | 未対応。`pnpm api:mock` のPrismは `127.0.0.1` だけで待ち受けるため、実機からは接続できない。実機で確認する場合はLAN公開の対応を別途行う |
 
 値を変えたら `pnpm --filter mobile start --clear` でMetroのキャッシュを消して再起動する。
 
