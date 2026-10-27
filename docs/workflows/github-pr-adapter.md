@@ -49,6 +49,7 @@ EvidenceはHarnessを実行したPCの`.harness/runs/<run-id>/`にあり、PRに
 
 - `harness:resume`は、元のcheckoutのHEADがrunのbaselineのままの間だけ動く（既存の`sourceIntegrity`）。待っている間に別のPRをpullしてHEADが動いたら、新しいrunを作る。
 - 実装Agent（codex / claude CLI）が人間と同じ`gh`の認証で動くと、人間名義でReviewできてしまう。Harnessではこれを検出できない。Agentを動かす環境には、GitHubの認証情報を渡さない。
+- `harness:pr`のpushは、リポジトリのpre-push hookを通さない。hookが検査するのは操作者のcheckoutで、pushするcommitではないため。pushするcommitは、Harnessが検証したSHAそのもの。
 - GitHub上のbranch protectionとRulesetは変更しない。mergeを機械的に止めたい場合は、GitHub側で設定する。
 
 ## やらないこと
