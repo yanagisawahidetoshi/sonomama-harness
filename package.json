@@ -27,5 +27,18 @@
   "dependencies": {
     "yaml": "2.9.1",
     "zod": "4.1.12"
+  },
+  "devDependencies": {
+    "@stoplight/prism-cli": "5.14.2"
+  },
+  "pnpm": {
+    "overrides": {
+      "@stoplight/prism-core": "5.8.0",
+      "@stoplight/prism-http": "5.12.0",
+      "@stoplight/prism-http-server": "5.12.2"
+    },
+    "neverBuiltDependencies": [
+      "@scarf/scarf"
+    ]
   }
 }
