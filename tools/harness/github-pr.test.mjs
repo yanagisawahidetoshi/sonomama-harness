@@ -12,47 +12,70 @@ import { recordDecision } from './human-approvals.mjs';
 import { git } from './workspace.mjs';
 import { readJson } from './io.mjs';
 
-const head = 'a'.repeat(40), old = 'b'.repeat(40);
+const head = 'a'.repeat(40), old = 'b'.repeat(40), base = 'd'.repeat(40);
 let nextId = 1;
 const review = (login, state, commit = head, type = 'User') => ({ id: nextId++, user: { login, type }, state, commit_id: commit });
-const run = (name, status, conclusion = null, id = nextId++) => ({ id, name, status, conclusion, head_sha: head });
+const run = (name, status, conclusion = null, id = nextId++, appId = 15368) => ({ id, name, status, conclusion, head_sha: head, app: { id: appId } });
+// Repository permission per reviewer, as GitHub reports it (maintain is reported as write).
+const permissions = { alice: 'write', bob: 'write', author: 'admin', 'ci-helper': 'write', 'copilot[bot]': 'write' };
 
 describe('GitHub Review approvals', () => {
   describe('given reviews on the pull request', () => {
     it('when distinct humans approve the head SHA then each counts once', () => {
-      const result = reviewApprovals({ reviews: [review('alice', 'APPROVED'), review('bob', 'APPROVED'), review('alice', 'APPROVED')], headSha: head, author: 'author' });
+      const result = reviewApprovals({ reviews: [review('alice', 'APPROVED'), review('bob', 'APPROVED'), review('alice', 'APPROVED')], headSha: head, author: 'author', permissions });
       assert.deepEqual(result.approvedHumans, ['alice', 'bob']);
       assert.equal(result.changesRequested, false);
     });
     it('when an approval was given to an older commit then it is not counted', () => {
-      assert.deepEqual(reviewApprovals({ reviews: [review('alice', 'APPROVED', old)], headSha: head, author: 'author' }).approvedHumans, []);
+      assert.deepEqual(reviewApprovals({ reviews: [review('alice', 'APPROVED', old)], headSha: head, author: 'author', permissions }).approvedHumans, []);
     });
     it('when a bot or a GitHub App approves then it is not a human approval', () => {
       const reviews = [review('ci-helper', 'APPROVED', head, 'Bot'), review('copilot[bot]', 'APPROVED')];
-      assert.deepEqual(reviewApprovals({ reviews, headSha: head, author: 'author' }).approvedHumans, []);
+      assert.deepEqual(reviewApprovals({ reviews, headSha: head, author: 'author', permissions }).approvedHumans, []);
     });
     it('when the pull request author approves then it is not counted', () => {
-      assert.deepEqual(reviewApprovals({ reviews: [review('author', 'APPROVED')], headSha: head, author: 'author' }).approvedHumans, []);
+      assert.deepEqual(reviewApprovals({ reviews: [review('author', 'APPROVED')], headSha: head, author: 'author', permissions }).approvedHumans, []);
     });
     it('when a reviewer comments after approving then the approval still stands', () => {
-      const result = reviewApprovals({ reviews: [review('alice', 'APPROVED'), review('alice', 'COMMENTED')], headSha: head, author: 'author' });
+      const result = reviewApprovals({ reviews: [review('alice', 'APPROVED'), review('alice', 'COMMENTED')], headSha: head, author: 'author', permissions });
       assert.deepEqual(result.approvedHumans, ['alice']);
     });
     it('when a reviewer requests changes on an older commit and never re-reviews then changes are still requested', () => {
-      const result = reviewApprovals({ reviews: [review('alice', 'CHANGES_REQUESTED', old), review('bob', 'APPROVED')], headSha: head, author: 'author' });
+      const result = reviewApprovals({ reviews: [review('alice', 'CHANGES_REQUESTED', old), review('bob', 'APPROVED')], headSha: head, author: 'author', permissions });
       assert.equal(result.changesRequested, true);
       assert.deepEqual(result.changesRequestedBy, ['alice']);
     });
     it('when a reviewer approves after requesting changes then only the latest review counts', () => {
-      const result = reviewApprovals({ reviews: [review('alice', 'CHANGES_REQUESTED'), review('alice', 'APPROVED')], headSha: head, author: 'author' });
+      const result = reviewApprovals({ reviews: [review('alice', 'CHANGES_REQUESTED'), review('alice', 'APPROVED')], headSha: head, author: 'author', permissions });
       assert.deepEqual([result.approvedHumans, result.changesRequested], [['alice'], false]);
     });
     it('when a request for changes is dismissed then it no longer blocks and grants nothing', () => {
-      const result = reviewApprovals({ reviews: [review('alice', 'CHANGES_REQUESTED'), review('alice', 'DISMISSED')], headSha: head, author: 'author' });
+      const result = reviewApprovals({ reviews: [review('alice', 'CHANGES_REQUESTED'), review('alice', 'DISMISSED')], headSha: head, author: 'author', permissions });
       assert.deepEqual([result.approvedHumans, result.changesRequested], [[], false]);
     });
     it('when a pending review exists then it is ignored', () => {
-      assert.deepEqual(reviewApprovals({ reviews: [review('alice', 'PENDING')], headSha: head, author: 'author' }).approvedHumans, []);
+      assert.deepEqual(reviewApprovals({ reviews: [review('alice', 'PENDING')], headSha: head, author: 'author', permissions }).approvedHumans, []);
+    });
+  });
+  describe('given reviewers with different repository permissions', () => {
+    for (const permission of ['write', 'admin']) {
+      it(`when a reviewer with ${permission} permission approves then the approval counts`, () => {
+        assert.deepEqual(reviewApprovals({ reviews: [review('carol', 'APPROVED')], headSha: head, author: 'author', permissions: { carol: permission } }).approvedHumans, ['carol']);
+      });
+    }
+    for (const permission of ['read', 'none']) {
+      it(`when a reviewer with ${permission} permission approves then GitHub would not count it so neither does Harness`, () => {
+        assert.deepEqual(reviewApprovals({ reviews: [review('carol', 'APPROVED')], headSha: head, author: 'author', permissions: { carol: permission } }).approvedHumans, []);
+      });
+    }
+    it('when a reviewer without write permission requests changes then it does not block, as on GitHub', () => {
+      const result = reviewApprovals({ reviews: [review('carol', 'CHANGES_REQUESTED'), review('alice', 'APPROVED')], headSha: head, author: 'author', permissions: { carol: 'read', alice: 'write' } });
+      assert.deepEqual([result.approvedHumans, result.changesRequested], [['alice'], false]);
+    });
+    it('when a reviewer permission could not be read then the approval is not counted but a request for changes still blocks', () => {
+      const approved = reviewApprovals({ reviews: [review('carol', 'APPROVED')], headSha: head, author: 'author', permissions: {} });
+      const requested = reviewApprovals({ reviews: [review('carol', 'CHANGES_REQUESTED')], headSha: head, author: 'author', permissions: { carol: 'unknown' } });
+      assert.deepEqual([approved.approvedHumans, requested.changesRequested], [[], true]);
     });
   });
 });
@@ -60,27 +83,37 @@ describe('GitHub Review approvals', () => {
 describe('GitHub CI status', () => {
   describe('given the required checks for the head SHA', () => {
     it('when every required check succeeded then passes', () => {
-      assert.equal(ciStatus({ checkRuns: [run('harness', 'completed', 'success')], required: ['harness'] }).status, 'PASS');
+      assert.equal(ciStatus({ checkRuns: [run('harness', 'completed', 'success')], required: [{ context: 'harness' }] }).status, 'PASS');
     });
     it('when a required check is still running then is pending', () => {
-      assert.equal(ciStatus({ checkRuns: [run('harness', 'in_progress')], required: ['harness'] }).status, 'PENDING');
+      assert.equal(ciStatus({ checkRuns: [run('harness', 'in_progress')], required: [{ context: 'harness' }] }).status, 'PENDING');
     });
     for (const conclusion of ['failure', 'timed_out', 'action_required', 'cancelled', 'skipped', 'neutral', 'stale']) {
       it(`when a required check concluded ${conclusion} then fails`, () => {
-        assert.equal(ciStatus({ checkRuns: [run('harness', 'completed', conclusion)], required: ['harness'] }).status, 'FAIL');
+        assert.equal(ciStatus({ checkRuns: [run('harness', 'completed', conclusion)], required: [{ context: 'harness' }] }).status, 'FAIL');
       });
     }
     it('when a required check never ran then reports it missing and fails', () => {
-      const result = ciStatus({ checkRuns: [run('lint', 'completed', 'success')], required: ['harness'] });
+      const result = ciStatus({ checkRuns: [run('lint', 'completed', 'success')], required: [{ context: 'harness' }] });
       assert.equal(result.status, 'FAIL');
       assert.deepEqual(result.checks, [{ name: 'harness', status: 'MISSING' }]);
+    });
+    it('when the ruleset expects the check from a specific app and only another app reported it then fails', () => {
+      const result = ciStatus({ checkRuns: [run('harness', 'completed', 'success', nextId++, 999)], required: [{ context: 'harness', integrationId: 15368 }] });
+      assert.equal(result.status, 'FAIL');
+      assert.deepEqual(result.checks, [{ name: 'harness', integrationId: 15368, status: 'MISSING' }]);
+    });
+    it('when the ruleset expects the check from a specific app and that app reported success then passes', () => {
+      const checkRuns = [run('harness', 'completed', 'failure', nextId++, 15368), run('harness', 'completed', 'success', nextId++, 999)];
+      assert.equal(ciStatus({ checkRuns, required: [{ context: 'harness', integrationId: 15368 }] }).status, 'FAIL');
+      assert.equal(ciStatus({ checkRuns: [run('harness', 'completed', 'success', nextId++, 15368)], required: [{ context: 'harness', integrationId: 15368 }] }).status, 'PASS');
     });
     it('when no check is required then reports NOT_CONFIGURED instead of passing', () => {
       assert.equal(ciStatus({ checkRuns: [run('harness', 'completed', 'success')], required: [] }).status, 'NOT_CONFIGURED');
     });
     it('when a check was re-run then only the latest run counts', () => {
-      assert.equal(ciStatus({ checkRuns: [run('harness', 'completed', 'success', 11), run('harness', 'completed', 'failure', 10)], required: ['harness'] }).status, 'PASS');
-      assert.equal(ciStatus({ checkRuns: [run('harness', 'completed', 'success', 10), run('harness', 'completed', 'failure', 11)], required: ['harness'] }).status, 'FAIL');
+      assert.equal(ciStatus({ checkRuns: [run('harness', 'completed', 'success', 11), run('harness', 'completed', 'failure', 10)], required: [{ context: 'harness' }] }).status, 'PASS');
+      assert.equal(ciStatus({ checkRuns: [run('harness', 'completed', 'success', 10), run('harness', 'completed', 'failure', 11)], required: [{ context: 'harness' }] }).status, 'FAIL');
     });
   });
 });
@@ -89,12 +122,12 @@ describe('Merge Policy Judge with GitHub PR state', () => {
   const checks = ['verification', 'policy-review', 'security', 'completion'].map(id => ({ id, required: true, status: 'PASS' }));
   const securityVerification = { status: 'PASS', violations: [], requiredVerifiers: ['secret-scan'], checks: [{ id: 'secret-scan', required: true, status: 'PASS' }] };
   const github = (overrides = {}) => ({
-    pullRequest: { number: 7, url: 'https://github.com/acme/app/pull/7', headSha: head, state: 'open', merged: false, testedShaMatches: true, ...overrides.pullRequest },
+    pullRequest: { number: 7, url: 'https://github.com/acme/app/pull/7', headSha: head, state: 'open', merged: false, testedShaMatches: true, baseRef: 'main', baseSha: base, remoteBaseSha: base, ...overrides.pullRequest },
     ci: { status: 'PASS', checks: [], ...overrides.ci },
     reviews: { approvedHumans: [], changesRequested: false, changesRequestedBy: [], ...overrides.reviews },
   });
   const decide = (level, state, extra = {}) => mergeDecision({ risk: { level, requiredHumanApprovals: level === 3 ? 2 : level === 2 ? 1 : 0 }, checks, approvals: [], securityVerification,
-    headSha: head, contextDigest: 'context', gateApproved: true, humanGate: false, github: state, ...extra });
+    headSha: head, contextDigest: 'context', gateApproved: true, humanGate: false, github: state, baseline: { ref: 'main', sha: base }, ...extra });
 
   describe('given the tested SHA is the pull request head and CI passes', () => {
     it('when the risk is level 3 and two different humans approved then allows merge', () => {
@@ -147,6 +180,17 @@ describe('Merge Policy Judge with GitHub PR state', () => {
       assert.equal(result.decision, 'BLOCKED');
       assert.ok(result.reasons.includes('github_state_unavailable'));
     });
+    it('when the base branch moved past the run baseline then blocks because the merge result was never verified', () => {
+      const result = decide(2, github({ pullRequest: { remoteBaseSha: old }, reviews: { approvedHumans: ['alice'] } }));
+      assert.equal(result.decision, 'BLOCKED');
+      assert.ok(result.reasons.includes('base_not_baseline'));
+    });
+    it('when the pull request base SHA is not the run baseline then blocks', () => {
+      assert.ok(decide(1, github({ pullRequest: { baseSha: old } })).reasons.includes('base_not_baseline'));
+    });
+    it('when the pull request targets another base branch then blocks', () => {
+      assert.ok(decide(1, github({ pullRequest: { baseRef: 'develop' } })).reasons.includes('base_not_baseline'));
+    });
     it('when the head SHA differs but the state claims it matches then still blocks', () => {
       assert.equal(decide(1, github({ pullRequest: { headSha: old, testedShaMatches: true } })).decision, 'BLOCKED');
     });
@@ -159,7 +203,8 @@ describe('Merge Policy Judge with GitHub PR state', () => {
 
 describe('GitHub PR Adapter', () => {
   const sbiPath = '.harness/state/sample-sbi.json';
-  const mockGitHub = githubMock({ issue: { number: 1, title: 'unused', body: '', html_url: 'https://github.com/acme/app/issues/1', state: 'open', labels: [] } });
+  const mockGitHub = githubMock({ issue: { number: 1, title: 'unused', body: '', html_url: 'https://github.com/acme/app/issues/1', state: 'open', labels: [] },
+    permissions: { alice: 'write', bob: 'write', 'harness-operator': 'admin' } });
   // origin points at github.com/acme/app as configured, while git itself pushes to a local bare repository.
   async function withRemote(root, test, { publishBaseline = true } = {}) {
     const bare = await realpath(await mkdtemp(join(tmpdir(), 'harness-remote-')));
@@ -172,7 +217,13 @@ describe('GitHub PR Adapter', () => {
     } finally { await rm(bare, { recursive: true, force: true }); }
   }
   const remoteSha = async (bare, branch) => (await git(bare, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], true)).stdout.trim();
-  const succeed = (github, sha, name = 'harness') => github.update(s => { s.checkRuns[sha] = [...(s.checkRuns[sha] || []), { id: Object.keys(s.checkRuns).length + 1, name, status: 'completed', conclusion: 'success', head_sha: sha }]; });
+  const succeed = (github, sha, name = 'harness', appId = 15368) => github.update(s => { s.checkRuns[sha] = [...(s.checkRuns[sha] || []), { id: (s.checkRuns[sha] || []).length + 1, name, status: 'completed', conclusion: 'success', head_sha: sha, app: { id: appId } }]; });
+  // A new commit on origin/main that the run never saw; the source checkout HEAD stays at the baseline.
+  const advanceMain = async (root, baselineSha) => {
+    const next = (await git(root, ['commit-tree', `${baselineSha}^{tree}`, '-p', baselineSha, '-m', 'someone else merged'])).stdout.trim();
+    await git(root, ['push', '--quiet', 'origin', `${next}:refs/heads/main`]);
+    return next;
+  };
   const reviewBy = (github, number, login, state, commit) => github.update(s => { s.reviews[number] = [...(s.reviews[number] || []), { id: (s.reviews[number] || []).length + 1, user: { login, type: 'User' }, state, commit_id: commit }]; });
 
   describe('given a completed level 2 run whose baseline is on origin/main', () => {
@@ -260,6 +311,54 @@ describe('GitHub PR Adapter', () => {
         assert.equal((await resumeRun({ root, runId: run.id, quiet: true })).status, 'MERGE_ALLOWED');
       });
     }));
+    it('when the ruleset requires the check from a specific app then a same-named check from another app does not pass', () => fixture(async root => {
+      const run = await runHarness({ root, quiet: true });
+      await withRemote(root, async ({ github }) => {
+        await github.update(s => { s.rules = [{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'harness', integration_id: 15368 }] } }]; });
+        const { pullRequest } = await openPullRequest({ root, runId: run.id, quiet: true });
+        await succeed(github, run.headSha, 'harness', 999);
+        await reviewBy(github, pullRequest.number, 'alice', 'APPROVED', run.headSha);
+        const blocked = await resumeRun({ root, runId: run.id, quiet: true });
+        assert.equal(blocked.status, 'BLOCKED');
+        assert.ok(blocked.merge.reasons.includes('required_ci_not_passed'));
+        await succeed(github, run.headSha, 'harness', 15368);
+        assert.equal((await resumeRun({ root, runId: run.id, quiet: true })).status, 'MERGE_ALLOWED');
+      });
+    }));
+    it('when only a reviewer with read permission approves then it does not count toward merge', () => fixture(async root => {
+      const run = await runHarness({ root, quiet: true });
+      await withRemote(root, async ({ github }) => {
+        const { pullRequest } = await openPullRequest({ root, runId: run.id, quiet: true });
+        await github.update(s => { s.permissions.carol = 'read'; });
+        await succeed(github, run.headSha);
+        await reviewBy(github, pullRequest.number, 'carol', 'APPROVED', run.headSha);
+        const resumed = await resumeRun({ root, runId: run.id, quiet: true });
+        assert.equal(resumed.status, 'WAITING_FOR_HUMAN_REVIEW');
+        assert.deepEqual((await readJson(join(root, run.runDir, 'github-state.json'))).reviews.permissions, { carol: 'read' });
+      });
+    }));
+    it('when the reviewer permission cannot be read then the approval is not counted', () => fixture(async root => {
+      const run = await runHarness({ root, quiet: true });
+      await withRemote(root, async ({ github }) => {
+        const { pullRequest } = await openPullRequest({ root, runId: run.id, quiet: true });
+        await github.update(s => { s.permissions.alice = 'forbidden'; });
+        await succeed(github, run.headSha);
+        await reviewBy(github, pullRequest.number, 'alice', 'APPROVED', run.headSha);
+        assert.equal((await resumeRun({ root, runId: run.id, quiet: true })).status, 'WAITING_FOR_HUMAN_REVIEW');
+      });
+    }));
+    it('when origin/main moves after the PR was opened then resume blocks even with CI and approval, until the run is recreated', () => fixture(async root => {
+      const run = await runHarness({ root, quiet: true });
+      await withRemote(root, async ({ github }) => {
+        const { pullRequest } = await openPullRequest({ root, runId: run.id, quiet: true });
+        await succeed(github, run.headSha);
+        await reviewBy(github, pullRequest.number, 'alice', 'APPROVED', run.headSha);
+        await advanceMain(root, run.baselineSha);
+        const resumed = await resumeRun({ root, runId: run.id, quiet: true });
+        assert.equal(resumed.status, 'BLOCKED');
+        assert.ok(resumed.merge.reasons.includes('base_not_baseline'));
+      });
+    }));
     it('when a local merge approval is attempted in PR mode then refuses it in favour of GitHub Review', () => fixture(async root => {
       const run = await runHarness({ root, quiet: true });
       await withRemote(root, async () => {
@@ -286,6 +385,25 @@ describe('GitHub PR Adapter', () => {
         assert.equal(await remoteSha(bare, `harness/${run.id}`), '');
         assert.deepEqual((await github.state()).pulls, []);
       }, { publishBaseline: false });
+    }));
+    it('when origin/main moved past the run baseline then refuses before pushing because the merge result was never verified', () => fixture(async root => {
+      const run = await runHarness({ root, quiet: true });
+      await withRemote(root, async ({ bare, github }) => {
+        await advanceMain(root, run.baselineSha);
+        await assert.rejects(openPullRequest({ root, runId: run.id, quiet: true }), /origin\/main/);
+        assert.equal(await remoteSha(bare, `harness/${run.id}`), '');
+        assert.deepEqual((await github.state()).pulls, []);
+      });
+    }));
+    it('when an open PR for the run branch targets another base then refuses instead of reusing it', () => fixture(async root => {
+      const run = await runHarness({ root, quiet: true });
+      await withRemote(root, async ({ bare, github }) => {
+        await github.update(s => { s.pulls.push({ number: 9, title: 'x', body: '', state: 'open', merged: false, html_url: 'https://github.com/acme/app/pull/9', user: { login: 'harness-operator', type: 'User' },
+          head: { ref: `harness/${run.id}`, sha: run.headSha }, base: { ref: 'develop', sha: run.baselineSha } }); });
+        await assert.rejects(openPullRequest({ root, runId: run.id, quiet: true }), /develop/);
+        assert.equal(await remoteSha(bare, `harness/${run.id}`), '');
+        assert.equal((await github.state()).pulls.length, 1);
+      });
     }));
     it('when the PR branch already exists at another SHA then refuses instead of force pushing', () => fixture(async root => {
       const run = await runHarness({ root, quiet: true });

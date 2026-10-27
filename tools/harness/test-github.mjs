@@ -8,7 +8,7 @@ export const githubMock = defaults => async (state, test) => {
   const dir = await mkdtemp(join(tmpdir(), 'harness-gh-'));
   const previous = { PATH: process.env.PATH, GH_MOCK_DIR: process.env.GH_MOCK_DIR, GITHUB_STEP_SUMMARY: process.env.GITHUB_STEP_SUMMARY };
   try {
-    await writeFile(join(dir, 'state.json'), JSON.stringify({ labels: [], created: [], comments: [], failOnCreate: null, pulls: [], reviews: {}, checkRuns: {}, rules: [], viewer: 'harness-operator', bare: null, ...defaults, ...state }));
+    await writeFile(join(dir, 'state.json'), JSON.stringify({ labels: [], created: [], comments: [], failOnCreate: null, pulls: [], reviews: {}, checkRuns: {}, rules: [], permissions: {}, viewer: 'harness-operator', bare: null, ...defaults, ...state }));
     await writeFile(join(dir, 'gh'), `#!${process.execPath}
       const fs = require('node:fs'), path = require('node:path');
       const dir = process.env.GH_MOCK_DIR, file = path.join(dir, 'state.json');
@@ -66,7 +66,8 @@ export const githubMock = defaults => async (state, test) => {
         const body = JSON.parse(input), number = 201 + state.pulls.length;
         // The head SHA is whatever the pushed branch points to in the bare remote.
         const sha = require('node:child_process').execFileSync('git', ['--git-dir', state.bare, 'rev-parse', 'refs/heads/' + body.head], { encoding: 'utf8' }).trim();
-        const pull = { number, title: body.title, body: body.body, state: 'open', merged: false, html_url: 'https://github.com/acme/app/pull/' + number, user: { login: state.viewer, type: 'User' }, head: { ref: body.head, sha }, base: { ref: body.base } };
+        const baseSha = require('node:child_process').execFileSync('git', ['--git-dir', state.bare, 'rev-parse', 'refs/heads/' + body.base], { encoding: 'utf8' }).trim();
+        const pull = { number, title: body.title, body: body.body, state: 'open', merged: false, html_url: 'https://github.com/acme/app/pull/' + number, user: { login: state.viewer, type: 'User' }, head: { ref: body.head, sha }, base: { ref: body.base, sha: baseSha } };
         state.pulls.push(pull); process.stdout.write(JSON.stringify(pull));
       } else if (method === 'GET' && (m = endpoint.match(/^repos\\/acme\\/app\\/pulls\\/(\\d+)$/))) {
         const pull = state.pulls.find(p => p.number === Number(m[1])); if (!pull) fail('gh: Not Found (HTTP 404)');
@@ -76,6 +77,10 @@ export const githubMock = defaults => async (state, test) => {
       } else if (method === 'GET' && (m = endpoint.match(/^repos\\/acme\\/app\\/commits\\/([0-9a-f]+)\\/check-runs$/))) {
         const runs = state.checkRuns[m[1]] || [];
         process.stdout.write(JSON.stringify({ total_count: runs.length, check_runs: page(runs) }));
+      } else if (method === 'GET' && (m = endpoint.match(/^repos\\/acme\\/app\\/collaborators\\/([^/]+)\\/permission$/))) {
+        const permission = state.permissions[decodeURIComponent(m[1])];
+        if (permission === 'forbidden') fail('gh: Must have push access to view collaborator permission. (HTTP 403)');
+        process.stdout.write(JSON.stringify({ permission: permission ?? 'none', role_name: permission ?? '' }));
       } else if (method === 'GET' && (m = endpoint.match(/^repos\\/acme\\/app\\/rules\\/branches\\/(.+)$/))) {
         process.stdout.write(JSON.stringify(page(state.rules)));
       } else fail('unexpected gh api call: ' + method + ' ' + endpoint);
