@@ -31,7 +31,8 @@
     "zod": "4.1.12"
   },
   "devDependencies": {
-    "@stoplight/prism-cli": "5.14.2"
+    "@stoplight/prism-cli": "5.14.2",
+    "swagger-ui-dist": "5.33.2"
   },
   "pnpm": {
     "overrides": {
