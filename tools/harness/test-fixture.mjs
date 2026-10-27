@@ -13,9 +13,12 @@ export async function fixture(fn) {
     }
     await mkdir(join(root, '.harness/runs'), { recursive: true });
     await git(root, ['init', '--template=', '--initial-branch=main']);
+    // A detached auto gc can still be writing packs while the fixture is removed (ENOTEMPTY on .git/objects/pack).
+    await git(root, ['config', 'gc.auto', '0']);
+    await git(root, ['config', 'maintenance.auto', 'false']);
     await commitFixture(root);
     await fn(root);
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally { await rm(root, { recursive: true, force: true, maxRetries: 5 }); }
 }
 export async function update(root, path, fn) {
   const value = JSON.parse(await readFile(join(root, path), 'utf8'));
