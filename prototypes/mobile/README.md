@@ -29,10 +29,10 @@ pnpm --filter prototype-mobile doctor              # expo-doctor
 
 Storybookは専用のentry pointで起動し、Expo Routerのrouteには入れない。
 
-| 起動 | 環境変数 | entry |
-| --- | --- | --- |
-| 通常 | なし | `index.ts` → `expo-router/entry` (`src/app`) |
-| Storybook | `EXPO_PUBLIC_STORYBOOK_ENABLED=true` | `index.ts` → `.rnstorybook` |
+| 起動      | 環境変数                             | entry                                        |
+| --------- | ------------------------------------ | -------------------------------------------- |
+| 通常      | なし                                 | `index.ts` → `expo-router/entry` (`src/app`) |
+| Storybook | `EXPO_PUBLIC_STORYBOOK_ENABLED=true` | `index.ts` → `.rnstorybook`                  |
 
 `metro.config.js` の `withStorybook` も同じ変数を見て、通常起動ではStorybookをbundleから外す。
 
