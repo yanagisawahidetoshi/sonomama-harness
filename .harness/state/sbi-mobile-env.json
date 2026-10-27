@@ -119,6 +119,7 @@
     "apps/mobile/src/app/index.tsx",
     "apps/mobile/src/features/home/HomeScreen/index.tsx",
     "apps/mobile/src/features/home/HomeScreen/index.test.tsx",
+    "apps/mobile/src/features/home/HomeScreen/styles.ts",
     "apps/mobile/src/shared/config/env.ts",
     "apps/mobile/src/shared/config/env.test.ts",
     "apps/mobile/src/shared/api/index.ts",
@@ -126,12 +127,10 @@
     "apps/mobile/src/shared/api/http-client.test.ts",
     "apps/mobile/src/shared/api/query-client.ts",
     "apps/mobile/src/shared/api/query-client.test.ts",
-    "pnpm-lock.yaml",
-    ".npmrc"
+    "pnpm-lock.yaml"
   ],
   "risks": [
-    "pnpm-lock.yamlの更新はworkspace全体に影響する",
-    "root .npmrcのnode-linker変更はworkspace全体のinstall配置を変える"
+    "pnpm-lock.yamlの更新はworkspace全体に影響する"
   ],
   "ambiguous": false,
   "requiresDesignDecision": false,
