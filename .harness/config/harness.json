@@ -60,14 +60,44 @@
       "marker": "package.json",
       "planned": [
         "TypeScript",
-        "ESLint",
+        "Biome",
         "Vitest",
         "RTL",
-        "Storybook",
-        "Playwright",
-        "VRT"
+        "build"
       ],
-      "commands": [],
+      "commands": [
+        [
+          "pnpm",
+          "install",
+          "--frozen-lockfile",
+          "--prefer-offline",
+          "--filter",
+          "admin"
+        ],
+        [
+          "pnpm",
+          "run",
+          "typecheck"
+        ],
+        [
+          "pnpm",
+          "run",
+          "check"
+        ],
+        [
+          "pnpm",
+          "run",
+          "test"
+        ],
+        [
+          "pnpm",
+          "run",
+          "build",
+          "--outDir",
+          "node_modules/.harness/dist",
+          "--emptyOutDir"
+        ]
+      ],
       "appliesTo": [
         "^apps/admin/",
         "^packages/",
@@ -76,6 +106,39 @@
       "lanes": [
         "production"
       ]
+    },
+    {
+      "id": "admin-acceptance",
+      "directory": "apps/admin",
+      "marker": "package.json",
+      "planned": [
+        "Trusted Acceptance"
+      ],
+      "commands": [],
+      "acceptanceIds": [
+        "ADMIN-AC-1",
+        "ADMIN-AC-2",
+        "ADMIN-AC-3",
+        "ADMIN-AC-4",
+        "ADMIN-AC-5",
+        "ADMIN-AC-6",
+        "ADMIN-AC-7",
+        "ADMIN-AC-8",
+        "ADMIN-AC-9",
+        "ADMIN-AC-10",
+        "ADMIN-AC-11",
+        "ADMIN-AC-12",
+        "ADMIN-AC-13",
+        "ADMIN-AC-14",
+        "ADMIN-AC-15",
+        "ADMIN-AC-16"
+      ],
+      "appliesTo": [],
+      "lanes": [
+        "production"
+      ],
+      "trust": "acceptance",
+      "trustedScript": ".harness/verification/admin-env.mjs"
     },
     {
       "id": "prototype-web",
