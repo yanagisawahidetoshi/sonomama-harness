@@ -27,6 +27,8 @@ async function listAll(endpoint, query, schema) {
 const labelDefinitions = {
   sbi: { color: '0e8a16', description: 'Planner-generated SBI' },
   'needs-review': { color: 'fbca04', description: 'SBI awaiting human review; not ready for the Execution Harness' },
+  'api-schema': { color: '1d76db', description: 'Issue with a Planner-generated API Schema Proposal' },
+  'needs-api-schema-review': { color: 'fbca04', description: 'API Schema Proposal awaiting human review; implementation must wait' },
 };
 export const githubCli = {
   async fetchIssue({ owner, repo, number }) {
@@ -52,6 +54,9 @@ export const githubCli = {
   },
   async createIssue({ owner, repo }, { title, body, labels }) {
     return githubIssueSchema.parse(await api('POST', `repos/${owner}/${repo}/issues`, { title, body, labels }));
+  },
+  async addLabels({ owner, repo, number }, labels) {
+    return api('POST', `repos/${owner}/${repo}/issues/${number}/labels`, { labels });
   },
   async addComment({ owner, repo, number }, body) {
     return githubCommentSchema.parse(await api('POST', `repos/${owner}/${repo}/issues/${number}/comments`, { body }));

@@ -68,6 +68,58 @@ export const planJsonSchema = object({
   }) },
   escalation: { type: ['string', 'null'] },
 });
+// API Schema Planner contract. Every map of OpenAPI is an array of named entries so the provider schema stays closed (no dynamic keys).
+// Blank strings pass Zod on purpose: the API Schema Quality Judge reports them with a reason.
+const word = z.string().max(80), sentence = z.string().max(300), maybe = schema => schema.nullable();
+const scalarTypes = ['string', 'integer', 'number', 'boolean'];
+const enumValues = maybe(z.array(z.string().max(80)).max(30));
+const bodyRef = { component: z.string().max(64), array: z.boolean() };
+export const apiPropertySchema = z.strictObject({
+  name: z.string().max(64), type: z.enum([...scalarTypes, 'object', 'array']), format: maybe(z.string().max(40)), enum: enumValues, ref: maybe(z.string().max(64)),
+  items: maybe(z.strictObject({ type: z.enum([...scalarTypes, 'object']), format: maybe(z.string().max(40)), enum: enumValues, ref: maybe(z.string().max(64)) })),
+  required: z.boolean(), nullable: z.boolean(), description: sentence, example: maybe(z.string().max(200)),
+  constraints: z.strictObject({ minLength: maybe(z.number().int().min(0)), maxLength: maybe(z.number().int().min(0)), minimum: maybe(z.number()), maximum: maybe(z.number()), pattern: maybe(z.string().max(200)) }),
+});
+export const apiEndpointSchema = z.strictObject({
+  method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']), path: z.string().max(200), operationId: word, summary: sentence, tags: z.array(word).max(10),
+  change: z.enum(['add', 'modify', 'remove']), authN: z.enum(['cognito-jwt', 'public']), authZ: z.strictObject({ roles: z.array(word).max(10), rule: maybe(sentence) }),
+  pii: z.boolean(), logCaution: z.array(sentence).max(10),
+  parameters: z.array(z.strictObject({ name: z.string().max(64), in: z.enum(['path', 'query', 'header']), required: z.boolean(), description: sentence, type: z.enum(scalarTypes), format: maybe(z.string().max(40)), enum: enumValues, example: maybe(z.string().max(200)) })).max(20),
+  requestBody: maybe(z.strictObject({ ...bodyRef, required: z.boolean() })),
+  responses: z.array(z.strictObject({ status: z.number().int(), description: sentence, body: maybe(z.strictObject(bodyRef)) })).max(12),
+});
+export const apiProposalSchema = z.strictObject({
+  title: z.string().max(80), summary: sentence, version: z.string().max(10), securityImpact: z.array(z.string().max(40)).max(12),
+  endpoints: z.array(apiEndpointSchema).max(10),
+  components: z.array(z.strictObject({ name: z.string().max(64), description: sentence, pii: z.boolean(), properties: z.array(apiPropertySchema).max(30) })).max(20),
+});
+export const apiSchemaResponseSchema = z.strictObject({ proposal: apiProposalSchema.nullable(), escalation: z.string().nullable().optional() });
+const nullable = schema => ({ anyOf: [schema, { type: 'null' }] });
+const nullableString = { type: ['string', 'null'] }, nullableNumber = { type: ['number', 'null'] }, nullableInteger = { type: ['integer', 'null'] };
+const enumJson = nullable(strings);
+const bodyRefJson = { component: { type: 'string' }, array: { type: 'boolean' } };
+const propertyJson = object({
+  name: { type: 'string' }, type: { type: 'string', enum: [...scalarTypes, 'object', 'array'] }, format: nullableString, enum: enumJson, ref: nullableString,
+  items: nullable(object({ type: { type: 'string', enum: [...scalarTypes, 'object'] }, format: nullableString, enum: enumJson, ref: nullableString })),
+  required: { type: 'boolean' }, nullable: { type: 'boolean' }, description: { type: 'string' }, example: nullableString,
+  constraints: object({ minLength: nullableInteger, maxLength: nullableInteger, minimum: nullableNumber, maximum: nullableNumber, pattern: nullableString }),
+});
+const endpointJson = object({
+  method: { type: 'string', enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] }, path: { type: 'string' }, operationId: { type: 'string' }, summary: { type: 'string' }, tags: strings,
+  change: { type: 'string', enum: ['add', 'modify', 'remove'] }, authN: { type: 'string', enum: ['cognito-jwt', 'public'] }, authZ: object({ roles: strings, rule: nullableString }),
+  pii: { type: 'boolean' }, logCaution: strings,
+  parameters: { type: 'array', items: object({ name: { type: 'string' }, in: { type: 'string', enum: ['path', 'query', 'header'] }, required: { type: 'boolean' }, description: { type: 'string' }, type: { type: 'string', enum: scalarTypes }, format: nullableString, enum: enumJson, example: nullableString }) },
+  requestBody: nullable(object({ ...bodyRefJson, required: { type: 'boolean' } })),
+  responses: { type: 'array', items: object({ status: { type: 'integer' }, description: { type: 'string' }, body: nullable(object(bodyRefJson)) }) },
+});
+export const apiSchemaJsonSchema = object({
+  proposal: nullable(object({
+    title: { type: 'string' }, summary: { type: 'string' }, version: { type: 'string' }, securityImpact: strings,
+    endpoints: { type: 'array', items: endpointJson },
+    components: { type: 'array', items: object({ name: { type: 'string' }, description: { type: 'string' }, pii: { type: 'boolean' }, properties: { type: 'array', items: propertyJson } }) },
+  })),
+  escalation: { type: ['string', 'null'] },
+});
 // GitHub REST responses carry many more fields; only the ones the Planner relies on are validated.
 export const githubIssueSchema = z.object({
   number: z.number().int().positive(), title: z.string(), body: z.string().nullable().default(null), html_url: z.url(),

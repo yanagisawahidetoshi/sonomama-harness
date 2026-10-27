@@ -13,6 +13,7 @@
     "harness:demo": "node tools/harness/cli.mjs demo",
     "harness:run": "node tools/harness/cli.mjs run",
     "harness:plan": "node tools/harness/cli.mjs plan",
+    "harness:api-schema": "node tools/harness/cli.mjs api-schema",
     "harness:test": "node --test tools/harness/*.test.mjs tools/harness/agents/*.test.mjs",
     "harness:approve": "node tools/harness/cli.mjs approve",
     "harness:resume": "node tools/harness/cli.mjs resume",
