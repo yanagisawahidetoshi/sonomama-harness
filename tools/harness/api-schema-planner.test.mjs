@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, writeFile, readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { parse as parseYaml, stringify as toYaml } from 'yaml';
 import { fixture, commitFixture, human } from './test-fixture.mjs';
 import { git } from './workspace.mjs';
@@ -369,6 +370,13 @@ describe('API Schema Planner', () => {
       assert.equal(await readFile(join(proposalDir(root), 'openapi.yaml'), 'utf8'), 'openapi: 3.1.0\n# human edit\n');
       assert.equal((await writes(github)).length, before);
     })));
+    it('when a human edited only proposal.json then stops without overwriting it', () => fixture(root => mockGitHub({}, async () => {
+      await plan(root);
+      const file = join(proposalDir(root), 'proposal.json'), meta = JSON.parse(await readFile(file, 'utf8'));
+      meta.proposal.securityImpact = []; await writeFile(file, JSON.stringify(meta));
+      await assert.rejects(plan(root), /人間|edited|編集/);
+      assert.deepEqual(JSON.parse(await readFile(file, 'utf8')).proposal.securityImpact, []);
+    })));
     it('when the Issue is already approved then refuses to regenerate the contract', () => fixture(root => mockGitHub({ issue: { ...issue, labels: [{ name: approvedLabel }] } }, async github => {
       await assert.rejects(plan(root), new RegExp(approvedLabel));
       assert.equal(await exists(proposalDir(root)), false);
@@ -588,6 +596,36 @@ describe('API Schema Approval', () => {
       await writeFile(join(proposalDir(root), 'openapi.yaml'), 'openapi: 3.1.0\n# human edit\n');
       await commitFixture(root);
       await assert.rejects(approve(root, 'alice'), /digest|編集/);
+    })));
+    const editProposalJson = async (root, edit) => {
+      const file = join(proposalDir(root), 'proposal.json'), meta = JSON.parse(await readFile(file, 'utf8'));
+      edit(meta); await writeFile(file, `${JSON.stringify(meta, null, 2)}\n`);
+      await commitFixture(root);
+    };
+    it('when a human cleared the security impact in proposal.json then refuses to record the approval', () => fixture(root => mockGitHub({}, async () => {
+      await generated(root);
+      await editProposalJson(root, meta => { meta.proposal.securityImpact = []; });
+      await assert.rejects(approve(root, 'alice'), /digest|編集/);
+      assert.equal(await exists(join(root, '.harness/state/human/api-schema')), false);
+    })));
+    it('when a human edited only the proposal content in proposal.json then refuses to record the approval', () => fixture(root => mockGitHub({}, async () => {
+      await generated(root);
+      await editProposalJson(root, meta => { meta.proposal.summary = '人間が書き換えた要約'; });
+      await assert.rejects(approve(root, 'alice'), /digest|編集/);
+    })));
+    it('when a human rewrote the file hashes in proposal.json to hide an edit then refuses to record the approval', () => fixture(root => mockGitHub({}, async () => {
+      await generated(root);
+      const yamlText = 'openapi: 3.1.0\n# human edit\n';
+      await writeFile(join(proposalDir(root), 'openapi.yaml'), yamlText);
+      await editProposalJson(root, meta => { meta.files['openapi.yaml'] = createHash('sha256').update(yamlText).digest('hex'); });
+      await assert.rejects(approve(root, 'alice'), /digest|編集/);
+    })));
+    it('when a human edited proposal.json after two approvals then the proposal is no longer approved and needs the generated number of approvers', () => fixture(root => mockGitHub({}, async () => {
+      await generated(root);
+      await approve(root, 'alice'); await approve(root, 'bob');
+      await editProposalJson(root, meta => { meta.proposal.securityImpact = []; });
+      const result = await status(root);
+      assert.deepEqual([result.status, result.approvals, result.required], ['NOT_APPROVED', 0, 2]);
     })));
     it('when the identity is not a human then refuses to record the approval', () => fixture(root => mockGitHub({}, async () => {
       await generated(root);
