@@ -407,7 +407,7 @@ pnpm planner:api-schema https://github.com/<owner>/<repo>/issues/<number> --prov
 ```text
 GitHub Issue → 既存OpenAPI（packages/api-schema）→ API Schema Planner（codex / claude）→ API Schema Quality Judge
   → PASS: .harness/api-schema/<number>/{openapi.yaml, proposal.json, summary.md}
-          Issueへ [api-schema][needs-api-schema-review] と要約コメント → Human Review → api-schema-approved
+          Issueへ [api-schema][needs-api-schema-review] と要約コメント → Human Review → 署名付き承認（digest + commit SHA）
   → FAIL: ファイルもGitHubも書かずexit 1で理由を表示
 ```
 
@@ -415,8 +415,11 @@ providerはOpenAPIそのものではなく、閉じたJSON（endpoint・componen
 OpenAPIへの変換、Cognito JWTのsecurityScheme、共通Error schemaはHarnessが持つ。
 Quality Judgeは決定的なルールで構造・認証認可・Security Impact・秘密値・既存endpointとの衝突を検査し、破壊的変更の候補を列挙する。
 
-承認は人間がIssueのラベルを`api-schema-approved`へ替えて行う。Execution Harnessの実装前Gate・Merge Approvalとは別で、
-どちらの代わりにもならない。承認後に人間がpackages/api-schemaへ反映し、実装SBIを作る。
+`modify`で既存の内容が消える場合は、既存OpenAPIとの構造差分から破壊的変更の候補として必ず表示する。
+
+承認は`pnpm planner:api-schema-approve <Issue URL>`で署名付き台帳に記録し、Proposalのdigestとcommit SHAに紐づける。
+判定は`pnpm planner:api-schema-status <Issue URL>`。Issueの`api-schema-approved`ラベルは目印で、承認の正本ではない。
+Execution Harnessの実装前Gate・Merge Approvalとは別で、どちらの代わりにもならない。承認後に人間がpackages/api-schemaへ反映し、実装SBIを作る。
 手順は[docs/workflows/api-schema-planner.md](docs/workflows/api-schema-planner.md)。
 
 

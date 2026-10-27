@@ -18,14 +18,26 @@ GitHub Issue → Requirement Reader → Existing API Schema Reader（packages/ap
 4. Quality JudgeがFAILならIssueを直して再実行する。
 5. PASSなら`.harness/api-schema/<number>/summary.md`のHuman Reviewを人間が確認する。
    生成物はGit管理対象。commitしてPRで差分レビューする。Execution Harnessはcleanなリポジトリでしか起動しない。
-6. 承認する場合は`needs-api-schema-review`を外して`api-schema-approved`を付ける。
-   Plannerは承認ラベルを作成しないため、リポジトリで初回だけ人間が作成する。
-   `gh label create api-schema-approved --color 0e8a16 --description "Human-approved API Schema Proposal"`
-   `gh issue edit <number> --remove-label needs-api-schema-review --add-label api-schema-approved`
-7. 承認後、人間がopenapi.yamlを`packages/api-schema/openapi.yaml`へ反映し、それを参照するFrontend / Backendの実装SBIを作る。
+6. 承認する場合は、Proposalをcommitしたうえで`pnpm planner:api-schema-approve <Issue URL>`を実行する。
+   取り消しは`--decision revoke`、差し戻しは`--decision request-changes`。
+7. `pnpm planner:api-schema-status <Issue URL>`で判定する。APPROVEDならexit 0、それ以外はexit 2。
+8. 承認後、人間がopenapi.yamlを`packages/api-schema/openapi.yaml`へ反映し、それを参照するFrontend / Backendの実装SBIを作る。
 
-承認まではFrontend / Backendの実装へ進めない。API Schemaの承認はGitHubラベルで記録し、
-Execution Harnessの実装前Gate・Merge Approval（署名付き承認台帳）とは別物として扱う。どちらの代わりにもならない。
+承認まではFrontend / Backendの実装へ進めない。
+
+## 承認の正本
+
+承認の正本は`.harness/state/human/api-schema/`の署名付き台帳（Git管理対象外）。Issueのラベルは台帳の状態を映す目印で、正本ではない。
+API Schemaを利用する後続処理は、必ず`planner:api-schema-status`（`apiSchemaApprovalStatus`）でAPPROVEDを確認する。ラベルを根拠にしない。
+
+- 承認記録は、Proposal 3ファイル（openapi.yaml・proposal.json・summary.md）のdigestと、承認時のcommit SHAを持つ。
+- 判定時は現在のファイルのdigestと一致し、記録したcommitの内容とも一致する承認だけを数える。内容が変われば承認は無効になる。
+- Proposalが未commit、人間が生成物を編集した、Quality JudgeがPASSしていない場合は承認を記録しない。
+- Security Impactがあれば異なる人間2人、なければ1人が必要。同じ人の承認は1人と数え、各人の最新の判断だけを使う。
+- 識別は既存の承認台帳と同じくOSユーザー。1台のPCの同じOSユーザーでは2人分にならない。複数人の本運用には認証済み承認adapterを接続する。
+- 有効な承認がある間、Plannerは再生成しない。変更する場合は承認者が`--decision revoke`してから再実行する。
+
+この承認はExecution Harnessの実装前Gate・Design Approval・Merge Approvalとは別の記録で、どれの代わりにもならない。
 
 ## Proposalの内容
 
@@ -53,12 +65,19 @@ Secret / Credentialらしき値、成功responseでのpassword / secret等の返
 
 破壊的変更の候補（endpoint削除、property削除、型変更、enum値の削除、必須化など）はFAILにせず、summary.mdに並べて人間が判断する。
 
+## 既存OpenAPIの変更
+
+`modify`は既存operation、同名componentは既存schemaを丸ごと置き換える。providerには既存OpenAPIの構造（説明・exampleを除く）を渡し、残す内容の記載を求める。
+生成後のOpenAPIと既存OpenAPIを構造ごと比較し、削除・値の変更・制約の追加（required・enum・format・maxLength等、security、必須parameter・必須request body）を
+すべて破壊的変更の候補としてsummary.mdの冒頭の件数と「既存OpenAPIとの構造差分」に出す。提案モデルで表現できない拡張（`x-`）なども対象。
+説明・summary・exampleの変更と、任意項目の追加は非破壊として出す。proposal.jsonの`contractDiff`にも同じ内容を残す。
+
 ## 再実行
 
 - 生成済みディレクトリは、proposal.jsonに記録したdigestとopenapi.yaml・summary.mdが一致する場合だけ上書きする。
   人間が編集していたら上書きせずexit 1。
 - 別リポジトリの同じ番号のIssueのProposalがあれば上書きしない。
-- Issueに`api-schema-approved`があれば再生成しない。変更するときは人間がラベルを外す。
+- 署名付き台帳に有効な承認があれば再生成しない。Issueに`api-schema-approved`がある場合も再生成しない。
 - Issueコメントはmarkerで探して同じコメントを更新する。
 
 既存OpenAPIはOpenAPI 3.1.xだけを読む。openapi.yamlとopenapi.jsonが両方あれば停止する。
@@ -66,5 +85,5 @@ providerへは既存OpenAPIから抜き出したendpoint・component・property�
 
 ## やらないこと
 
-Rails / Frontendの実装、OpenAPIからのcode generation、Mock server、API Schemaの自動承認・`ready`化、
+Rails / Frontendの実装、OpenAPIからのcode generation、Mock server、API Schemaの自動承認・`ready`化、Execution Harnessでの承認状態の強制、
 packages/api-schemaへの自動反映、本番APIへの接続、自動merge。
