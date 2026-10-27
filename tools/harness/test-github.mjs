@@ -39,6 +39,10 @@ export const githubMock = defaults => async (state, test) => {
         const issue = issueByNumber(Number(m[1])); if (!issue) fail('gh: Not Found (HTTP 404)');
         for (const name of JSON.parse(input).labels) { if (!state.labels.includes(name)) fail('gh: Validation Failed (HTTP 422): label ' + name + ' does not exist'); if (!issue.labels.some(l => l.name === name)) issue.labels.push({ name }); }
         process.stdout.write(JSON.stringify(issue.labels));
+      } else if (method === 'DELETE' && (m = endpoint.match(/^repos\\/acme\\/app\\/issues\\/(\\d+)\\/labels\\/(.+)$/))) {
+        const issue = issueByNumber(Number(m[1])), name = decodeURIComponent(m[2]);
+        if (!issue || !issue.labels.some(l => l.name === name)) fail('gh: Label does not exist (HTTP 404)');
+        issue.labels = issue.labels.filter(l => l.name !== name); process.stdout.write(JSON.stringify(issue.labels));
       } else if (method === 'GET' && (m = endpoint.match(/^repos\\/acme\\/app\\/issues\\/(\\d+)$/))) {
         if (Number(m[1]) !== state.issue.number) fail('gh: Not Found (HTTP 404)');
         process.stdout.write(JSON.stringify(state.issue));

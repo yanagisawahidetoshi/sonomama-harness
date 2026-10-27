@@ -3,12 +3,15 @@ import assert from 'node:assert/strict';
 import { mkdir, writeFile, readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parse as parseYaml, stringify as toYaml } from 'yaml';
-import { fixture } from './test-fixture.mjs';
+import { fixture, commitFixture, human } from './test-fixture.mjs';
+import { git } from './workspace.mjs';
 import { githubMock } from './test-github.mjs';
 import { exists, readJson } from './io.mjs';
 import { planApiSchema, proposalMarker, approvedLabel } from './api-schema-planner.mjs';
 import { judgeApiSchema } from './api-schema-judge.mjs';
 import { readExistingSchema } from './api-schema-reader.mjs';
+import { diffContract } from './api-schema-diff.mjs';
+import { recordApiSchemaDecision, apiSchemaApprovalStatus } from './api-schema-approval.mjs';
 import { renderOpenApi } from './api-schema-render.mjs';
 
 const issueUrl = 'https://github.com/acme/app/issues/12';
@@ -376,6 +379,219 @@ describe('API Schema Planner', () => {
       await writeFile(join(proposalDir(root), 'proposal.json'), JSON.stringify({ issue: { url: 'https://github.com/other/repo/issues/12' }, files: {} }));
       await assert.rejects(plan(root), /other\/repo/);
       assert.deepEqual(await writes(github), []);
+    })));
+  });
+});
+
+// Review follow-up: an existing contract must never disappear silently, and an approval must be bound to the exact proposal content.
+const json = schema => ({ 'application/json': { schema } });
+const schemaRef = name => ({ $ref: `#/components/schemas/${name}` });
+function richProposal(change = 'add') {
+  const value = proposal();
+  value.endpoints[0] = endpoint({
+    change, parameters: [{ name: 'locale', in: 'query', required: false, description: '表示言語', type: 'string', format: 'bcp47', enum: ['ja', 'en'], example: null }],
+    responses: [{ status: 200, description: 'OK', body: { component: 'Profile', array: true } }, ...errors([401, 404, 500])],
+  });
+  value.endpoints[1].change = change;
+  value.components[0].properties = [
+    prop('id', { format: 'uuid' }), prop('mentor', { type: 'object', ref: 'Mentor', required: false }),
+    prop('tags', { type: 'array', items: { type: 'string', format: null, enum: null, ref: null }, required: false }),
+    prop('nickname', { required: false, constraints: { ...noConstraints, maxLength: 20 } }),
+  ];
+  value.components.push({ name: 'Mentor', description: 'メンター', pii: false, properties: [prop('id', { format: 'uuid' })] });
+  return value;
+}
+// The existing document is what an earlier approved proposal rendered, plus an extension the proposal model cannot express.
+function richExisting() {
+  const document = renderOpenApi(richProposal(), null);
+  document.paths['/api/v1/me/profile'].get['x-rate-limit'] = 10;
+  return document;
+}
+function droppingProposal() {
+  const value = proposal();
+  value.endpoints[0] = endpoint({ change: 'modify', responses: [response(200, 'Profile'), ...errors([401, 500])] });
+  value.endpoints[1] = { ...value.endpoints[1], change: 'modify', requestBody: null };
+  value.components[0].properties = [prop('id'), prop('displayName', { required: false })];
+  return value;
+}
+const writeExisting = (root, document) => withExisting(root, toYaml(document));
+
+describe('Existing contract diff', () => {
+  describe('given an existing OpenAPI document and the merged proposal', () => {
+    it('when a modify drops request body, responses, parameter, extension and property details then lists every one as a breaking candidate', () => {
+      const before = richExisting();
+      const after = renderOpenApi(droppingProposal(), { document: before });
+      const breaking = diffContract(before, after).breaking.join('\n');
+      for (const pointer of [
+        'paths./api/v1/me/profile.get.x-rate-limit', 'paths./api/v1/me/profile.get.parameters[query:locale]', 'paths./api/v1/me/profile.get.responses.404',
+        'paths./api/v1/me/profile.get.responses.200.content.application/json.schema', 'paths./api/v1/me/profile.patch.requestBody',
+        'components.schemas.Profile.properties.id.format', 'components.schemas.Profile.properties.mentor', 'components.schemas.Profile.properties.tags',
+        'components.schemas.Profile.properties.nickname',
+      ]) assert.ok(breaking.includes(pointer), `${pointer} is missing from\n${breaking}`);
+    });
+    it('when a modify restates the existing contract and only rewords descriptions then reports no breaking candidate', () => {
+      const before = renderOpenApi(richProposal(), null);
+      const value = richProposal('modify');
+      value.endpoints[0].summary = 'プロフィールを取得する（文言修正）';
+      value.components[0].description = '受講生プロフィール（文言修正）';
+      const result = diffContract(before, renderOpenApi(value, { document: before }));
+      assert.deepEqual(result.breaking, []);
+      assert.match(result.nonBreaking.join('\n'), /paths\.\/api\/v1\/me\/profile\.get\.summary/);
+      assert.match(result.nonBreaking.join('\n'), /components\.schemas\.Profile\.description/);
+    });
+    const base = () => ({ openapi: '3.1.0', info: { title: 'x', version: '1' }, paths: { '/api/v1/items': { get: { operationId: 'listItems', parameters: [], responses: { 200: { description: 'OK', content: json(schemaRef('Item')) } } } } }, components: { schemas: { Item: { type: 'object', required: ['id'], properties: { id: { type: 'string' }, state: { type: 'string', enum: ['open', 'closed'] } } } } } });
+    const cases = {
+      'a property becomes required': [d => { d.components.schemas.Item.required.push('state'); }, 'breaking', 'components.schemas.Item.required'],
+      'a maxLength is added': [d => { d.components.schemas.Item.properties.id.maxLength = 10; }, 'breaking', 'components.schemas.Item.properties.id.maxLength'],
+      'an enum is added to a free string': [d => { d.components.schemas.Item.properties.id.enum = ['a']; }, 'breaking', 'components.schemas.Item.properties.id.enum'],
+      'an enum value is removed': [d => { d.components.schemas.Item.properties.state.enum = ['open']; }, 'breaking', 'components.schemas.Item.properties.state.enum'],
+      'a security requirement is added': [d => { d.paths['/api/v1/items'].get.security = [{ cognitoJwt: [] }]; }, 'breaking', 'paths./api/v1/items.get.security'],
+      'a required parameter is added': [d => { d.paths['/api/v1/items'].get.parameters.push({ name: 'q', in: 'query', required: true, schema: { type: 'string' } }); }, 'breaking', 'paths./api/v1/items.get.parameters[query:q]'],
+      'a required request body is added': [d => { d.paths['/api/v1/items'].get.requestBody = { required: true, content: json(schemaRef('Item')) }; }, 'breaking', 'paths./api/v1/items.get.requestBody'],
+      'a type changes': [d => { d.components.schemas.Item.properties.id.type = 'integer'; }, 'breaking', 'components.schemas.Item.properties.id.type'],
+      'an optional parameter is added': [d => { d.paths['/api/v1/items'].get.parameters.push({ name: 'q', in: 'query', required: false, schema: { type: 'string' } }); }, 'nonBreaking', 'paths./api/v1/items.get.parameters[query:q]'],
+      'an optional property is added': [d => { d.components.schemas.Item.properties.note = { type: 'string' }; }, 'nonBreaking', 'components.schemas.Item.properties.note'],
+      'an enum value is added': [d => { d.components.schemas.Item.properties.state.enum.push('archived'); }, 'nonBreaking', 'components.schemas.Item.properties.state.enum'],
+      'a description changes': [d => { d.components.schemas.Item.description = '品目'; }, 'nonBreaking', 'components.schemas.Item.description'],
+    };
+    for (const [condition, [mutate, kind, pointer]] of Object.entries(cases)) {
+      it(`when ${condition} then reports it as ${kind}`, () => {
+        const before = base(), after = structuredClone(before); mutate(after);
+        const result = diffContract(before, after);
+        assert.ok(result[kind].some(line => line.includes(pointer)), `${pointer} not in ${kind}: ${JSON.stringify(result)}`);
+        assert.ok(![...result.breaking, ...result.nonBreaking].every(line => !line.includes(pointer)));
+        if (kind === 'nonBreaking') assert.deepEqual(result.breaking, []);
+      });
+    }
+  });
+
+  describe('given the planner modifies an existing OpenAPI document', () => {
+    it('when existing contract would be dropped then the summary counts and lists the breaking candidates near the top and proposal.json records them', () => fixture(root => mockGitHub({}, async () => {
+      await writeExisting(root, richExisting());
+      await plan(root, { agent: agentWith(droppingProposal()) });
+      const machine = await readJson(join(proposalDir(root), 'proposal.json'));
+      assert.ok(machine.contractDiff.breaking.some(line => line.includes('paths./api/v1/me/profile.patch.requestBody')));
+      const summary = await readFile(join(proposalDir(root), 'summary.md'), 'utf8');
+      const count = /破壊的変更の候補: (\d+)件/.exec(summary.split('## Endpoint')[0]);
+      assert.ok(count && Number(count[1]) >= machine.contractDiff.breaking.length, 'the count appears before the endpoint table');
+      assert.ok(summary.includes('paths./api/v1/me/profile.get.x-rate-limit'));
+    })));
+    it('when an existing schema is present then the provider sees its full contract without descriptions and without redaction damage', () => fixture(root => mockGitHub({}, async () => {
+      const document = richExisting();
+      document.components.schemas.Profile.properties.token = { type: 'string', description: '旧ページングtoken', example: 'not-for-the-provider' };
+      await writeExisting(root, document);
+      let prompt = '';
+      await plan(root, { agent: async options => { prompt = options.prompt; return { proposal: richProposal('modify'), escalation: null }; } });
+      for (const text of ['x-rate-limit', 'bcp47', 'maxLength', '"name": "token"', '#/components/schemas/ProfileUpdate']) assert.ok(prompt.includes(text), `prompt lacks ${text}`);
+      assert.ok(!prompt.includes('[REDACTED]'));
+      assert.ok(!prompt.includes('not-for-the-provider') && !prompt.includes('旧ページングtoken'));
+    })));
+  });
+});
+
+describe('API Schema Approval', () => {
+  const approve = (root, id, decision = 'APPROVE') => recordApiSchemaDecision({ root, issueUrl, decision, identityProvider: human(id) });
+  const status = root => apiSchemaApprovalStatus({ root, issueUrl });
+  const generated = async (root, options) => { await plan(root, options); await commitFixture(root); };
+  const head = async root => (await git(root, ['rev-parse', 'HEAD'])).stdout.trim();
+  const issueLabels = async github => (await github.state()).issue.labels.map(l => l.name).sort();
+
+  describe('given a generated and committed proposal', () => {
+    it('when two different humans approve a security-impacting proposal then it is approved for that digest and commit', () => fixture(root => mockGitHub({}, async github => {
+      await generated(root);
+      const first = await approve(root, 'alice');
+      assert.equal(first.status, 'NOT_APPROVED');
+      assert.deepEqual([first.approvals, first.required], [1, 2]);
+      const result = await approve(root, 'bob');
+      assert.equal(result.status, 'APPROVED');
+      assert.match(result.proposalDigest, /^[0-9a-f]{64}$/);
+      assert.equal(result.commitSha, await head(root));
+      assert.deepEqual(await status(root), result);
+      assert.deepEqual(await issueLabels(github), ['api-schema', approvedLabel]);
+    })));
+    it('when the same human approves twice then it still counts as one approval', () => fixture(root => mockGitHub({}, async () => {
+      await generated(root);
+      await approve(root, 'alice');
+      const result = await approve(root, 'alice');
+      assert.equal(result.status, 'NOT_APPROVED');
+      assert.equal(result.approvals, 1);
+    })));
+    it('when the proposal has no security impact then one human approval is enough', () => fixture(root => mockGitHub({}, async () => {
+      const value = proposal({ securityImpact: [] });
+      value.endpoints = [endpoint({ path: '/api/v1/courses', operationId: 'listCourses', authN: 'public', authZ: { roles: [], rule: null }, pii: false, logCaution: [], responses: [response(200, 'Course', true), ...errors([500])] })];
+      value.components = [{ name: 'Course', description: '講座', pii: false, properties: [prop('id')] }];
+      await generated(root, { agent: agentWith(value) });
+      const result = await approve(root, 'alice');
+      assert.deepEqual([result.status, result.required], ['APPROVED', 1]);
+    })));
+    it('when an approver revokes then the proposal is no longer approved and the label projection follows', () => fixture(root => mockGitHub({}, async github => {
+      await generated(root);
+      await approve(root, 'alice'); await approve(root, 'bob');
+      const result = await approve(root, 'alice', 'REVOKE');
+      assert.equal(result.status, 'NOT_APPROVED');
+      assert.equal(result.approvals, 1);
+      assert.deepEqual(await issueLabels(github), ['api-schema', 'needs-api-schema-review']);
+    })));
+    it('when the proposal changes after approval then the approval no longer applies', () => fixture(root => mockGitHub({}, async () => {
+      await generated(root);
+      await approve(root, 'alice'); await approve(root, 'bob');
+      await writeFile(join(proposalDir(root), 'openapi.yaml'), 'openapi: 3.1.0\n# changed after approval\n');
+      await commitFixture(root);
+      const result = await status(root);
+      assert.equal(result.status, 'NOT_APPROVED');
+      assert.equal(result.approvals, 0);
+      assert.ok(result.reasons.some(reason => /digest/.test(reason)), JSON.stringify(result.reasons));
+    })));
+    it('when the approved files are modified but not committed then the approval no longer applies', () => fixture(root => mockGitHub({}, async () => {
+      await generated(root);
+      await approve(root, 'alice'); await approve(root, 'bob');
+      await writeFile(join(proposalDir(root), 'summary.md'), '# edited\n');
+      assert.equal((await status(root)).status, 'NOT_APPROVED');
+    })));
+    it('when only the Issue label says approved then the proposal is not approved', () => fixture(root => mockGitHub({}, async github => {
+      await generated(root);
+      const file = join(github.dir, 'state.json'), state = JSON.parse(await readFile(file, 'utf8'));
+      state.issue.labels.push({ name: approvedLabel }); await writeFile(file, JSON.stringify(state));
+      const result = await status(root);
+      assert.deepEqual([result.status, result.approvals], ['NOT_APPROVED', 0]);
+    })));
+    it('when the approval ledger is tampered with then refuses to report any status', () => fixture(root => mockGitHub({}, async () => {
+      await generated(root);
+      await approve(root, 'alice');
+      const directory = join(root, '.harness/state/human/api-schema');
+      const [name] = await readdir(directory);
+      const ledger = JSON.parse(await readFile(join(directory, name), 'utf8'));
+      ledger.records[0].reviewer = 'mallory';
+      await writeFile(join(directory, name), JSON.stringify(ledger));
+      await assert.rejects(status(root), /signature/);
+    })));
+    it('when a valid approval exists then the planner refuses to regenerate even if the label was removed', () => fixture(root => mockGitHub({}, async github => {
+      await generated(root);
+      await approve(root, 'alice'); await approve(root, 'bob');
+      const file = join(github.dir, 'state.json'), state = JSON.parse(await readFile(file, 'utf8'));
+      state.issue.labels = state.issue.labels.filter(l => l.name !== approvedLabel); await writeFile(file, JSON.stringify(state));
+      await assert.rejects(plan(root), /承認/);
+    })));
+  });
+
+  describe('given a proposal that cannot be approved', () => {
+    it('when the proposal files are not committed then refuses to record the approval', () => fixture(root => mockGitHub({}, async () => {
+      await plan(root);
+      await assert.rejects(approve(root, 'alice'), /commit/);
+      assert.equal(await exists(join(root, '.harness/state/human/api-schema')), false);
+    })));
+    it('when no proposal was generated for the Issue then refuses to record the approval', () => fixture(root => mockGitHub({}, async () => {
+      await assert.rejects(approve(root, 'alice'), /proposal/i);
+    })));
+    it('when a human edited the generated files then refuses to record the approval', () => fixture(root => mockGitHub({}, async () => {
+      await generated(root);
+      await writeFile(join(proposalDir(root), 'openapi.yaml'), 'openapi: 3.1.0\n# human edit\n');
+      await commitFixture(root);
+      await assert.rejects(approve(root, 'alice'), /digest|編集/);
+    })));
+    it('when the identity is not a human then refuses to record the approval', () => fixture(root => mockGitHub({}, async () => {
+      await generated(root);
+      await assert.rejects(recordApiSchemaDecision({ root, issueUrl, decision: 'APPROVE', identityProvider: () => ({ id: 'codex', kind: 'ai', source: 'agent' }) }), /human/i);
     })));
   });
 });
