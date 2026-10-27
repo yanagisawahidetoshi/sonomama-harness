@@ -8,7 +8,7 @@ export const githubMock = defaults => async (state, test) => {
   const dir = await mkdtemp(join(tmpdir(), 'harness-gh-'));
   const previous = { PATH: process.env.PATH, GH_MOCK_DIR: process.env.GH_MOCK_DIR, GITHUB_STEP_SUMMARY: process.env.GITHUB_STEP_SUMMARY };
   try {
-    await writeFile(join(dir, 'state.json'), JSON.stringify({ labels: [], created: [], comments: [], failOnCreate: null, ...defaults, ...state }));
+    await writeFile(join(dir, 'state.json'), JSON.stringify({ labels: [], created: [], comments: [], failOnCreate: null, pulls: [], reviews: {}, checkRuns: {}, rules: [], viewer: 'harness-operator', bare: null, ...defaults, ...state }));
     await writeFile(join(dir, 'gh'), `#!${process.execPath}
       const fs = require('node:fs'), path = require('node:path');
       const dir = process.env.GH_MOCK_DIR, file = path.join(dir, 'state.json');
@@ -60,6 +60,24 @@ export const githubMock = defaults => async (state, test) => {
         const id = 1 + state.comments.length;
         const comment = { id, issue: Number(m[1]), body: JSON.parse(input).body, html_url: 'https://github.com/acme/app/issues/' + m[1] + '#issuecomment-' + id };
         state.comments.push(comment); process.stdout.write(JSON.stringify(comment));
+      } else if (method === 'GET' && endpoint === 'repos/acme/app/pulls') {
+        process.stdout.write(JSON.stringify(page(state.pulls.filter(p => 'acme:' + p.head.ref === params.head && (params.state === 'all' || p.state === (params.state || 'open'))))));
+      } else if (method === 'POST' && endpoint === 'repos/acme/app/pulls') {
+        const body = JSON.parse(input), number = 201 + state.pulls.length;
+        // The head SHA is whatever the pushed branch points to in the bare remote.
+        const sha = require('node:child_process').execFileSync('git', ['--git-dir', state.bare, 'rev-parse', 'refs/heads/' + body.head], { encoding: 'utf8' }).trim();
+        const pull = { number, title: body.title, body: body.body, state: 'open', merged: false, html_url: 'https://github.com/acme/app/pull/' + number, user: { login: state.viewer, type: 'User' }, head: { ref: body.head, sha }, base: { ref: body.base } };
+        state.pulls.push(pull); process.stdout.write(JSON.stringify(pull));
+      } else if (method === 'GET' && (m = endpoint.match(/^repos\/acme\/app\/pulls\/(\d+)$/))) {
+        const pull = state.pulls.find(p => p.number === Number(m[1])); if (!pull) fail('gh: Not Found (HTTP 404)');
+        process.stdout.write(JSON.stringify(pull));
+      } else if (method === 'GET' && (m = endpoint.match(/^repos\/acme\/app\/pulls\/(\d+)\/reviews$/))) {
+        process.stdout.write(JSON.stringify(page(state.reviews[m[1]] || [])));
+      } else if (method === 'GET' && (m = endpoint.match(/^repos\/acme\/app\/commits\/([0-9a-f]+)\/check-runs$/))) {
+        const runs = state.checkRuns[m[1]] || [];
+        process.stdout.write(JSON.stringify({ total_count: runs.length, check_runs: page(runs) }));
+      } else if (method === 'GET' && (m = endpoint.match(/^repos\/acme\/app\/rules\/branches\/(.+)$/))) {
+        process.stdout.write(JSON.stringify(page(state.rules)));
       } else fail('unexpected gh api call: ' + method + ' ' + endpoint);
       fs.writeFileSync(file, JSON.stringify(state));
     `);
@@ -69,6 +87,7 @@ export const githubMock = defaults => async (state, test) => {
     delete process.env.GITHUB_STEP_SUMMARY;
     const github = {
       state: () => readJson(join(dir, 'state.json')),
+      update: async fn => { const value = await readJson(join(dir, 'state.json')); fn(value); await writeFile(join(dir, 'state.json'), JSON.stringify(value)); },
       calls: async () => (await exists(join(dir, 'calls.jsonl'))) ? (await readFile(join(dir, 'calls.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line)) : [],
       dir,
     };
