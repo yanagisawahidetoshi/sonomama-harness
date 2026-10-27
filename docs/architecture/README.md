@@ -29,3 +29,4 @@ HarnessはSecurity impact検知、必須Verifier選択、事前Gate、最低Risk
 伏せ字化されたEvidenceの保存を担当する。Semantic Reviewや人間の人数だけで検証失敗を上書きしない。
 workspace・prompt・ログ・レビューZIPの秘密情報保護はevidence-protection.mjsを経由する。
 NOT_CONFIGUREDはFAIL/SKIPと区別し、必須なら処理を停止する。実際のmergeは対象外。PBI → SBI PlannerはSBI Issueの作成までで、実行・判定・mergeに関与しない。
+API Schema PlannerはOpenAPI Proposalの生成とレビュー依頼までで、承認・実装・packages/api-schemaへの反映はしない。
