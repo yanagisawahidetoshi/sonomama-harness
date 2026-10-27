@@ -1,0 +1,7 @@
+/.git
+/log/*
+/tmp/*
+/.bundle
+/config/master.key
+/config/credentials/*.key
+.env*
