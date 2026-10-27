@@ -6,7 +6,7 @@ describe('HomeScreen', () => {
     it('when the home screen renders then shows the smoke-test anchor and title', async () => {
       await render(<HomeScreen />);
       expect(screen.getByTestId('home-screen')).toBeOnTheScreen();
-      expect(screen.getByText('SONOMAMA')).toBeOnTheScreen();
+      expect(screen.getByTestId('home-title')).toHaveTextContent('SONOMAMA');
     });
   });
 });

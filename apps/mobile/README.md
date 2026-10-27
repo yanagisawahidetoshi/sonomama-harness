@@ -56,6 +56,9 @@ pnpm --filter mobile ios       # 初回は ios/ を生成してビルド (数分
 pnpm --filter mobile android   # 初回は android/ を生成してビルド
 ```
 
+`ios` scriptは `EXPO_USE_PRECOMPILED_MODULES=0` でExpo modulesをsourceからbuildする。SDK 58.0.19時点のprecompiled `ExpoFileSystem` が `ExpoModulesCore` 58.0.26 と合わず、起動時に `Symbol not found` で落ちるため。
+`npx expo run:ios` を直接使う場合も同じ環境変数を付ける。解消したらこの指定を外す。
+
 `ios/` と `android/` は生成物なのでGit管理しない。2回目以降はインストール済みのアプリを開き、`pnpm --filter mobile start` に接続する。
 bundle identifier / application id は暫定で `com.sonomama.student.dev`。
 

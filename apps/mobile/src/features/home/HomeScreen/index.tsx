@@ -5,7 +5,9 @@ export function HomeScreen() {
   const palette = colors[useColorScheme() === 'dark' ? 'dark' : 'light'];
   return (
     <View testID="home-screen" style={[styles.container, { backgroundColor: palette.background }]}>
-      <Text style={[styles.title, { color: palette.text }]}>SONOMAMA</Text>
+      <Text testID="home-title" style={[styles.title, { color: palette.text }]}>
+        SONOMAMA
+      </Text>
     </View>
   );
 }

@@ -1,11 +1,10 @@
 appId: com.sonomama.student.dev
 ---
-- launchApp:
-    clearState: true
+- launchApp
 - extendedWaitUntil:
     visible:
-      id: home-screen
+      id: home-title
     timeout: 60000
 - assertVisible:
-    id: home-screen
+    id: home-title
 - assertVisible: SONOMAMA
