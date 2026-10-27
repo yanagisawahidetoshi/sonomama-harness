@@ -169,6 +169,7 @@ describe('Health metrics signal collection', () => {
     }));
     it('when a selected application verifier has no commands then records VERIFIER_NOT_CONFIGURED and counts it', () => fixture(async root => {
       await writeFile(join(root, 'apps/api/Gemfile'), '# Rails');
+      await update(root, '.harness/config/harness.json', c => { c.verifiers.find(v => v.id === 'rails').commands = []; });
       await update(root, sbiPath, s => s.allowedFiles = ['greeting.mjs', 'apps/api/note.txt']);
       const run = await runHarness({ root, quiet: true, agent: async () => ({ files: [{ path: 'greeting.mjs', content: 'export const greet = () => "wrong";' }, { path: 'apps/api/note.txt', content: 'note' }] }) });
       assert.equal(run.status, 'ESCALATED');
