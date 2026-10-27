@@ -16,6 +16,7 @@
     "planner:api-schema": "node tools/harness/cli.mjs api-schema",
     "planner:api-schema-approve": "node tools/harness/cli.mjs api-schema-approve",
     "planner:api-schema-status": "node tools/harness/cli.mjs api-schema-status",
+    "api:mock": "node tools/harness/cli.mjs api-mock",
     "harness:test": "node --test tools/harness/*.test.mjs tools/harness/agents/*.test.mjs",
     "harness:approve": "node tools/harness/cli.mjs approve",
     "harness:resume": "node tools/harness/cli.mjs resume",

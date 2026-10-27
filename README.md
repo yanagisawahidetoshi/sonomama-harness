@@ -423,6 +423,8 @@ Quality Judgeは決定的なルールで構造・認証認可・Security Impact�
 Execution Harnessの実装前Gate・Merge Approvalとは別で、どちらの代わりにもならない。承認後に人間がpackages/api-schemaへ反映し、実装SBIを作る。
 手順は[docs/workflows/api-schema-planner.md](docs/workflows/api-schema-planner.md)。
 
+承認済みOpenAPIのMock Serverは`pnpm api:mock <Issue URL>`で`127.0.0.1:4010`に起動する。承認済みProposalと`packages/api-schema/openapi.yaml`のdigestが一致するときだけ起動する。
+手順は[docs/workflows/api-mock.md](docs/workflows/api-mock.md)。
 
 ## 変更範囲によるVerifier選択
 

@@ -1,10 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { copyFile, writeFile } from 'node:fs/promises';
+import { copyFile, writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
 import { spawn } from 'node:child_process';
-import { stringify as toYaml } from 'yaml';
+import { fileURLToPath } from 'node:url';
+import { parse as parseYaml, stringify as toYaml } from 'yaml';
 import { fixture, commitFixture, human } from './test-fixture.mjs';
 import { githubMock } from './test-github.mjs';
 import { planApiSchema, approvedLabel } from './api-schema-planner.mjs';
@@ -110,7 +111,7 @@ describe('API Mock Server', () => {
     })));
     it('when the Source of Truth is openapi.json instead of openapi.yaml then refuses', () => fixture(root => mockGitHub({}, async () => {
       await approved(root, { reflected: false });
-      await copyFile(proposalYaml(root), join(root, 'packages/api-schema/openapi.json'));
+      await writeFile(join(root, 'packages/api-schema/openapi.json'), JSON.stringify(parseYaml(await readFile(proposalYaml(root), 'utf8'))));
       await refused(root, /packages\/api-schema\/openapi\.yaml/);
     })));
     it('when both openapi.yaml and openapi.json exist then refuses', () => fixture(root => mockGitHub({}, async () => {
@@ -133,22 +134,23 @@ describe('API Mock Server', () => {
   });
 
   describe('given the api:mock CLI', () => {
-    const cli = (root, args) => new Promise(resolve => {
-      const child = spawn(process.execPath, [join(root, 'tools/harness/cli.mjs'), 'api-mock', ...args], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+    // Argument errors stop before any file or GitHub access, so the CLI of this repository (with its dependencies) is used directly.
+    const cli = args => new Promise(resolve => {
+      const child = spawn(process.execPath, [fileURLToPath(new URL('./cli.mjs', import.meta.url)), 'api-mock', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
       let output = '';
       child.stdout.on('data', chunk => { output += chunk; }); child.stderr.on('data', chunk => { output += chunk; });
       child.on('close', code => resolve({ code, output }));
     });
-    it('when a schema path is given instead of relying on the approval then rejects the option', () => fixture(async root => {
-      const result = await cli(root, [issueUrl, '--schema', mockSchemaPath]);
+    it('when a schema path is given instead of relying on the approval then rejects the option', async () => {
+      const result = await cli([issueUrl, '--schema', mockSchemaPath]);
       assert.equal(result.code, 1);
       assert.match(result.output, /Invalid arguments for api-mock/);
-    }));
-    it('when no Issue URL is given then explains that an Issue URL is required', () => fixture(async root => {
-      const result = await cli(root, []);
+    });
+    it('when no Issue URL is given then explains that an Issue URL is required', async () => {
+      const result = await cli([]);
       assert.equal(result.code, 1);
       assert.match(result.output, /Issue URL/);
-    }));
+    });
   });
 
   describe('given Prism serving an approved OpenAPI', () => {
@@ -170,7 +172,7 @@ describe('API Mock Server', () => {
     it('when a client calls the authenticated endpoint without a bearer token then responds 401 with the shared Error schema', () => fixture(root => mockGitHub({}, () => serving(root, async base => {
       const res = await fetch(`${base}/api/v1/me/profile`);
       assert.equal(res.status, 401);
-      assert.deepEqual(Object.keys(await res.json()).sort(), ['code', 'message']);
+      assert.deepEqual(Object.keys(await res.json()).sort(), ['code', 'details', 'message']);
     }))));
     it('when a client calls it with a mock bearer token then responds a stable JSON matching the schema including nullable and enum', () => fixture(root => mockGitHub({}, () => serving(root, async base => {
       const call = () => fetch(`${base}/api/v1/me/profile`, { headers: { Authorization: 'Bearer mock-token' } });
