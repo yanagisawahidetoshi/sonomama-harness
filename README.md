@@ -76,7 +76,8 @@ CLIが直接ファイルを変更した場合も停止する。差分をロー�
 入力設定、SBI、rules、スキル、信頼するHarnessコードの一致を確認する。
 いずれか変われば以前の検証・承認を使わずESCALATED。新しいrunで再検証・再承認する。
 node_modulesはworktreeへ持ち込まず、fingerprintの対象外。アプリを接続する際は同じworkspaceに必要な実行環境を準備する。
-検証コマンドによるsource変更も拒否する。生成物の扱いはアプリ接続時に明示的に整備する。
+検証コマンドによるsource変更も拒否する。アプリのverifierは先頭で`pnpm install --frozen-lockfile --filter <app>`を実行し、
+build出力はnode_modules配下へ出してsnapshotを変えない。
 
 ## Verifier Registry
 
@@ -91,9 +92,10 @@ ACは組み込みsample-bddまたは`trust: "acceptance"`と`trustedScript`で�
 | --- | --- | --- |
 | rails | apps/api/Gemfile | RSpec / RuboCop / Brakeman / OpenAPI |
 | expo | apps/mobile/package.json | TypeScript / ESLint / RNTL / Storybook / Maestro |
-| admin | apps/admin/package.json | TypeScript / ESLint / Vitest / RTL / Storybook / Playwright / VRT |
+| admin | apps/admin/package.json | 接続済み: install / TypeScript / Biome / Vitest + RTL / build。ACは`admin-acceptance` |
 
 markerなしでallowMissing=trueかつそのACを要求しないアプリだけ、対象外としてSKIPできる。
+lockfile等のroot共有ファイルだけが変わった場合も、未生成アプリはSKIP。アプリ配下の変更があればFAIL。
 allowMissing=false、またはACがそのadapterを要求する場合は必須なのでFAIL。
 markerあり・commands未設定もFAIL。**対象となる必須チェックはすべてPASSが必要。**
 
