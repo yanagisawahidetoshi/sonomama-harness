@@ -182,6 +182,12 @@ describe('API Docs Server', () => {
         assert.equal((await get(docs.server, '/openapi.yaml')).status, 422);
       });
     }));
+    it('when swagger-ui-dist is not installed then refuses and tells to run pnpm install', () => fixture(async root => {
+      await sourceOfTruth(root);
+      const started = startApiDocs({ root, port: 0, swaggerUi: join(root, 'node_modules/swagger-ui-dist') });
+      started.then(docs => docs.server.close(), () => {});
+      await assert.rejects(started, /pnpm install/);
+    }));
     it('when the port is already in use then refuses with a message that names the port', () => fixture(async root => {
       await sourceOfTruth(root);
       await withDocs(root, async docs => {
