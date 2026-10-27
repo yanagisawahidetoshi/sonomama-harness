@@ -21,17 +21,160 @@
         "RSpec",
         "RuboCop",
         "Brakeman",
-        "OpenAPI"
+        "Bundler Audit",
+        "Zeitwerk"
       ],
-      "commands": [],
+      "commands": [
+        [
+          "docker",
+          "compose",
+          "-f",
+          "../../compose.yaml",
+          "build",
+          "api"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "../../compose.yaml",
+          "run",
+          "--rm",
+          "-e",
+          "RAILS_ENV=test",
+          "api",
+          "bin/rails",
+          "db:prepare"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "../../compose.yaml",
+          "run",
+          "--rm",
+          "-e",
+          "RAILS_ENV=test",
+          "api",
+          "bundle",
+          "exec",
+          "rspec"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "../../compose.yaml",
+          "run",
+          "--rm",
+          "-e",
+          "RAILS_ENV=test",
+          "api",
+          "bundle",
+          "exec",
+          "rubocop"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "../../compose.yaml",
+          "run",
+          "--rm",
+          "-e",
+          "RAILS_ENV=test",
+          "api",
+          "bundle",
+          "exec",
+          "brakeman",
+          "--no-pager",
+          "--quiet"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "../../compose.yaml",
+          "run",
+          "--rm",
+          "-e",
+          "RAILS_ENV=test",
+          "api",
+          "bundle",
+          "exec",
+          "bundler-audit",
+          "check",
+          "--update"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "../../compose.yaml",
+          "run",
+          "--rm",
+          "-e",
+          "RAILS_ENV=test",
+          "api",
+          "bin/rails",
+          "zeitwerk:check"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "../../compose.yaml",
+          "down"
+        ]
+      ],
       "appliesTo": [
         "^apps/api/",
         "^packages/",
+        "^compose\\.yaml$",
         "^(package\\.json|pnpm-lock\\.yaml|pnpm-workspace\\.yaml|\\.npmrc|\\.ruby-version|\\.tool-versions|tsconfig[^/]*)$"
       ],
       "lanes": [
         "production"
       ]
+    },
+    {
+      "id": "api-acceptance",
+      "directory": "apps/api",
+      "marker": "Gemfile",
+      "planned": [
+        "Trusted Acceptance"
+      ],
+      "commands": [],
+      "acceptanceIds": [
+        "API-AC-1",
+        "API-AC-2",
+        "API-AC-3",
+        "API-AC-4",
+        "API-AC-5",
+        "API-AC-6",
+        "API-AC-7",
+        "API-AC-8",
+        "API-AC-9",
+        "API-AC-10",
+        "API-AC-11",
+        "API-AC-12",
+        "API-AC-13",
+        "API-AC-14",
+        "API-AC-15",
+        "API-AC-16",
+        "API-AC-17",
+        "API-AC-18",
+        "API-AC-19",
+        "API-AC-20",
+        "API-AC-21",
+        "API-AC-22"
+      ],
+      "appliesTo": [],
+      "lanes": [
+        "production"
+      ],
+      "trust": "acceptance",
+      "trustedScript": ".harness/verification/api-env.mjs"
     },
     {
       "id": "expo",

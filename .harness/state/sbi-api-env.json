@@ -1,0 +1,171 @@
+{
+  "id": "SBI-API-ENV",
+  "title": "API用Rails開発環境を apps/api に構築する",
+  "description": "Issue #21。apps/apiにRails 8.1 API mode (Ruby 3.4) を生成し、root compose.yamlのapi / db (PostgreSQL) serviceで起動・検証できるようにする。RSpec / RuboCop / Brakeman / Bundler Audit / ZeitwerkをDocker経由でHarnessのrails verifierから実行する。業務API・認証・業務テーブルは作らない。",
+  "gherkin": "Feature: API開発環境\n  Scenario: Dockerだけで起動できる\n    Given 開発者のローカルにRubyとPostgreSQLがない\n    When docker compose up api db を実行する\n    Then hostから /up に疎通できる\n  Scenario: Harnessから品質チェックできる\n    Given harness.jsonのrails verifierにDocker Composeのコマンドが登録されている\n    When Harnessがapps/apiの変更を検証する\n    Then RSpec / RuboCop / Brakeman / Bundler Audit / Zeitwerk checkがDocker上でPASSする\n  Scenario: 未決定の技術を固定しない\n    Given 認証ProviderとOpenAPI 3.1 contract validation方式が未決定である\n    When Gemfileとコードを確認する\n    Then 認証gem・JWT実装・committee-rails・業務model / endpointは存在しない",
+  "acceptanceCriteria": [
+    {
+      "id": "API-AC-1",
+      "description": "apps/apiにRails API applicationが存在する",
+      "verifier": "api-acceptance"
+    },
+    {
+      "id": "API-AC-2",
+      "description": "apps/api/Dockerfileが存在する",
+      "verifier": "api-acceptance"
+    },
+    {
+      "id": "API-AC-3",
+      "description": "Docker Composeにapi / db serviceが存在する",
+      "verifier": "api-acceptance"
+    },
+    {
+      "id": "API-AC-4",
+      "description": "Rails / PostgreSQLのversionが固定されている",
+      "verifier": "api-acceptance"
+    },
+    {
+      "id": "API-AC-5",
+      "description": "PostgreSQL adapterを利用する",
+      "verifier": "api-acceptance"
+    },
+    {
+      "id": "API-AC-6",
+      "description": "ローカルRuby / PostgreSQLを直接installせずに開発環境を起動できる",
+      "verifier": "api-acceptance"
+    },
+    {
+      "id": "API-AC-7",
+      "description": "docker compose up api dbでRails + PostgreSQLを起動できる",
+      "verifier": "api-acceptance"
+    },
+    {
+      "id": "API-AC-8",
+      "description": "development / test DBをコンテナ環境で準備できる",
+      "verifier": "api-acceptance"
+    },
+    {
+      "id": "API-AC-9",
+      "description": "Rails serverへhostから疎通できる",
+      "verifier": "api-acceptance"
+    },
+    {
+      "id": "API-AC-10",
+      "description": "RSpecがDocker上で最低1件PASSする",
+      "verifier": "api-acceptance"
+    },
+    {
+      "id": "API-AC-11",
+      "description": "RuboCopがDocker上でPASSする",
+      "verifier": "api-acceptance"
+    },
+    {
+      "id": "API-AC-12",
+      "description": "BrakemanがDocker上でPASSする",
+      "verifier": "api-acceptance"
+    },
+    {
+      "id": "API-AC-13",
+      "description": "Bundler AuditがDocker上で実行できる",
+      "verifier": "api-acceptance"
+    },
+    {
+      "id": "API-AC-14",
+      "description": "Zeitwerk checkがDocker上でPASSする",
+      "verifier": "api-acceptance"
+    },
+    {
+      "id": "API-AC-15",
+      "description": "rack-corsが導入され、環境別設定が可能な土台がある",
+      "verifier": "api-acceptance"
+    },
+    {
+      "id": "API-AC-16",
+      "description": "HarnessのRails verifierからDocker経由で上記品質チェックを実行できる",
+      "verifier": "api-acceptance"
+    },
+    {
+      "id": "API-AC-17",
+      "description": "認証Provider固有gem / SDKを導入していない",
+      "verifier": "api-acceptance"
+    },
+    {
+      "id": "API-AC-18",
+      "description": "JWT / Cognito / Firebase等の認証実装をしていない",
+      "verifier": "api-acceptance"
+    },
+    {
+      "id": "API-AC-19",
+      "description": "committee-railsを導入していない",
+      "verifier": "api-acceptance"
+    },
+    {
+      "id": "API-AC-20",
+      "description": "OpenAPI SSOTを複製していない",
+      "verifier": "api-acceptance"
+    },
+    {
+      "id": "API-AC-21",
+      "description": "業務model / controller / API endpointを実装していない",
+      "verifier": "api-acceptance"
+    },
+    {
+      "id": "API-AC-22",
+      "description": "READMEにDockerベースの開発手順が記載されている",
+      "verifier": "api-acceptance"
+    }
+  ],
+  "allowedFiles": [
+    "apps/api/Dockerfile",
+    "apps/api/.dockerignore",
+    "apps/api/.gitignore",
+    "apps/api/.rubocop.yml",
+    "apps/api/.rspec",
+    "apps/api/.ruby-version",
+    "apps/api/Gemfile",
+    "apps/api/Gemfile.lock",
+    "apps/api/README.md",
+    "apps/api/Rakefile",
+    "apps/api/config.ru",
+    "apps/api/bin/rails",
+    "apps/api/bin/rake",
+    "apps/api/bin/setup",
+    "apps/api/bin/brakeman",
+    "apps/api/bin/rubocop",
+    "apps/api/bin/bundler-audit",
+    "apps/api/config/application.rb",
+    "apps/api/config/boot.rb",
+    "apps/api/config/environment.rb",
+    "apps/api/config/database.yml",
+    "apps/api/config/routes.rb",
+    "apps/api/config/puma.rb",
+    "apps/api/config/bundler-audit.yml",
+    "apps/api/config/initializers/cors.rb",
+    "apps/api/config/initializers/filter_parameter_logging.rb",
+    "apps/api/config/environments/development.rb",
+    "apps/api/config/environments/test.rb",
+    "apps/api/config/environments/production.rb",
+    "apps/api/config/locales/en.yml",
+    "apps/api/app/controllers/application_controller.rb",
+    "apps/api/app/models/application_record.rb",
+    "apps/api/db/seeds.rb",
+    "apps/api/spec/spec_helper.rb",
+    "apps/api/spec/rails_helper.rb",
+    "apps/api/spec/requests/health_spec.rb",
+    "compose.yaml",
+    ".env.example"
+  ],
+  "risks": [
+    "Dockerfile / compose.yamlはInfrastructureとして扱われる",
+    "rack-corsの許可Originは環境変数で注入し、Production値はこのSBIで決めない"
+  ],
+  "ambiguous": false,
+  "requiresDesignDecision": false,
+  "securityImpact": [],
+  "requiredSecurityRules": [],
+  "requiredVerifiers": [
+    "rails"
+  ],
+  "preImplementationGate": false,
+  "minimumRiskLevel": 2
+}
