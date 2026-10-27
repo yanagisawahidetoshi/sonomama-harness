@@ -1,0 +1,121 @@
+{
+  "id": "SBI-PROTOTYPE-MOBILE-ENV",
+  "title": "デザイナー用Expo Executable Design Workspaceを prototypes/mobile に構築する",
+  "description": "Issue #25。prototypes/mobileにExpo SDK 58 + Expo Router + React Native Storybook + Biomeの試作環境を作る。StorybookはExpo Routerのrouteではなく専用entry pointへ切り替えて起動する。表示はlocal mock dataのみで、本番・Staging APIには接続しない。",
+  "gherkin": "Feature: デザイナー用モバイルプロトタイプ環境\n  Scenario: Storybook専用entryで起動できる\n    Given EXPO_PUBLIC_STORYBOOKを有効にする\n    When pnpm --filter prototype-mobile storybook を実行する\n    Then Expo Routerの代わりにReact Native Storybookが起動する\n  Scenario: Harnessのprototype laneで検証できる\n    Given harness.jsonのprototype-mobile verifierにコマンドが登録されている\n    When Harnessがprototypes/mobileの変更を検証する\n    Then typecheck / Biome check / Expo DoctorがPASSする\n  Scenario: 本番と分離されている\n    Given prototypeは本番コードではない\n    When 依存とimportを確認する\n    Then apps/mobileやAPI clientに依存せず、secretを持たない",
+  "acceptanceCriteria": [
+    {
+      "id": "PMOB-AC-1",
+      "description": "prototypes/mobileが存在する",
+      "verifier": "prototype-mobile-acceptance"
+    },
+    {
+      "id": "PMOB-AC-2",
+      "description": "pnpm workspaceに参加している",
+      "verifier": "prototype-mobile-acceptance"
+    },
+    {
+      "id": "PMOB-AC-3",
+      "description": "Expo + React Native + TypeScriptで起動できる",
+      "verifier": "prototype-mobile-acceptance"
+    },
+    {
+      "id": "PMOB-AC-4",
+      "description": "Expo Routerを利用できる",
+      "verifier": "prototype-mobile-acceptance"
+    },
+    {
+      "id": "PMOB-AC-5",
+      "description": "React Native Storybookを起動できる",
+      "verifier": "prototype-mobile-acceptance"
+    },
+    {
+      "id": "PMOB-AC-6",
+      "description": "Storybook専用entry pointから起動できる",
+      "verifier": "prototype-mobile-acceptance"
+    },
+    {
+      "id": "PMOB-AC-7",
+      "description": "iOS Simulator / Android EmulatorでStorybookを確認できる",
+      "verifier": "prototype-mobile-acceptance"
+    },
+    {
+      "id": "PMOB-AC-8",
+      "description": "Biomeでlint / format checkできる",
+      "verifier": "prototype-mobile-acceptance"
+    },
+    {
+      "id": "PMOB-AC-9",
+      "description": "TypeScript typecheckがPASSする",
+      "verifier": "prototype-mobile-acceptance"
+    },
+    {
+      "id": "PMOB-AC-10",
+      "description": "Expo DoctorがPASSする",
+      "verifier": "prototype-mobile-acceptance"
+    },
+    {
+      "id": "PMOB-AC-11",
+      "description": "最低1つのReact Native sample component / storyが存在する",
+      "verifier": "prototype-mobile-acceptance"
+    },
+    {
+      "id": "PMOB-AC-12",
+      "description": "mock dataのみで表示確認できる",
+      "verifier": "prototype-mobile-acceptance"
+    },
+    {
+      "id": "PMOB-AC-13",
+      "description": "Production / Staging APIへ自動接続しない",
+      "verifier": "prototype-mobile-acceptance"
+    },
+    {
+      "id": "PMOB-AC-14",
+      "description": "secret / tokenを保持しない",
+      "verifier": "prototype-mobile-acceptance"
+    },
+    {
+      "id": "PMOB-AC-15",
+      "description": "apps/mobileと責務が分離されている",
+      "verifier": "prototype-mobile-acceptance"
+    },
+    {
+      "id": "PMOB-AC-16",
+      "description": "prototypeからproductionへのPromotion FlowがREADMEに記載されている",
+      "verifier": "prototype-mobile-acceptance"
+    }
+  ],
+  "allowedFiles": [
+    "prototypes/mobile/package.json",
+    "prototypes/mobile/README.md",
+    "prototypes/mobile/.gitignore",
+    "prototypes/mobile/app.json",
+    "prototypes/mobile/biome.json",
+    "prototypes/mobile/tsconfig.json",
+    "prototypes/mobile/metro.config.js",
+    "prototypes/mobile/index.ts",
+    "prototypes/mobile/.rnstorybook/main.ts",
+    "prototypes/mobile/.rnstorybook/preview.tsx",
+    "prototypes/mobile/.rnstorybook/index.ts",
+    "prototypes/mobile/.rnstorybook/storybook.requires.ts",
+    "prototypes/mobile/src/app/_layout.tsx",
+    "prototypes/mobile/src/app/index.tsx",
+    "prototypes/mobile/src/components/LessonCard/index.tsx",
+    "prototypes/mobile/src/components/LessonCard/styles.ts",
+    "prototypes/mobile/src/components/LessonCard/LessonCard.stories.tsx",
+    "prototypes/mobile/src/mocks/lessons.ts",
+    "pnpm-lock.yaml"
+  ],
+  "risks": [
+    "pnpm-lock.yamlの更新はworkspace全体に影響する"
+  ],
+  "ambiguous": false,
+  "requiresDesignDecision": false,
+  "securityImpact": [],
+  "requiredSecurityRules": [],
+  "requiredVerifiers": [
+    "prototype-mobile"
+  ],
+  "preImplementationGate": false,
+  "minimumRiskLevel": 2
+}
