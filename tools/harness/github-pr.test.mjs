@@ -142,6 +142,14 @@ describe('Merge Policy Judge with GitHub PR state', () => {
       assert.equal(result.decision, 'BLOCKED');
       assert.ok(result.reasons.includes('pull_request_not_open'));
     });
+    it('when the GitHub state could not be read then blocks instead of trusting an earlier state', () => {
+      const result = decide(1, { unavailable: 'gh api GET repos/acme/app/pulls/7: timeout' });
+      assert.equal(result.decision, 'BLOCKED');
+      assert.ok(result.reasons.includes('github_state_unavailable'));
+    });
+    it('when the head SHA differs but the state claims it matches then still blocks', () => {
+      assert.equal(decide(1, github({ pullRequest: { headSha: old, testedShaMatches: true } })).decision, 'BLOCKED');
+    });
     it('when Harness checks failed then GitHub approvals cannot allow merge', () => {
       const failed = checks.map(c => c.id === 'verification' ? { ...c, status: 'FAIL' } : c);
       assert.equal(decide(2, github({ reviews: { approvedHumans: ['alice'] } }), { checks: failed }).decision, 'BLOCKED');
