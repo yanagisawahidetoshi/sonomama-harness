@@ -367,7 +367,7 @@ CLIの仕様は[Codex公式資料](https://developers.openai.com/codex/cli/refer
 GitHub IssueのPBIをBDDベースのSBIへ分割し、レビュー待ちのSBI Issueとして登録する。
 
 ```sh
-pnpm harness:plan https://github.com/<owner>/<repo>/issues/<number> --provider claude
+pnpm planner:sbi https://github.com/<owner>/<repo>/issues/<number> --provider claude
 ```
 
 ```text
@@ -401,7 +401,7 @@ Execution Harnessは引き続きSBI JSONを入力にし、Issueからの自動�
 API変更を伴うIssueから、実装前に合意するOpenAPI 3.1の契約案を作る。Rails / Frontendの実装はしない。
 
 ```sh
-pnpm harness:api-schema https://github.com/<owner>/<repo>/issues/<number> --provider claude
+pnpm planner:api-schema https://github.com/<owner>/<repo>/issues/<number> --provider claude
 ```
 
 ```text

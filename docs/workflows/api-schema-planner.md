@@ -14,7 +14,7 @@ GitHub Issue → Requirement Reader → Existing API Schema Reader（packages/ap
 
 1. Issueに対象画面・操作・データ・権限の要件を書く。
 2. `gh auth status`で対象リポジトリへissues: writeできることを確認する。
-3. `pnpm harness:api-schema https://github.com/<owner>/<repo>/issues/<number> --provider claude`を実行する。
+3. `pnpm planner:api-schema https://github.com/<owner>/<repo>/issues/<number> --provider claude`を実行する。
 4. Quality JudgeがFAILならIssueを直して再実行する。
 5. PASSなら`.harness/api-schema/<number>/summary.md`のHuman Reviewを人間が確認する。
    生成物はGit管理対象。commitしてPRで差分レビューする。Execution Harnessはcleanなリポジトリでしか起動しない。
