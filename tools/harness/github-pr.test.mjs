@@ -496,6 +496,7 @@ describe('GitHub PR Adapter', () => {
       const [pull] = (await github.state()).pulls;
       assert.equal(pull.head.sha, run.headSha);
       assert.ok(pull.body.includes(issueUrl));
+      assert.ok(pull.body.includes('Closes #7'), 'merging the PR closes the SBI Issue so dependent SBIs may start');
       const workspace = join(root, run.runDir, 'workspace');
       const committed = JSON.parse((await git(workspace, ['show', `${run.headSha}:.harness/state/sbi-7.json`])).stdout);
       assert.deepEqual(committed, await readJson(join(root, run.runDir, 'sbi-snapshot.json')));

@@ -230,6 +230,24 @@ describe('SBI Quality Judge', () => {
     it('when every SBI is small, verifiable and acyclic then passes', () => {
       assert.deepEqual(judgePlan(validPlan()), { status: 'PASS', findings: [] });
     });
+    // A PBI that needs an API contract change gets one OpenAPI Schema SBI; the Rails and frontend SBIs depend on it.
+    it('when an OpenAPI Schema SBI changes only packages/api-schema and the implementation SBIs depend on it then passes', () => {
+      const plan = [sbi('SBI-001', { changeAreas: ['packages/api-schema'] }), sbi('SBI-002', { changeAreas: ['apps/api'], dependsOn: ['SBI-001'] }), sbi('SBI-003', { changeAreas: ['apps/admin'], dependsOn: ['SBI-001'] })];
+      assert.deepEqual(judgePlan(plan), { status: 'PASS', findings: [] });
+    });
+    it('when the OpenAPI Schema change is mixed into an implementation SBI then fails and asks for a separate Schema SBI', () => {
+      const result = judgePlan([sbi('SBI-001', { changeAreas: ['packages/api-schema', 'apps/api'] })]);
+      assert.equal(result.status, 'FAIL');
+      assert.ok(result.findings.some(f => f.sbi === 'SBI-001' && f.rule === 'schema-sbi' && /OpenAPI Schema/.test(f.reason)));
+    });
+    it('when an implementation SBI does not depend on the OpenAPI Schema SBI of the same PBI then fails', () => {
+      const result = judgePlan([sbi('SBI-001', { changeAreas: ['packages/api-schema'] }), sbi('SBI-002', { changeAreas: ['apps/api'] })]);
+      assert.ok(result.findings.some(f => f.sbi === 'SBI-002' && f.rule === 'schema-sbi' && /SBI-001/.test(f.reason)));
+    });
+    it('when a PBI has two OpenAPI Schema SBIs then fails', () => {
+      const result = judgePlan([sbi('SBI-001', { changeAreas: ['packages/api-schema'] }), sbi('SBI-002', { changeAreas: ['packages/api-schema/'], dependsOn: ['SBI-001'] })]);
+      assert.ok(result.findings.some(f => f.rule === 'schema-sbi'));
+    });
     it('when dependencies form a DAG then orders creation so that dependencies come first', () => {
       assert.deepEqual(creationOrder([sbi('SBI-003', { dependsOn: ['SBI-001', 'SBI-002'] }), sbi('SBI-002', { dependsOn: ['SBI-001'] }), sbi('SBI-001')]), ['SBI-001', 'SBI-002', 'SBI-003']);
     });

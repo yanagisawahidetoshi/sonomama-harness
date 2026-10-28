@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { renderSbiBody } from './planner.mjs';
 import { sbiSchema } from './schemas.mjs';
-import { issueReadiness, sbiFromIssue, inScope } from './sbi-issue.mjs';
+import { issueReadiness, sbiFromIssue, inScope, loadSbiIssue } from './sbi-issue.mjs';
 
 const ref = { owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' };
 const pbi = { owner: 'acme', repo: 'app', number: 3, url: 'https://github.com/acme/app/issues/3', title: '管理画面のホーム' };
@@ -152,5 +152,34 @@ describe('Scope of an execution SBI', () => {
     it('when neither files nor directories are allowed then the schema rejects it', () => {
       assert.equal(sbiSchema.safeParse({ ...base, allowedFiles: [], allowedDirs: [] }).success, false);
     });
+  });
+});
+
+// A Rails or frontend SBI depends on the OpenAPI Schema SBI. Its Harness PR closes the Schema SBI Issue when it is merged,
+// so an open (or abandoned) dependency means the canonical openapi.yaml is not on main yet.
+describe('Dependencies of a ready SBI Issue', () => {
+  const schema = { number: 6, title: 'SBI-001 OpenAPI Schemaを作る', html_url: 'https://github.com/acme/app/issues/6', labels: labels('sbi', 'ready') };
+  const dependent = planned({ id: 'SBI-002', dependsOn: ['SBI-001'] });
+  const body = (numbers = { 'SBI-001': 6 }) => renderSbiBody(dependent, pbi, numbers);
+  const github = (dependency, own = issue({ body: body() }, dependent)) => ({ fetchIssue: async ({ number }) => {
+    if (number === 7) return own;
+    if (number === 6 && dependency) return dependency;
+    throw new Error('gh: Not Found (HTTP 404)');
+  } });
+  const load = gh => loadSbiIssue({ issueUrl: ref.url, config: config(), github: gh });
+  it('when the dependency Issue was closed as completed then the run may start', async () => {
+    assert.equal((await load(github({ ...schema, state: 'closed', state_reason: 'completed' }))).sbi.id, 'ISSUE-7');
+  });
+  it('when the dependency Issue is still open because its Schema PR is not merged then refuses to start', async () => {
+    await assert.rejects(load(github({ ...schema, state: 'open' })), /#6/);
+  });
+  it('when the dependency Issue was closed as not planned then refuses to start', async () => {
+    await assert.rejects(load(github({ ...schema, state: 'closed', state_reason: 'not_planned' })), /#6/);
+  });
+  it('when the dependency Issue cannot be read then refuses to start', async () => {
+    await assert.rejects(load(github(null)), /#6/);
+  });
+  it('when a dependency is listed without its Issue number then refuses to start', async () => {
+    await assert.rejects(load(github(null, issue({ body: body({}) }, dependent))), /SBI-001/);
   });
 });

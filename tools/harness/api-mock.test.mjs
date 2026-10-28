@@ -13,6 +13,7 @@ import { recordApiSchemaDecision } from './api-schema-approval.mjs';
 import { githubCli } from './planner-github.mjs';
 import { parseIssueUrl } from './planner.mjs';
 import { startApiMock, mockSchemaPath } from './api-mock.mjs';
+import { checkApiMock } from './api-mock-check.mjs';
 
 const issueUrl = 'https://github.com/acme/app/issues/12';
 const issue = { number: 12, title: 'プロフィールAPIを追加する', body: '## 背景\n受講生が自分のプロフィールを取得する。', html_url: issueUrl, state: 'open', labels: [] };
@@ -202,5 +203,40 @@ describe('API Mock Server', () => {
     it('when a client calls a path outside the OpenAPI then responds 404', () => fixture(root => mockGitHub({}, () => serving(root, async base => {
       assert.equal((await fetch(`${base}/api/v1/unknown`)).status, 404);
     }))));
+  });
+});
+
+// Schema SBI: the api-contract Verifier also starts Prism from the OpenAPI of the run workspace and calls each documented GET.
+describe('Prism Mock check of a Schema SBI', () => {
+  const openapi = (paths, extra = {}) => toYaml({ openapi: '3.1.0', info: { title: 'SONOMAMA API', version: '0.1.0' }, paths, ...extra });
+  const json = (schema, example) => ({ 'application/json': { schema, ...(example === undefined ? {} : { example }) } });
+  const courses = { get: { operationId: 'listCourses', responses: { 200: { description: 'OK', content: json({ type: 'array', items: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } } }, [{ id: 'c1' }]) } } } };
+  const write = (root, text) => writeFile(join(root, mockSchemaPath), text);
+  it('when the OpenAPI of the workspace is valid then Prism starts and each GET endpoint answers its documented status', () => fixture(async root => {
+    const profile = { get: { operationId: 'getMyProfile', security: [{ bearer: [] }], responses: { 200: { description: 'OK', content: json({ type: 'object', properties: { id: { type: 'string' } } }, { id: 'p1' }) }, 401: { description: 'NG' } } } };
+    await write(root, openapi({ '/api/v1/courses': courses, '/api/v1/me/profile': profile }, { components: { securitySchemes: { bearer: { type: 'http', scheme: 'bearer' } } } }));
+    const result = await checkApiMock({ root });
+    assert.equal(result.status, 'PASS', result.errors.join('; '));
+    assert.deepEqual(result.checked.sort(), ['GET /api/v1/courses 200', 'GET /api/v1/me/profile 200']);
+  }));
+  it('when an endpoint has a path parameter without an example then it is listed as not called instead of passing silently', () => fixture(async root => {
+    await write(root, openapi({ '/api/v1/courses': courses, '/api/v1/courses/{id}': { get: { operationId: 'getCourse', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: { description: 'OK' } } } } }));
+    const result = await checkApiMock({ root });
+    assert.equal(result.status, 'PASS');
+    assert.deepEqual(result.skipped, ['GET /api/v1/courses/{id}']);
+  }));
+  it('when Prism cannot load the OpenAPI then fails', () => fixture(async root => {
+    await write(root, 'openapi: 3.1.0\npaths: [not, a, map]\n');
+    assert.equal((await checkApiMock({ root })).status, 'FAIL');
+  }));
+  it('when the OpenAPI refers to a remote document then fails before starting Prism', () => fixture(async root => {
+    await write(root, openapi({ '/api/v1/health': { get: { responses: { 200: { description: 'OK', content: json({ $ref: 'https://example.com/health.json' }) } } } } }));
+    const result = await checkApiMock({ root });
+    assert.equal(result.status, 'FAIL');
+    assert.match(result.errors.join('\n'), /example\.com/);
+  }));
+  it('when the repository configuration is read then the api-contract Verifier runs the Prism Mock check', async () => {
+    const config = JSON.parse(await readFile(new URL('../../.harness/config/harness.json', import.meta.url), 'utf8'));
+    assert.ok(config.verifiers.find(v => v.id === 'api-contract').commands.some(c => c.join(' ') === 'node ../../tools/harness/api-mock-check.mjs'));
   });
 });
