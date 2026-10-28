@@ -51,6 +51,16 @@ describe('Versioned pre-push quality gate',()=>{
         assert.equal(await readFile(join(temp,'log'),'utf8'),`harness:check unset\nharness:push-gate ${refs}\n`);
       } finally { await rm(temp,{recursive:true,force:true}); }
     });
+    it('when an outer push gate exported its refs then the hook passes only the refs of this push',async()=>{
+      const temp=await mkdtemp(join(tmpdir(),'harness-hook-'));
+      try {
+        await writeFile(join(temp,'pnpm'),`#!/bin/sh\necho "$1 ${'$'}{HARNESS_PUSH_REFS-unset}" >> "$GATE_LOG"\n`);
+        await chmod(join(temp,'pnpm'),0o755);
+        const refs=`refs/heads/x ${sha('a')} refs/heads/x ${sha('b')}`;
+        await hook({...process.env,PATH:`${temp}:${process.env.PATH}`,GATE_LOG:join(temp,'log'),HARNESS_PUSH_REFS:`refs/heads/outer ${sha('c')} refs/heads/outer ${zero}`},`${refs}\n`);
+        assert.equal(await readFile(join(temp,'log'),'utf8'),`harness:check unset\nharness:push-gate ${refs}\n`);
+      } finally { await rm(temp,{recursive:true,force:true}); }
+    });
     it('when reading the hook then it names no verifier, because Impact Analysis in the Harness decides them',async()=>{
       const text=await readFile(join(root,'.githooks/pre-push'),'utf8');
       const config=JSON.parse(await readFile(join(root,'.harness/config/harness.json'),'utf8'));
