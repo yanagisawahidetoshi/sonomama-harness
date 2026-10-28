@@ -3,7 +3,8 @@ import { join } from 'node:path';
 import { isSafeEnvTemplate } from './evidence-protection.mjs';
 import { readJson } from './io.mjs';
 import { isProductionPath } from './lanes.mjs';
-import { configSchema, sbiSchema, securityPolicySchema } from './schemas.mjs';
+import { readSbiFiles, verifySbiSource } from './sbi-source.mjs';
+import { configSchema, securityPolicySchema } from './schemas.mjs';
 import { classifySecurity, combineSecurity, securityPassed, verifySecurity } from './security-enforcement.mjs';
 import { checksPassed, verify } from './verifier.mjs';
 import { changedFiles as diffFiles, git } from './workspace.mjs';
@@ -62,14 +63,14 @@ export function analyzeImpact({ config, sbis = [], files = [], all = false }) {
 }
 
 // Required jobs must succeed; a job may be skipped only when the impact did not ask for it. Security that was not evaluated fails.
-export function judgeCi({ impact, needs, acceptance, security }) {
+export function judgeCi({ impact, needs, acceptance, security, source }) {
   const reasons = [];
   const expect = (job, wanted) => {
     const result = needs[job]?.result ?? 'missing';
     if (wanted ? result !== 'success' : !['success', 'skipped'].includes(result)) reasons.push(`${job}: ${result}`);
   };
   expect('impact', true);
-  if (impact.sbiRequired && !impact.sbis.length) reasons.push(`sbi missing: ${impact.sbiRequiredReasons.join(', ')} requires a changed .harness/state/sbi-*.json`);
+  if (impact.sbiRequired && source?.status !== 'PASS') reasons.push(...(source?.reasons.length ? source.reasons : ['sbi source: not evaluated']));
   expect('verifiers', impact.requiredVerifiers.length > 0);
   expect('harness-test', impact.fullGate);
   expect('harness-demo', impact.fullGate);
@@ -88,15 +89,9 @@ export async function changedFiles(root, base) {
   return diffFiles(root, mergeBase, 'HEAD');
 }
 
+// Changed hand-written SBI JSON and the SBI inside Harness Run snapshots both drive Impact Analysis and Trusted Acceptance.
 export async function changedSbis(root, files) {
-  const paths = files.map(f => f.path).filter(path => /^\.harness\/state\/sbi-[^/]+\.json$/.test(path));
-  const sbis = [];
-  for (const path of paths) {
-    let text;
-    try { text = await readFile(join(root, path), 'utf8'); } catch { continue; }
-    sbis.push(sbiSchema.parse(JSON.parse(text)));
-  }
-  return sbis;
+  return (await readSbiFiles(root, files)).sbis;
 }
 
 export async function loadImpact({ root, base, all = false }) {
@@ -126,9 +121,9 @@ async function changedContent(root, files) {
   return content;
 }
 
-// Completion Judge: trusted acceptance of every changed SBI and the Harness Security Policy run here,
-// then the job results are checked against what the impact required.
-export async function runCompletionJudge({ root, base, all = false, needs }) {
+// Completion Judge: trusted acceptance of every changed SBI and the Harness Security Policy run here, the source SBI Issue of a Production change
+// is read from GitHub, then the job results are checked against what the impact required.
+export async function runCompletionJudge({ root, base, all = false, needs, repository, github }) {
   const { config, files, sbis, impact } = await loadImpact({ root, base, all });
   const missing = [], checks = [];
   for (const sbi of sbis) {
@@ -143,7 +138,8 @@ export async function runCompletionJudge({ root, base, all = false, needs }) {
   const matrix = impact.requiredVerifiers.map(id => ({ id, status: needs.verifiers?.result === 'success' ? 'PASS' : 'FAIL', reason: `verifier matrix: ${needs.verifiers?.result ?? 'missing'}` }));
   const headSha = (await git(root, ['rev-parse', 'HEAD'])).stdout.trim();
   const security = await verifySecurity({ workspace: root, sbi: {}, assessment, policy, config, headSha, verification: { checks: [...checks, ...matrix] }, changed: await changedContent(root, files) });
-  return { impact, acceptance, checks, security, ...judgeCi({ impact, needs, acceptance, security }) };
+  const source = await verifySbiSource({ root, base, files, required: impact.sbiRequiredReasons, repository, github });
+  return { impact, acceptance, checks, security, source, ...judgeCi({ impact, needs, acceptance, security, source }) };
 }
 
 export function describeJudge({ needs, acceptance, checks, security }) {

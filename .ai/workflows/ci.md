@@ -11,7 +11,7 @@
 
 ## Verifierの選び方
 
-PRで追加・変更された `.harness/state/sbi-*.json` と、base branchとの差分から決める。
+PRで追加・変更された `.harness/state/sbi-*.json`（Harness Runのsnapshotと手書きのSBI JSON）と、base branchとの差分から決める。
 
 | 根拠 | 選ばれるVerifier | 必須か |
 | --- | --- | --- |
@@ -24,9 +24,18 @@ PRで追加・変更された `.harness/state/sbi-*.json` と、base branchと�
 
 ## SBIが必須の変更
 
-Production（`apps/`・`packages/`と`.harness/config/lanes.json`の`productionPaths`）を変更するPRは、`.harness/state/sbi-*.json`の追加か変更が必須。無ければCompletion JudgeがFAILする。
-それ以外（`prototypes/`、docs、Harness本体など）だけを変更するPRはSBIなしで通り、Verifierは差分だけで選ぶ。
-判定理由はimpact jobとharness jobのログの`SBI required:`行に出る。
+Production（`apps/`・`packages/`と`.harness/config/lanes.json`の`productionPaths`）を変更するPRは、承認済みSBI Issueを起点にしたHarness Runから作られていることが必須。Completion Judge（`harness` job）が次をすべて確かめ、1つでも欠ければFAILする。
+
+| 確認 | 内容 |
+| --- | --- |
+| snapshot | PRで追加・変更された `.harness/state/sbi-<Issue番号>.json` が `sbiSnapshotSchema` を満たす。source Issue（repo / number / url）、Run開始時のtitle / body digest、Run ID、RunのSBIを持つ |
+| source Issue | GitHub APIで読んだ現在のIssueが、このリポジトリのもので、open・`sbi`・`ready`あり・`needs-review`なし。読めなければFAIL |
+| Run の紐付け | PRのcommitのどれかが、snapshotと同じ値の `Harness-Run: <Run ID>` と `SBI-Issue: <Issue URL>` trailerを持つ |
+
+snapshotとtrailerはHarnessがRunとPR作成のときに書く。人間はSBI JSONを書かない。snapshotのSBIは手書きのSBI JSONと同じくImpact AnalysisとTrusted Acceptanceに使う。Issueが後から編集されてもRunの前提はsnapshotに残り、digestが変わったことだけをログに出す。
+source Issueを持たない手書きの `sbi-*.json`（`sbi-admin-env.json` など）はProduction変更の根拠にならない。触らないPRには影響しない。
+それ以外（`prototypes/`、docs、Harness本体など）だけを変更するPRはSBIなしで通り、Verifierは差分だけで選ぶ。mainへのpushでも確認しない。
+判定理由はimpact jobとharness jobのログの `SBI required:` 行と、harness jobの `SBI source` 行に出る。harness jobはIssueを読むため `issues: read` と `GH_TOKEN` を持つ。
 
 `impact.fullGate` のパス（`tools/harness/`、`.harness/config|verification|rules|skills/`、`.github/`、`.githooks/`、`AGENTS.md`、`.ai/`、root の `package.json`）が変わったときはFull Gateも実行する。mainへのpushでは全Verifierを実行し、Full Gateも実行する。
 

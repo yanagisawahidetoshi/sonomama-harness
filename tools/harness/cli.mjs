@@ -11,6 +11,7 @@ import { startApiDocs } from './api-docs.mjs';
 import { relativePath } from './schemas.mjs';
 import { describeImpact, describeJudge, loadImpact, runCompletionJudge, runVerifier } from './impact.mjs';
 import { runPushGate } from './push-gate.mjs';
+import { describeSbiSource } from './sbi-source.mjs';
 import { appendFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 const root = fileURLToPath(new URL('../../', import.meta.url));
@@ -91,6 +92,7 @@ try {
       const needs = JSON.parse(process.env.HARNESS_NEEDS || '{}');
       const judged = await runCompletionJudge({ root, base, all, needs });
       for (const line of describeImpact(judged.impact)) console.log(redactText(line));
+      for (const line of describeSbiSource(judged.source)) console.log(redactText(line));
       for (const c of [...judged.checks, ...judged.security.checks.filter(c => c.required)]) console.log(redactText(`${c.id}: ${c.status}${c.reason ? ` (${c.reason})` : ''}`));
       for (const [job, value] of Object.entries(needs)) console.log(`job ${job}: ${value.result}`);
       for (const line of describeJudge({ needs, ...judged })) console.log(redactText(line));

@@ -4,8 +4,9 @@ import { json, readJson } from './io.mjs';
 import { digest, toolFingerprint, workspaceIntegrity, workspaceFingerprint, sourceIntegrity, assertWorktreeOwner } from './workspace.mjs';
 import { check } from './check.mjs';
 import { healthMetrics } from './health-metrics.mjs';
+import { runIdSchema } from './schemas.mjs';
 export function runPaths(root, runId) {
-  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{1,150}$/.test(runId)) throw new Error('Invalid run ID');
+  if (!runIdSchema.safeParse(runId).success) throw new Error('Invalid run ID');
   const directory = join(root, '.harness/runs', runId);
   return { directory, workspace: join(directory, 'workspace'), summary: join(directory, 'summary.json'),
     ledger: join(root, '.harness/state/human', `${runId}.json`) };
