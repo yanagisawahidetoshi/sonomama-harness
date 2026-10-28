@@ -8,7 +8,11 @@ const show = value => { const text = JSON.stringify(value); return text.length >
 const pointer = path => path.reduce((text, segment) => segment.startsWith('[') ? `${text}${segment}` : text ? `${text}.${segment}` : segment, '');
 // A key directly under a properties map is a property name, never an OpenAPI keyword.
 const keyword = path => path.length && path.at(-2) !== 'properties' ? path.at(-1) : null;
-const parameterKey = p => `[${p?.in}:${p?.name}]`;
+// A $ref parameter carries no in/name of its own, so its reference is its identity.
+const parameterKey = p => typeof p?.$ref === 'string' ? `[$ref:${p.$ref}]` : `[${p?.in}:${p?.name}]`;
+// Only a local reference is resolved; one that cannot be read in the document counts as required.
+const resolve = (document, $ref) => $ref.startsWith('#/') ? $ref.slice(2).split('/').map(s => s.replaceAll('~1', '/').replaceAll('~0', '~')).reduce((node, s) => node?.[s], document) : undefined;
+const isRequired = (document, p) => { if (typeof p?.$ref !== 'string') return p?.required; const target = resolve(document, p.$ref); return target === undefined || target.required; };
 
 export function diffContract(before, after) {
   const breaking = [], nonBreaking = [];
@@ -34,7 +38,7 @@ export function diffContract(before, after) {
     if (key === 'security') { breaking.push(`認証要件を変更: ${at}`); return; }
     if (key === 'parameters' && Array.isArray(a) && Array.isArray(b)) {
       for (const p of a) { const q = b.find(x => parameterKey(x) === parameterKey(p)); walk(p, q, [...path, parameterKey(p)]); }
-      for (const q of b) if (!a.some(p => parameterKey(p) === parameterKey(q))) (q?.required ? breaking : nonBreaking).push(`${q?.required ? '必須parameterを追加' : '追加'}: ${pointer([...path, parameterKey(q)])}`);
+      for (const q of b) if (!a.some(p => parameterKey(p) === parameterKey(q))) { const required = isRequired(after, q); (required ? breaking : nonBreaking).push(`${required ? '必須parameterを追加' : '追加'}: ${pointer([...path, parameterKey(q)])}`); }
       return;
     }
     if (Array.isArray(a) && Array.isArray(b)) {

@@ -16,7 +16,7 @@ const mockGitHub = githubMock({ issue });
 const noConstraints = { minLength: null, maxLength: null, minimum: null, maximum: null, pattern: null };
 const prop = (name, overrides = {}) => ({ name, type: 'string', format: null, enum: null, ref: null, items: null, required: true, nullable: false, description: `${name}の値`, example: null, constraints: noConstraints, ...overrides });
 const response = (status, component = null, array = false) => ({ status, description: `HTTP ${status}`, body: component ? { component, array } : null });
-const endpoint = overrides => ({ method: 'GET', path: '/api/v1/me/profile', tags: ['profile'], change: 'add', authN: 'cognito-jwt', authZ: { roles: [], rule: 'JWTのsubに対応する本人のプロフィールだけを扱う' },
+const endpoint = overrides => ({ method: 'GET', path: '/api/v1/me/profile', tags: ['profile'], change: 'add', authN: 'bearer-jwt', authZ: { roles: [], rule: 'JWTのsubに対応する本人のプロフィールだけを扱う' },
   pii: true, logCaution: ['displayNameをログへ出さない'], parameters: [], requestBody: null, ...overrides });
 // Every shape the issue asks Swagger UI to display: parameters, a request body, an authenticated endpoint, nullable, enum and an array response.
 // authN uses the value the API Schema Planner accepts today; the assertions below do not depend on the authentication provider.

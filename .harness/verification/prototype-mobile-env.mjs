@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { hasCommand } from './lib/commands.mjs';
 // Trusted acceptance for SBI-PROTOTYPE-MOBILE-ENV (#25). Reads the worktree only; the prototype-mobile verifier runs the commands.
 const root = process.argv[2];
 const app = join(root, 'prototypes/mobile');
@@ -21,7 +22,7 @@ const pkg = () => JSON.parse(read('prototypes/mobile/package.json'));
 const deps = () => ({ ...pkg().dependencies, ...pkg().devDependencies });
 const hasDeps = names => { const all = deps(); for (const name of names) assert.ok(all[name], `missing dependency ${name}`); };
 const forbids = (pattern, label) => { for (const name of Object.keys(deps())) assert.doesNotMatch(name, pattern, `${label}: ${name}`); };
-const commands = () => JSON.parse(read('.harness/config/harness.json')).verifiers.find(v => v.id === 'prototype-mobile').commands.map(c => c.join(' '));
+const commands = () => JSON.parse(read('.harness/config/harness.json')).verifiers.find(v => v.id === 'prototype-mobile').commands;
 try {
   const scenarios = [
     ['PMOB-AC-1', 'Given prototypes/mobile, When reading it, Then the prototype package exists', () => {
@@ -74,15 +75,15 @@ try {
       assert.ok(existsSync(join(app, 'biome.json')), 'biome.json');
       for (const name of ['lint', 'format:check', 'check']) assert.match(pkg().scripts[name], /\bbiome\b/, name);
       forbids(/eslint|prettier/i, 'ESLint/Prettier must not be installed');
-      assert.ok(commands().some(c => c.includes('run check')));
+      assert.ok(hasCommand(commands(), ['pnpm', 'run', 'check']));
     }],
     ['PMOB-AC-9', 'Given the Harness, When verifying the prototype, Then typecheck is registered', () => {
       assert.match(pkg().scripts.typecheck, /\btsc\b/);
-      assert.ok(commands().some(c => c.includes('run typecheck')));
+      assert.ok(hasCommand(commands(), ['pnpm', 'run', 'typecheck']));
     }],
     ['PMOB-AC-10', 'Given the Harness, When verifying the prototype, Then Expo Doctor is registered', () => {
       assert.match(pkg().scripts.doctor, /expo-doctor/);
-      assert.ok(commands().some(c => c.includes('run doctor')));
+      assert.ok(hasCommand(commands(), ['pnpm', 'run', 'doctor']));
     }],
     ['PMOB-AC-11', 'Given the source, When listing stories, Then at least one React Native component has a story', () => {
       const stories = code().filter(p => p.endsWith('.stories.tsx'));
