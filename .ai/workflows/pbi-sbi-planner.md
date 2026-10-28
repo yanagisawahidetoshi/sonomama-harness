@@ -2,8 +2,8 @@
 
 1. PBIをGitHub Issueに書く。背景・目的・受け入れ要件・やらないことがあれば分割精度が上がる。
 2. `gh auth status`で対象リポジトリへissues: writeできることを確認する。
-3. `pnpm planner:sbi https://github.com/<owner>/<repo>/issues/<number> --provider claude`を実行する。
-   providerはcodex / claude。CLIはインストール・ログイン済みでPATHから起動できることが必要。
+3. `pnpm planner:sbi https://github.com/<owner>/<repo>/issues/<number>`を実行する。
+   providerの既定はclaude。Codexだけ使える場合は`--provider codex`を付ける。CLIはインストール・ログイン済みでPATHから起動できることが必要。
 4. SBI Quality JudgeがFAILならIssueは作成されず、exit 1で修正理由が表示される。PBIを直して再実行する。
 5. PASSなら依存順にSBI Issueを作成し、`sbi`と`needs-review`を付与する。元PBIに`## Generated SBI`一覧をコメントする。
 6. 人間がSBI Issueをレビューする。見るのは分割粒度、受け入れ要件、Gherkin、依存関係、Security影響、検証方法。

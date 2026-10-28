@@ -11,7 +11,7 @@ import { judge } from './completion-judge.mjs';
 import { humanGate, classifyEscalation } from './escalation.mjs';
 import { assessRisk } from './risk-classifier.mjs';
 import { mergeDecision, validHumanApprovals } from './merge-policy.mjs';
-import { authenticatedRecords } from './human-approvals.mjs';
+import { authenticatedRecords, recordDecision } from './human-approvals.mjs';
 import { classifySecurity, verifySecurity, combineSecurity, securityPassed } from './security-enforcement.mjs';
 import { withEvidenceProtection, redact, redactText, hasSecret, assertSafeInput, isSecretPath } from './evidence-protection.mjs';
 import { githubPrCli, githubState, pullRequestBody } from './github-pr.mjs';
@@ -240,7 +240,7 @@ async function executeLoop({ root, summary, inputs, quiet, agent = runAgent, rev
   }
   return escalate(`iteration limit (${config.maxIterations}) reached`, 'ITERATION_LIMIT');
 }
-async function runProtected({ root, provider, sbiPath, quiet = false, agent = runAgent, reviewer = review, semanticReviewer, full = false }) {
+async function runProtected({ root, provider, sbiPath, quiet = false, agent = runAgent, reviewer = review, semanticReviewer, full = false, publish = false }) {
   root = await realpath(root);
   const { config, rules, sbi, riskPolicy, securityPolicy, humanGates, securityDocuments, lanePolicy } = await check(root, sbiPath);
   assertSafeInput({config,rules,sbi,riskPolicy,securityPolicy,humanGates,securityDocuments,lanePolicy});
@@ -252,7 +252,8 @@ async function runProtected({ root, provider, sbiPath, quiet = false, agent = ru
   const baselineSha = await prepareWorkspace(root, workspace, sbi);
   const inputs = { config, rules, sbi, riskPolicy, securityPolicy, humanGates, securityDocuments, lanePolicy, toolFingerprint: await toolFingerprint(root), skill: await readFile(join(root, '.harness/skills/implement.md'), 'utf8') };
   const summary = { id, runDir: `.harness/runs/${id}`, sbi: sbi.id, sbiPath: sbiPath || config.sbi, provider,
-    fullVerification:full, status: 'PENDING', executionStatus: 'PENDING', reason: null, consecutiveFailures: 0, iterations: [], events: [],
+    // harness:run opens the PR itself once execution is DONE; the fake provider (harness:demo) never publishes.
+    publish: publish === true && provider !== 'fake', fullVerification:full, status: 'PENDING', executionStatus: 'PENDING', reason: null, consecutiveFailures: 0, iterations: [], events: [],
     baselineSha, headSha: baselineSha, workspaceDigest: await workspaceFingerprint(workspace), inputsDigest: digest(inputs), gate: { required: false, state: 'NOT_REQUIRED' },
     merge: { state: 'NOT_ASSESSED', autoMergeEligible: false }, startedAt: new Date().toISOString() };
   await json(join(directory, 'inputs.json'), inputs);
@@ -331,9 +332,22 @@ async function publishProtected({ root, runId, quiet = false, github = githubPrC
   return resumeProtected({ root, runId, quiet, github });
 }
 
+// Only a run started to publish, whose execution is DONE and which has no PR yet, is pushed. A FAIL or a waiting gate never opens a PR.
+async function continueToPullRequest(options, summary) {
+  if (!summary.publish || summary.executionStatus !== 'DONE' || summary.pullRequest) return summary;
+  return publishProtected({ root: options.root, runId: summary.id, quiet: options.quiet, github: options.github });
+}
 export async function runHarness(options) {
   const root = await realpath(options.root);
-  return withEvidenceProtection(root, () => runProtected({...options,root}), { extensions: options.redactionExtensions || [] });
+  return withEvidenceProtection(root, async () => continueToPullRequest({...options,root}, await runProtected({...options,root})), { extensions: options.redactionExtensions || [] });
+}
+// harness:approve records the decision through the trusted identity adapter, then continues the run as harness:resume and harness:pr would.
+export async function approveRun(options) {
+  const root = await realpath(options.root);
+  return withEvidenceProtection(root, async () => {
+    await recordDecision({ root, runId: options.runId, purpose: options.purpose, decision: options.decision, identityProvider: options.identityProvider });
+    return continueToPullRequest({...options,root}, await resumeProtected({...options,root}));
+  }, { extensions: options.redactionExtensions || [] });
 }
 export async function openPullRequest(options) {
   const root = await realpath(options.root);
@@ -341,7 +355,7 @@ export async function openPullRequest(options) {
 }
 export async function resumeRun(options) {
   const root = await realpath(options.root);
-  return withEvidenceProtection(root, () => resumeProtected({...options,root}), { extensions: options.redactionExtensions || [] });
+  return withEvidenceProtection(root, async () => continueToPullRequest({...options,root}, await resumeProtected({...options,root})), { extensions: options.redactionExtensions || [] });
 }
 
 // Explicit cleanup keeps evidence and the reachable run ref. Dirty worktrees are never forced away.

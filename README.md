@@ -3,7 +3,7 @@
 SBI単位で「実装 → 検証 → 修正」を回し、Security・Risk・人間の承認からマージ可否まで判定するローカル基盤。
 
 Rails API + Expo + React adminの将来構成に向けた、ローカルLoop Engineering基盤。
-アプリ本体はplaceholder。クラウドFactory、CI/CD、PR作成、実際のmergeは実装しない。
+アプリ本体はplaceholder。クラウドFactory、CI/CD、実際のmergeは実装しない。
 このリポジトリはHarness専用。既存の動画PoC・参照ファイル・実行履歴・秘密情報は含めない。
 
 ## 実行
@@ -249,21 +249,19 @@ Design Approval未充足（未承認・撤回後）ならMerge JudgeはWAITING_F
 新しいcommitや入力変更で失効した承認は再利用しない。
 
 ```sh
-# ゲート待ちのrunに、人間が着手を承認
+# ゲート待ちのrunに、人間が着手を承認する。harness:runが表示したコマンドをそのまま実行する。
+# 承認を記録したあと、Harnessがrunを再開し、ローカル検証がPASSすればPRを作成する。
 pnpm harness:approve --run RUN_ID --phase gate
-pnpm harness:resume --run RUN_ID
 
-# 実装DONE後、人間が現在の差分をレビューして承認
-pnpm harness:approve --run RUN_ID --phase merge
-pnpm harness:resume --run RUN_ID
-
-# 承認の取り消し・修正要求
-pnpm harness:approve --run RUN_ID --phase merge --decision revoke
-pnpm harness:approve --run RUN_ID --phase merge --decision request-changes
-pnpm harness:resume --run RUN_ID
+# 着手前の修正要求・取り消し
+pnpm harness:approve --run RUN_ID --phase gate --decision request-changes
 ```
 
-`pnpm harness:pr --run RUN_ID`でPRを作ったrun（GitHub PR mode）では、実装後の承認はGitHub Reviewで判定し、`--phase merge`は使わない。
+`harness:run`は、ローカル検証がPASSしてexecutionStatus=DONEになると、tested SHAをpushしてPRを作成する（GitHub PR mode）。
+FAILやゲート待ちのrunではPRを作成しない。fake provider（`harness:demo`）はPRを作成しない。
+GitHub PR modeでは、実装後の承認はGitHub Reviewで判定し、`--phase merge`は使わない。
+`harness:resume` / `harness:pr`は障害復旧・Harness保守用に残している。通常の操作では使わない。
+PRを作らないLocal mode（`--provider fake`など）では、`harness:approve --run RUN_ID --phase merge`で実装後の承認を記録する。
 base branchの先頭がrunのbaselineのままであること、tested SHAとPR HEADの一致、必須CIのPASS、CHANGES_REQUESTEDがないことも条件にする。Approveはwrite以上の権限を持つ人のものだけを数える。手順は[.ai/workflows/pull-request.md](.ai/workflows/pull-request.md)。
 
 実装前承認は1人、実装後はRisk別の人数を要求する。承認待ちは連続失敗に数えない。
@@ -351,13 +349,12 @@ Reviewer名・prompt・agent応答・秘密値もMetricsに含めず、他のEvi
 ## provider切り替え
 
 ```sh
-pnpm harness:run --provider fake
-pnpm harness:run --provider codex
-pnpm harness:run --provider claude
-pnpm harness:run --provider fake --sbi .harness/state/sample-sbi.json
+pnpm harness:run                    # Claude（既定）
+pnpm harness:run --provider codex   # Codexだけ使える場合
+pnpm harness:run --provider fake --sbi .harness/state/sample-sbi.json   # Harness自己テスト用。PRは作らない
 ```
 
-既定値はharness.jsonのprovider。demoは常にfake。
+既定値はharness.jsonのprovider（claude）。demoは常にfake。provider自動検出はしない。
 Codex CLI / Claude Codeはインストール・ログイン済みでPATHから起動できることが必要。
 実際のモデル通信を検証済みなのはfakeのみ。実CLIは模擬プロセスでプロトコルを確認している。
 
@@ -374,7 +371,8 @@ CLIの仕様は[Codex公式資料](https://developers.openai.com/codex/cli/refer
 GitHub IssueのPBIをBDDベースのSBIへ分割し、レビュー待ちのSBI Issueとして登録する。
 
 ```sh
-pnpm planner:sbi https://github.com/<owner>/<repo>/issues/<number> --provider claude
+pnpm planner:sbi https://github.com/<owner>/<repo>/issues/<number>                    # Claude（既定）
+pnpm planner:sbi https://github.com/<owner>/<repo>/issues/<number> --provider codex   # Codexだけ使える場合
 ```
 
 ```text

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "provider": "fake",
+  "provider": "claude",
   "sbi": ".harness/state/sample-sbi.json",
   "maxConsecutiveFailures": 3,
   "maxIterations": 5,

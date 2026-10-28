@@ -5,11 +5,11 @@ Harnessが出すのは`MERGE_ALLOWED`まで。mergeは人間がGitHubで行う�
 
 ```text
 harness:run → executionStatus=DONE
-  → pnpm harness:pr --run RUN_ID
+  → Harnessが続けてPRを作成（`harness:pr --run RUN_ID`は障害復旧用。ゲート待ちのrunは`harness:approve`の後に作成）
       origin/main の先頭が run baseline と一致するか確認 → 差分とPR本文の秘密値を検査
       → tested SHAを harness/<run-id> にpush（force pushしない）→ PRを作成（同じbase向けの既存open PRがあれば再利用）
   → GitHub上で CI と Review
-  → pnpm harness:resume --run RUN_ID（実行のたびにGitHubから取り直して判定）
+  → pnpm harness:resume --run RUN_ID（保守用。実行のたびにGitHubから取り直して判定）
       PR open かつ base = run baseline かつ tested SHA = PR HEAD SHA かつ 必須CI PASS
       かつ CHANGES_REQUESTEDなし かつ Riskごとの人数のApproveあり → MERGE_ALLOWED
 ```
@@ -18,7 +18,7 @@ harness:run → executionStatus=DONE
 
 | モード | 実装後Merge Approvalの正本 |
 | --- | --- |
-| GitHub PR mode（`harness:pr`を実行したrun） | GitHub Review。`harness:approve --phase merge`は拒否する |
+| GitHub PR mode（PRを作成したrun） | GitHub Review。`harness:approve --phase merge`は拒否する |
 | Local mode（PRを作っていないrun、demo） | ローカル署名台帳（`harness:approve --phase merge`） |
 
 2つの方式を同時には要求しない。API Schema Approval、Design Approval、実装前Gateは、どちらのモードでもローカル署名台帳を使う。
@@ -41,7 +41,7 @@ harness:run → executionStatus=DONE
   - COMMENTEDは判定を変えない。botとPR作成者は数えない。
   - GitHubと同じく、リポジトリのwrite以上の権限（write / maintain / admin）を持つ人のReviewだけを数える。read / triageの人のAPPROVEDもCHANGES_REQUESTEDも判定に使わない。
     権限を読めなかった人のAPPROVEDは数えず、CHANGES_REQUESTEDはブロックとして扱う。読んだ権限は`github-state.json`の`reviews.permissions`に残す。
-- **人数**: LEVEL 1は0人、LEVEL 2は1人、LEVEL 3は異なる2人以上。PR作成者（`harness:pr`を実行した`gh`のアカウント）以外がReviewする。
+- **人数**: LEVEL 1は0人、LEVEL 2は1人、LEVEL 3は異なる2人以上。PR作成者（Harnessを実行した`gh`のアカウント）以外がReviewする。
 - GitHubを読めなければBLOCKED（`github_state_unavailable`）とする。runはESCALATEDにしないので、`harness:resume`で再判定できる。
 
 `github-state.json`は、判定に使ったGitHubの状態の要約（PR・CI・Review）。正本はGitHub。APIのレスポンスそのものは保存しない。
