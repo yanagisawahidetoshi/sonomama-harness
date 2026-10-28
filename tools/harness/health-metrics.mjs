@@ -18,7 +18,7 @@ export function healthMetrics(summary) {
   const security = summary.securityAssessment ?? null;
   const merge = summary.merge ?? {};
   // Only the code is observation data. The human-facing reason text stays in escalation.json and may carry PII.
-  const escalation = summary.executionStatus === 'ESCALATED' ? { code: summary.escalation?.code ?? 'UNKNOWN' } : null;
+  const escalation = summary.status === 'ESCALATED' || summary.executionStatus === 'ESCALATED' ? { code: summary.escalation?.code ?? 'UNKNOWN' } : null;
   return {
     version: healthMetricsVersion,
     runId: summary.id, sbiId: summary.sbi ?? null, lane: summary.lane?.name ?? null, provider: summary.provider ?? null,

@@ -44,7 +44,17 @@ source Issueを持たない手書きの `sbi-*.json`（`sbi-admin-env.json` な�
 
 ## api-contract
 
-`packages/api-schema/openapi.yaml` がOpenAPI 3.1として読めること、base branchのcontractに対して破壊的変更（endpoint・必須の解除・enum値の削除など）がないことを検査する。破壊的変更はFAILにする。今は意図した破壊的変更を通す手段がない。openapi.yamlが無い間はplaceholderとしてSKIPする。Rails実装やFrontendとの整合はendpointができてから追加する。
+`packages/api-schema/openapi.yaml` がOpenAPI 3.1として読めること、base branchのcontractに対して破壊的変更（endpoint・必須の解除・enum値の削除など）がないことを検査する。破壊的変更はFAILにする。今は意図した破壊的変更を通す手段がない。openapi.yamlが無い間はplaceholderとしてSKIPする。
+
+Railsのrouteも照合する。Railsを起動せず、`apps/api/config/routes.manifest.json`（`bin/rails contract:routes` で生成し、RSpecが鮮度を検査する）を読む。
+
+- 契約に無いmethod + pathのroute、任意segment付きのroute、methodを限定しないrouteはFAIL。path parameterは名前ではなく位置で比べ、`(.:format)` は無視する。
+- `rails/` 等のframework controller（`/up` など）は対象外。
+- 契約にあってRailsに無いoperationはFAILにせず `UNIMPLEMENTED` として出す。契約が実装SBIより先に承認されるため。
+- api-onlyの変更ではapi-contractが選ばれないので、rails Verifierの最初のcommand（`api-contract.mjs --routes`）でも同じ照合をする。openapi.yamlが無ければ業務routeはすべてFAIL。
+- `resources` が作るPUTも契約に無ければFAIL。契約にPUTを書くか、routeを `patch` で明示する。
+
+未実装: request / response bodyの照合（Rails・Admin / Mobileとも）。照合方法とライブラリは未決定。
 
 ## ローカルで同じ判定を見る
 

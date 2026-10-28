@@ -21,7 +21,7 @@ pnpm api:mock <Issue URL>
 
 ## 認証
 
-`security: [cognitoJwt]`のendpointは、`Authorization`ヘッダにBearer形式の任意の値（例: 値を`mock-token`にする）を付ければ2xxを返す。付けなければ401と共通の`Error`を返す。JWTは検証しないので、実際のCognitoのtokenやCredentialは使わない。
+`security: [bearerAuth]`のendpointは、`Authorization`ヘッダにBearer形式の任意の値（例: 値を`mock-token`にする）を付ければ2xxを返す。付けなければ401と共通の`Error`を返す。JWTは検証しないので、実際の認証ProviderのtokenやCredentialは使わない。
 
 ## 起動を拒否する条件
 
@@ -35,8 +35,8 @@ pnpm api:mock <Issue URL>
 - 同じPCでのみ起動できる（MVP）: 生成記録と承認台帳はGit管理外のため、Proposalを生成・承認したPCでしか承認を判定できない。恒久仕様にはせず、認証済みApproval Adapterへ移すときに別PCへ対応する。
 - SSOTと一致するのは最後に反映した承認済みProposalだけ。Proposalは既存OpenAPIへマージした全体を出すので、古いIssueのURLでは起動できない。
 - Prismは`@stoplight/prism-cli@5.14.2`に固定している。5.15以降はNode 24以上が必要なため。
-- proxy modeは使わない。Rails API・Cognito・本番APIへは接続しない。
+- proxy modeは使わない。Rails API・認証Provider・本番APIへは接続しない。
 
 ## やらないこと
 
-Frontend API clientの生成、Statefulな業務ロジックの再現、Cognitoの実JWT検証、別PCでの承認判定。
+Frontend API clientの生成、Statefulな業務ロジックの再現、認証Providerの実JWT検証、別PCでの承認判定。
