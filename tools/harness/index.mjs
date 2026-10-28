@@ -252,8 +252,9 @@ async function runProtected({ root, provider, sbiPath, quiet = false, agent = ru
   const baselineSha = await prepareWorkspace(root, workspace, sbi);
   const inputs = { config, rules, sbi, riskPolicy, securityPolicy, humanGates, securityDocuments, lanePolicy, toolFingerprint: await toolFingerprint(root), skill: await readFile(join(root, '.harness/skills/implement.md'), 'utf8') };
   const summary = { id, runDir: `.harness/runs/${id}`, sbi: sbi.id, sbiPath: sbiPath || config.sbi, provider,
-    // harness:run opens the PR itself once execution is DONE; the fake provider (harness:demo) never publishes.
-    publish: publish === true && provider !== 'fake', fullVerification:full, status: 'PENDING', executionStatus: 'PENDING', reason: null, consecutiveFailures: 0, iterations: [], events: [],
+    // harness:run opens the PR itself once execution is DONE, but only for an SBI it was given. The fake provider (harness:demo)
+    // and the configured sample SBI never publish.
+    publish: publish === true && provider !== 'fake' && Boolean(sbiPath), fullVerification:full, status: 'PENDING', executionStatus: 'PENDING', reason: null, consecutiveFailures: 0, iterations: [], events: [],
     baselineSha, headSha: baselineSha, workspaceDigest: await workspaceFingerprint(workspace), inputsDigest: digest(inputs), gate: { required: false, state: 'NOT_REQUIRED' },
     merge: { state: 'NOT_ASSESSED', autoMergeEligible: false }, startedAt: new Date().toISOString() };
   await json(join(directory, 'inputs.json'), inputs);
@@ -335,7 +336,8 @@ async function publishProtected({ root, runId, quiet = false, github = githubPrC
 // Only a run started to publish, whose execution is DONE and which has no PR yet, is pushed. A FAIL or a waiting gate never opens a PR.
 async function continueToPullRequest(options, summary) {
   if (!summary.publish || summary.executionStatus !== 'DONE' || summary.pullRequest) return summary;
-  return publishProtected({ root: options.root, runId: summary.id, quiet: options.quiet, github: options.github });
+  try { return await publishProtected({ root: options.root, runId: summary.id, quiet: options.quiet, github: options.github }); }
+  catch (error) { error.message = `run ${summary.id}: PR not opened: ${error.message}（復旧: pnpm harness:pr --run ${summary.id}）`; throw error; }
 }
 export async function runHarness(options) {
   const root = await realpath(options.root);

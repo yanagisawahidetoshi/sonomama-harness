@@ -18,7 +18,8 @@ const root = fileURLToPath(new URL('../../', import.meta.url));
 const usage = `Usage:
 User-facing:
   pnpm planner:sbi PBI_URL [--provider codex]        PBIをSBI Issueへ分割する（既定はClaude）
-  pnpm harness:run [--provider codex] [--full]       実装・ローカル検証・PR作成まで進める（既定はClaude）
+  pnpm harness:run --sbi PATH [--provider codex] [--full]
+                                                     実装・ローカル検証・PR作成まで進める（既定はClaude）
   pnpm harness:approve --run RUN_ID --phase gate|design [--decision approve|revoke|request-changes]
                                                      Human Gateを承認し、そのままrunを再開してPRを作成する
 API design (API契約を設計するときだけ):
@@ -28,8 +29,7 @@ Internal/Maintenance (CI・障害復旧・Harness保守用):
   pnpm harness:resume --run RUN_ID | pnpm harness:pr --run RUN_ID | pnpm harness:approve --run RUN_ID --phase merge
   pnpm harness:impact --base REF|--all | pnpm harness:verify --verifier ID --base REF|--all | pnpm harness:judge --base REF|--all
   pnpm harness:check | pnpm harness:test | pnpm harness:demo [--full] | pnpm harness:push-gate
-  pnpm harness:export --run RUN_ID [--out PATH] | pnpm harness:cleanup --run RUN_ID | pnpm planner:api-schema-status ISSUE_URL
-  harness:run --sbi PATH はHarness自己テスト・fixture用`;
+  pnpm harness:export --run RUN_ID [--out PATH] | pnpm harness:cleanup --run RUN_ID | pnpm planner:api-schema-status ISSUE_URL`;
 const printPullRequest = run => { if (run.pullRequest) console.log(`Pull request: ${run.pullRequest.url} (tested SHA ${run.headSha})`); };
 async function printVerifier({ root: workspace = root, base, all, id }) {
   const { impact, result, passed } = await runVerifier({ root: workspace, base, all, id });

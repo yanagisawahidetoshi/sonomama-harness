@@ -258,7 +258,7 @@ pnpm harness:approve --run RUN_ID --phase gate --decision request-changes
 ```
 
 `harness:run`は、ローカル検証がPASSしてexecutionStatus=DONEになると、tested SHAをpushしてPRを作成する（GitHub PR mode）。
-FAILやゲート待ちのrunではPRを作成しない。fake provider（`harness:demo`）はPRを作成しない。
+FAILやゲート待ちのrunではPRを作成しない。fake provider（`harness:demo`）と、SBIを指定しないrun（既定のsample SBI）もPRを作成しない。
 GitHub PR modeでは、実装後の承認はGitHub Reviewで判定し、`--phase merge`は使わない。
 `harness:resume` / `harness:pr`は障害復旧・Harness保守用に残している。通常の操作では使わない。
 PRを作らないLocal mode（`--provider fake`など）では、`harness:approve --run RUN_ID --phase merge`で実装後の承認を記録する。
@@ -349,8 +349,8 @@ Reviewer名・prompt・agent応答・秘密値もMetricsに含めず、他のEvi
 ## provider切り替え
 
 ```sh
-pnpm harness:run                    # Claude（既定）
-pnpm harness:run --provider codex   # Codexだけ使える場合
+pnpm harness:run --sbi PATH                    # Claude（既定）
+pnpm harness:run --sbi PATH --provider codex   # Codexだけ使える場合
 pnpm harness:run --provider fake --sbi .harness/state/sample-sbi.json   # Harness自己テスト用。PRは作らない
 ```
 
@@ -473,7 +473,7 @@ SBI.securityImpactで宣言し、既知の接続先はsecurityPatternsにも追�
 packagesへの変更を含むSBIも常にProduction。本番共有packageの検証を試作profileで省略できない。
 
 試作を本番へ移す場合は、新しいProduction SBIに`promotion: {"source":"prototypes/web"}`を設定する。
-Design Approval待ちで実装を止め、`pnpm harness:approve --run RUN_ID --phase design`で人間が承認してからresumeする。
+Design Approval待ちで実装を止め、`pnpm harness:approve --run RUN_ID --phase design`で人間が承認すると、Harnessがrunを再開する。
 Design Approvalは`design-approval`という独立した署名済みstate。待機状態は`WAITING_FOR_DESIGN_APPROVAL`。
 実装前Human Gateが不要なら、Design Approvalの待機・承認・拒否・撤回の間もgate.stateは`NOT_REQUIRED`を保つ。
 証跡はdesign-approval.jsonとhuman-gate.jsonで分離する。SBIやSHAを変えたら取り直す。
