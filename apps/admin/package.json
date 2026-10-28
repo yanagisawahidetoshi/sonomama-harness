@@ -12,7 +12,9 @@
     "format": "biome format --write .",
     "format:check": "biome format .",
     "check": "biome check .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "check:architecture": "node scripts/check-architecture.mjs src",
+    "test:architecture": "node --test \"scripts/*.test.mjs\""
   },
   "dependencies": {
     "@hookform/resolvers": "^6.0.1",
