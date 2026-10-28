@@ -17,6 +17,8 @@
 
 Expo Router は `src/app` の下のファイルをすべて route として扱う。route 以外のファイル（Provider、component、hook）を `src/app` に置かない。
 
+`*.d.ts` はどの層にも属さない非layerファイルで、層のコードから import できない。`src/` 直下にこれ以外のディレクトリやファイル（`src/lib` など）を置くと、その import は `unknown top-level layer` として architecture check が FAIL する。未分類の層を経由して features/A → features/B などの禁止依存を迂回させないため。
+
 ### 禁止する依存
 
 | 禁止 | 理由 |

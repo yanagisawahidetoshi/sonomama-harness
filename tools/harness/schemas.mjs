@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { states } from './state-machine.mjs';
+import { escalationCodes } from './escalation.mjs';
 const text = z.string().min(1);
 // implementation: feature work (Maestro against the mock API). validation: optional real API + Rails + DB E2E after every implementation SBI.
 // Human acceptance changes no code and runs no test, so it is a PBI Gate (pbiAcceptanceRecordSchema), never an SBI kind.
@@ -62,8 +64,9 @@ export const plannedSbiSchema = z.strictObject({
   id: text.max(20), kind: z.enum(sbiKinds), title: text.max(80), purpose: text.max(300),
   scope: z.strictObject({ included: z.array(line).max(8), excluded: z.array(line).max(8) }),
   acceptanceCriteria: z.array(z.strictObject({ id: text.max(20), description: z.string().max(200) })).max(12),
-  scenarios: z.array(z.strictObject({ name: line, given: z.array(line).max(8), when: z.array(line).max(8), then: z.array(line).max(8), acceptanceIds: z.array(text.max(20)).max(12) })).max(12),
+  scenarios: z.array(z.strictObject({ name: line, given: z.array(line).max(8), when: z.array(line).max(8), then: z.array(line).max(8), acceptanceIds: z.array(text.max(20)).max(12), test: z.string().max(120) })).max(12),
   dependsOn: z.array(text.max(20)).max(12), changeAreas: z.array(z.string().max(80)).max(12),
+  layers: z.array(z.string().max(80)).max(8), estimatedFiles: z.number().int().min(0).max(200), oversizeReason: z.string().max(300).nullable(),
   riskCandidate: z.enum(['L1', 'L2', 'L3']), securityImpact: z.array(z.string().max(40)).max(12),
   verification: z.strictObject({ applicationTest: z.string().max(120), acceptance: z.string().max(120), e2e: z.string().max(120) }),
 });
@@ -75,8 +78,8 @@ export const planJsonSchema = object({
     id: { type: 'string' }, kind: { type: 'string', enum: [...sbiKinds] }, title: { type: 'string' }, purpose: { type: 'string' },
     scope: object({ included: strings, excluded: strings }),
     acceptanceCriteria: { type: 'array', items: object({ id: { type: 'string' }, description: { type: 'string' } }) },
-    scenarios: { type: 'array', items: object({ name: { type: 'string' }, given: strings, when: strings, then: strings, acceptanceIds: strings }) },
-    dependsOn: strings, changeAreas: strings,
+    scenarios: { type: 'array', items: object({ name: { type: 'string' }, given: strings, when: strings, then: strings, acceptanceIds: strings, test: { type: 'string' } }) },
+    dependsOn: strings, changeAreas: strings, layers: strings, estimatedFiles: { type: 'integer', minimum: 0 }, oversizeReason: { type: ['string', 'null'] },
     riskCandidate: { type: 'string', enum: ['L1', 'L2', 'L3'] }, securityImpact: strings,
     verification: object({ applicationTest: { type: 'string' }, acceptance: { type: 'string' }, e2e: { type: 'string' } }),
   }) },
@@ -199,4 +202,31 @@ export const lanePolicySchema = z.strictObject({
   securityPatterns: z.array(text).min(1),
   prototypeGates: z.tuple([z.literal('typecheck'),z.literal('lint'),z.literal('format'),z.literal('build'),z.literal('secret-scan')]),
   productionGates: z.array(text).min(1),
+});
+// summary.json is the signed authority for resume and merge assessment. Nested evidence stays open; the fields judges read are typed.
+const gitSha = z.string().regex(/^[0-9a-f]{40,64}$/);
+const sha256 = z.string().regex(/^[0-9a-f]{64}$/);
+const result = z.looseObject({ status: text }).nullable();
+export const runIterationSchema = z.strictObject({
+  iteration: z.number().int().positive(), agent: z.looseObject({ status: text }).nullable(), verification: z.looseObject({ status: text, checks: z.array(z.looseObject({ id: text, status: text })) }).nullable(),
+  security: result, securityVerification: z.looseObject({ status: text, requiredVerifiers: z.array(text) }).nullable(), gateApproved: z.boolean(),
+  review: result, semanticReview: z.looseObject({ enabled: z.boolean(), status: text }), completion: z.boolean(), headSha: gitSha.optional(), error: z.string().optional(),
+});
+export const runStateSchema = z.strictObject({
+  id: text, runDir: text, sbi: text, sbiPath: relativePath, provider: z.enum(['fake', 'codex', 'claude']), fullVerification: z.boolean(),
+  status: z.enum([...new Set(Object.values(states).flat())]), executionStatus: z.enum(states.execution), reason: z.string().nullable(),
+  consecutiveFailures: z.number().int().min(0), iterations: z.array(runIterationSchema),
+  events: z.array(z.strictObject({ status: text, phase: z.enum(['execution', 'implementation-gate', 'design-approval', 'merge', 'pull-request']), detail: z.string(), at: text })),
+  baselineSha: gitSha, headSha: gitSha, workspaceDigest: sha256, inputsDigest: sha256,
+  gate: z.looseObject({ required: z.boolean(), state: z.enum(states.gate) }),
+  designApproval: z.looseObject({ required: z.boolean(), state: z.enum(states.design), contextDigest: sha256 }).optional(),
+  merge: z.looseObject({ state: z.enum(states.merge), autoMergeEligible: z.boolean(),
+    failure: z.strictObject({ code: z.enum(escalationCodes), retryable: z.boolean(), detail: z.string() }).optional() }),
+  lane: z.looseObject({ name: z.enum(['prototype', 'production']) }).optional(),
+  securityAssessment: z.looseObject({ matchedRules: z.array(text), requiredVerifiers: z.array(text) }).optional(),
+  riskPreflight: z.looseObject({ level: z.union([z.literal(1), z.literal(2), z.literal(3)]) }).optional(),
+  risk: z.looseObject({ level: z.union([z.literal(1), z.literal(2), z.literal(3)]) }).optional(),
+  escalation: z.strictObject({ code: z.enum(escalationCodes), detail: z.string() }).optional(),
+  pullRequest: z.strictObject({ number: z.number().int().positive(), url: z.url(), branch: text, base: text, repository: text }).optional(),
+  startedAt: text, executionFinishedAt: text.optional(), cleanedAt: text.optional(),
 });

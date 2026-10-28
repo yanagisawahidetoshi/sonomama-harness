@@ -29,13 +29,15 @@ const target = (from, spec) => spec.startsWith('@/') ? join(src, spec.slice(2)) 
 const layer = path => {
   const [first, second] = relative(src, path).split('/');
   if (first === 'features') return { name: 'features', feature: second };
-  return { name: ['app', 'shared', 'providers'].includes(first) ? first : first === 'main.tsx' ? 'app' : 'other' };
+  // Only the four layers, main.tsx and explicit non-layer files are known; any other top-level path is an unknown layer.
+  return { name: ['app', 'shared', 'providers'].includes(first) ? first : first === 'main.tsx' ? 'app' : first === 'test' || /\.d(\.ts)?$/.test(first) ? 'non-layer' : 'unknown' };
 };
 const violations = () => code(src).flatMap(from => imports(from).flatMap(spec => {
   const to = target(from, spec);
   if (!to) return [];
   const a = layer(from), b = layer(to);
-  const bad = (a.name === 'features' && b.name === 'features' && a.feature !== b.feature)
+  const bad = (a.name !== 'non-layer' && (a.name === 'unknown' || ['unknown', 'non-layer'].includes(b.name)))
+    || (a.name === 'features' && b.name === 'features' && a.feature !== b.feature)
     || (a.name === 'features' && ['app', 'providers'].includes(b.name))
     || (a.name === 'shared' && ['features', 'app', 'providers'].includes(b.name))
     || (a.name === 'providers' && ['features', 'app'].includes(b.name));
@@ -124,7 +126,7 @@ try {
     }],
     ['ADMIN-ARCH-AC-20', 'Given forbidden dependencies in fixtures, When the checker runs, Then its tests expect a failure for each kind', () => {
       const test = read('apps/admin/scripts/check-architecture.test.mjs');
-      for (const kind of ['features/A → features/B', 'shared → features', 'shared → app']) assert.ok(test.includes(kind), kind);
+      for (const kind of ['features/A → features/B', 'shared → features', 'shared → app', 'unknown top-level layer', 'layered → non-layer file']) assert.ok(test.includes(kind), kind);
     }],
     ['ADMIN-ARCH-AC-21', 'Given the Harness, When verifying admin, Then typecheck / Biome / Vitest / build stay registered', () => {
       for (const script of ['typecheck', 'check', 'test', 'build']) assert.ok(hasCommand(commands(), ['pnpm', 'run', script]), script);

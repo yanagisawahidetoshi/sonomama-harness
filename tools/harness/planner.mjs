@@ -42,8 +42,11 @@ export function renderSbiBody(sbi, pbi, issueNumbers = {}) {
     '## Gherkin', '', '```gherkin', renderGherkin(sbi.scenarios), '```', '',
     '## 依存SBI', '', ...(sbi.dependsOn.length ? sbi.dependsOn.map(id => `- ${id}${issueNumbers[id] ? ` (#${issueNumbers[id]})` : ''}`) : ['なし']), '',
     '## 想定変更範囲', '', '```text', ...sbi.changeAreas, '```', '',
+    '## レイヤー', '', sbi.layers.length ? sbi.layers.join(', ') : 'なし', '',
+    '## 想定変更ファイル数', '', String(sbi.estimatedFiles), ...(sbi.oversizeReason?.trim() ? ['', `目安${limits.estimatedFiles}ファイルを超える理由: ${sbi.oversizeReason}`] : []), '',
     '## Risk / Security Impact', '', '```text', `Risk: ${sbi.riskCandidate} candidate`, `Security: ${security.length ? security.join(', ') : 'None'}`, '```', '',
     '## 検証方法', '', '```text', `Application Test: ${sbi.verification.applicationTest}`, `受け入れ要件: ${sbi.verification.acceptance}`, `E2E: ${sbi.verification.e2e}`, '```', '',
+    '## Gherkinと実テスト', '', ...sbi.scenarios.map(s => `- ${s.name} → ${s.test}`), '',
     '## 元PBI', '', `#${pbi.number} ${pbi.title}`, '',
     '_SONOMAMA Harness Plannerが生成。最終Risk判定はExecution Harnessが行う。`needs-review`の間はExecution Harnessの対象外。_', '',
   ].join('\n');

@@ -20,6 +20,8 @@ Issueの要件から、Frontend / Rails APIが実装前に合意するAPI契約�
   required / nullable / enum / format / constraintsで契約を明確にする。enumを空にしない。重複するschemaは1つのcomponentにまとめる。
 - pii: PIIを含むcomponent / endpointはtrue。logCautionにログへ出してはいけない項目を書く。
 - securityImpact: securityCategoriesから選ぶ。bearer-jwtならAPIAuthentication、Rails認可条件があればAPIAuthorization、PIIならPII。
+  既存endpointの認証を外す・認可条件（roles / rule）を削除・緩和する・認証付きendpointを削除する場合も、元の分類を宣言する。
+  Harnessが既存契約との差分から同じ分類を導出し、宣言が足りなければFAILする。
 - Secret / Credential（password、secret、api key、JWT等）をresponseで返さない。exampleに実値やトークンを書かない。
 
 含めないもの: Rails / Frontendの実装、クラス名、DB設計、コード生成の指示。
