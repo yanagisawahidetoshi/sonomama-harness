@@ -74,3 +74,4 @@ Provider固有gem・JWT / JWKS検証・認証middleware・認可は実装して�
 
 `.harness/config/harness.json` の `rails` verifierが、Docker Compose経由でimage build、db:prepare、RSpec、RuboCop、Brakeman、Bundler Audit、Zeitwerk checkを実行する。
 受け入れ条件は `.harness/verification/api-env.mjs` で検証する。
+
