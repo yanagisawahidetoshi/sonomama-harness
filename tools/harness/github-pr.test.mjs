@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, writeFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { reviewApprovals, ciStatus } from './github-pr.mjs';
@@ -10,7 +10,9 @@ import { githubMock } from './test-github.mjs';
 import { openPullRequest, resumeRun, runHarness as startRun, approveRun } from './index.mjs';
 import { recordDecision } from './human-approvals.mjs';
 import { git } from './workspace.mjs';
-import { readJson } from './io.mjs';
+import { exists, readJson } from './io.mjs';
+import { renderSbiBody } from './planner.mjs';
+import { runLinks, verifySbiSource } from './sbi-source.mjs';
 
 const head = 'a'.repeat(40), old = 'b'.repeat(40), base = 'd'.repeat(40);
 let nextId = 1;
@@ -206,14 +208,14 @@ describe('GitHub PR Adapter', () => {
   const mockGitHub = githubMock({ issue: { number: 1, title: 'unused', body: '', html_url: 'https://github.com/acme/app/issues/1', state: 'open', labels: [] },
     permissions: { alice: 'write', bob: 'write', 'harness-operator': 'admin' } });
   // origin points at github.com/acme/app as configured, while git itself pushes to a local bare repository.
-  async function withRemote(root, test, { publishBaseline = true } = {}) {
+  async function withRemote(root, test, { publishBaseline = true, state = {} } = {}) {
     const bare = await realpath(await mkdtemp(join(tmpdir(), 'harness-remote-')));
     try {
       await git(bare, ['init', '--bare', '--initial-branch=main']);
       await git(root, ['remote', 'add', 'origin', 'https://github.com/acme/app.git']);
       await git(root, ['config', `url.${bare}.insteadOf`, 'https://github.com/acme/app.git']);
       if (publishBaseline) await git(root, ['push', 'origin', 'HEAD:refs/heads/main']);
-      await mockGitHub({ bare }, github => test({ bare, github }));
+      await mockGitHub({ bare, ...state }, github => test({ bare, github }));
     } finally { await rm(bare, { recursive: true, force: true }); }
   }
   const remoteSha = async (bare, branch) => (await git(bare, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], true)).stdout.trim();
@@ -457,6 +459,90 @@ describe('GitHub PR Adapter', () => {
         assert.deepEqual((await github.state()).pulls, []);
       });
     }));
+  });
+
+  // pnpm harness:run SBI_URL: the Issue a human marked ready is the only SBI input; nobody writes SBI JSON.
+  describe('given a ready SBI Issue passed to harness:run as its URL', () => {
+    const issueUrl = 'https://github.com/acme/app/issues/7';
+    const pbi = { number: 3, url: 'https://github.com/acme/app/issues/3', title: '管理画面のホーム' };
+    const planned = (overrides = {}) => ({
+      id: 'SBI-001', title: 'ホームに見出しを表示する', purpose: '管理者がホームを開くと見出しが表示される。',
+      scope: { included: ['apps/admin ホーム画面'], excluded: [] },
+      acceptanceCriteria: [{ id: 'AC-1', description: 'ホームに見出しが表示される' }, { id: 'AC-2', description: '見出しの文言が仕様どおりである' }],
+      scenarios: [{ name: 'ホームを開く', given: ['管理者がログインしている'], when: ['ホームを開く'], then: ['見出しが表示される'], acceptanceIds: ['AC-1', 'AC-2'] }],
+      dependsOn: [], changeAreas: ['apps/admin'], riskCandidate: 'L2', securityImpact: [],
+      verification: { applicationTest: 'Vitest', acceptance: 'Trusted Acceptance', e2e: '不要' }, ...overrides });
+    const sbiIssue = (labels = ['sbi', 'ready'], sbi = planned()) => ({ number: 7, title: `${sbi.id} ${sbi.title}`, body: renderSbiBody(sbi, pbi), html_url: issueUrl, state: 'open', labels: labels.map(name => ({ name })) });
+    const home = 'apps/admin/src/home.txt';
+    const agent = (path = home) => async () => ({ files: [{ path, content: 'ホーム' }] });
+    // A human wrote and registered the Trusted Acceptance of Issue #7 before marking it ready. No SBI JSON exists for it.
+    const registered = async root => {
+      await writeFile(join(root, '.harness/verification/issue-7.mjs'), `import assert from "node:assert/strict";import{readFileSync}from"node:fs";import{join}from"node:path";assert.equal(readFileSync(join(process.argv[2],${JSON.stringify(home)}),"utf8"),"ホーム");console.log(JSON.stringify({acceptance:["AC-1","AC-2"]}));`);
+      await update(root, '.harness/config/harness.json', c => {
+        c.verifiers.push({ id: 'issue-7-acceptance', trust: 'acceptance', trustedScript: '.harness/verification/issue-7.mjs', directory: '.', planned: ['ホーム見出し'], commands: [], acceptanceIds: ['AC-1', 'AC-2'], sbiIssue: 7 });
+        // The admin placeholder has no installable app in the fixture; its verifier stands in with a passing command.
+        c.verifiers.find(v => v.id === 'admin').commands = [[process.execPath, '-e', 'process.exit(0)']];
+      });
+      await commitFixture(root);
+    };
+    const withIssue = (root, issue, test) => registered(root).then(() => withRemote(root, test, { state: { issue } }));
+    const start = (root, options = {}) => startRun({ root, quiet: true, provider: 'codex', agent: agent(), publish: true, issueUrl, ...options });
+    const runs = async root => (await readdir(join(root, '.harness/runs'))).filter(name => name !== '.gitkeep');
+
+    it('when the run passes then the PR carries the Issue snapshot and Run trailers that the CI SBI source check accepts', () => fixture(root => withIssue(root, sbiIssue(), async ({ github }) => {
+      const run = await start(root);
+      assert.equal(run.executionStatus, 'DONE');
+      assert.deepEqual(run.sbiIssue, { repo: 'acme/app', number: 7, url: issueUrl });
+      const [pull] = (await github.state()).pulls;
+      assert.equal(pull.head.sha, run.headSha);
+      assert.ok(pull.body.includes(issueUrl));
+      const workspace = join(root, run.runDir, 'workspace');
+      const committed = JSON.parse((await git(workspace, ['show', `${run.headSha}:.harness/state/sbi-7.json`])).stdout);
+      assert.deepEqual(committed, await readJson(join(root, run.runDir, 'sbi-snapshot.json')));
+      assert.equal(committed.runId, run.id);
+      assert.deepEqual(await runLinks(workspace, run.baselineSha), [{ runId: run.id, url: issueUrl }]);
+      const files = [{ path: home }, { path: '.harness/state/sbi-7.json' }];
+      const source = await verifySbiSource({ root: workspace, base: run.baselineSha, files, required: [`production:${home}`], repository: 'acme/app' });
+      assert.equal(source.status, 'PASS', source.reasons.join('; '));
+    })));
+    for (const labels of [['sbi', 'needs-review'], ['ready']]) {
+      it(`when the Issue is labelled ${labels.join(' + ')} then no run, workspace or PR is created`, () => fixture(root => withIssue(root, sbiIssue(labels), async ({ github }) => {
+        await assert.rejects(start(root), /ready|sbi label|needs-review/);
+        assert.deepEqual(await runs(root), []);
+        assert.deepEqual((await github.state()).pulls, []);
+      })));
+    }
+    it('when an acceptance criterion has no registered Trusted Acceptance then fails before creating a run', () => fixture(root => withIssue(root, sbiIssue(['sbi', 'ready'], planned({ acceptanceCriteria: [...planned().acceptanceCriteria, { id: 'AC-3', description: '未登録の要件' }] })), async () => {
+      await assert.rejects(start(root), /AC-3/);
+      assert.deepEqual(await runs(root), []);
+    })));
+    it('when the agent writes into a sibling directory sharing the prefix then the run escalates without writing it', () => fixture(root => withIssue(root, sbiIssue(), async ({ github }) => {
+      const run = await start(root, { agent: agent('apps/admin-other/home.txt') });
+      assert.equal(run.status, 'ESCALATED');
+      assert.match(run.reason, /scope/);
+      assert.equal(await exists(join(root, run.runDir, 'workspace/apps/admin-other/home.txt')), false);
+      assert.deepEqual((await github.state()).pulls, []);
+    })));
+    it('when the same Issue is run twice then each run has its own ID, branch, snapshot and PR', () => fixture(root => withIssue(root, sbiIssue(), async ({ github }) => {
+      const first = await start(root), second = await start(root);
+      assert.notEqual(first.id, second.id);
+      const pulls = (await github.state()).pulls;
+      assert.deepEqual(pulls.map(p => p.head.ref).sort(), [`harness/${first.id}`, `harness/${second.id}`].sort());
+      assert.notEqual((await readJson(join(root, first.runDir, 'sbi-snapshot.json'))).runId, (await readJson(join(root, second.runDir, 'sbi-snapshot.json'))).runId);
+    })));
+    it('when the Issue run stops at the gate then a human approves it by the Issue URL, without a RUN_ID, and the Harness opens the PR', () => fixture(root => withIssue(root, sbiIssue(['sbi', 'ready'], planned({ securityImpact: ['外部サービス連携'], riskCandidate: 'L3' })), async ({ github }) => {
+      const run = await start(root);
+      assert.equal(run.status, 'WAITING_FOR_HUMAN_GATE');
+      const approved = await approveRun({ root, issueUrl, purpose: 'implementation-gate', identityProvider: human('Designer'), agent: agent(), quiet: true });
+      assert.equal(approved.id, run.id);
+      assert.equal(approved.executionStatus, 'DONE');
+      assert.equal((await github.state()).pulls.length, 1);
+    })));
+    it('when two runs of the Issue wait at the gate then approving by the Issue URL refuses to guess and names both runs', () => fixture(root => withIssue(root, sbiIssue(['sbi', 'ready'], planned({ securityImpact: ['外部サービス連携'], riskCandidate: 'L3' })), async () => {
+      const first = await start(root), second = await start(root);
+      await assert.rejects(approveRun({ root, issueUrl, purpose: 'implementation-gate', identityProvider: human('Designer'), quiet: true }),
+        error => error.message.includes(first.id) && error.message.includes(second.id));
+    })));
   });
 
   describe('given a run that cannot be published as is', () => {

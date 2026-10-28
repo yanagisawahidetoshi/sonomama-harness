@@ -156,6 +156,9 @@ describe('CLI help', () => {
         assert.ok(stderr.indexOf(`pnpm ${command}`) > internal, `${command} is internal`);
       }
       assert.match(stderr.slice(userFacing, internal), /--provider codex/);
+      assert.match(stderr.slice(userFacing, internal), /pnpm harness:run SBI_URL/);
+      assert.match(stderr.slice(userFacing, internal), /pnpm harness:approve SBI_URL/);
+      assert.ok(stderr.indexOf('--sbi PATH') > internal, '--sbi is for Harness self-tests');
     });
   });
 });
