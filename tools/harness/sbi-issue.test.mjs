@@ -155,31 +155,62 @@ describe('Scope of an execution SBI', () => {
   });
 });
 
-// A Rails or frontend SBI depends on the OpenAPI Schema SBI. Its Harness PR closes the Schema SBI Issue when it is merged,
-// so an open (or abandoned) dependency means the canonical openapi.yaml is not on main yet.
+// A Rails or frontend SBI depends on the OpenAPI Schema SBI. Only a merged Harness PR of that SBI puts the canonical openapi.yaml on main,
+// so the dependency is done when GitHub shows such a PR, not when someone closes its Issue.
 describe('Dependencies of a ready SBI Issue', () => {
-  const schema = { number: 6, title: 'SBI-001 OpenAPI Schemaを作る', html_url: 'https://github.com/acme/app/issues/6', labels: labels('sbi', 'ready') };
+  const schemaUrl = 'https://github.com/acme/app/issues/6';
+  const schema = { number: 6, title: 'SBI-001 OpenAPI Schemaを作る', html_url: schemaUrl, labels: labels('sbi', 'ready') };
+  const closed = { ...schema, state: 'closed', state_reason: 'completed' };
   const dependent = planned({ id: 'SBI-002', dependsOn: ['SBI-001'] });
   const body = (numbers = { 'SBI-001': 6 }) => renderSbiBody(dependent, pbi, numbers);
-  const github = (dependency, own = issue({ body: body() }, dependent)) => ({ fetchIssue: async ({ number }) => {
-    if (number === 7) return own;
-    if (number === 6 && dependency) return dependency;
-    throw new Error('gh: Not Found (HTTP 404)');
-  } });
+  // The Harness PR of the Schema SBI: merged into main, Closes #6 in its body and SBI-Issue: <Issue #6> in its commit trailers.
+  const harnessPull = (overrides = {}) => ({ number: 21, html_url: 'https://github.com/acme/app/pull/21', merged_at: '2026-10-01T00:00:00Z', base: { ref: 'main' },
+    body: '## SBI\n- ISSUE-6: OpenAPI Schemaを作る\n\nCloses #6\n', commits: [`Implement ISSUE-6\n\nHarness-Run: r1\nSBI-Issue: ${schemaUrl}`], ...overrides });
+  const github = (dependency, { pulls = [], own = issue({ body: body() }, dependent), timelineFails = false } = {}) => ({
+    fetchIssue: async ({ number }) => {
+      if (number === 7) return own;
+      if (number === 6 && dependency) return dependency;
+      throw new Error('gh: Not Found (HTTP 404)');
+    },
+    issueTimeline: async ({ number }) => {
+      if (timelineFails) throw new Error('gh: Server Error (HTTP 502)');
+      return number === 6 ? pulls.map(p => ({ event: 'cross-referenced', source: { type: 'issue', issue: { number: p.number, html_url: p.html_url, pull_request: { url: `https://api.github.com/repos/acme/app/pulls/${p.number}` } } } })) : [];
+    },
+    fetchPull: async (_, number) => { const pull = pulls.find(p => p.number === number); if (!pull) throw new Error('gh: Not Found (HTTP 404)'); return pull; },
+    pullCommitMessages: async (_, number) => pulls.find(p => p.number === number).commits,
+  });
   const load = gh => loadSbiIssue({ issueUrl: ref.url, config: config(), github: gh });
-  it('when the dependency Issue was closed as completed then the run may start', async () => {
-    assert.equal((await load(github({ ...schema, state: 'closed', state_reason: 'completed' }))).sbi.id, 'ISSUE-7');
+  it('when the Harness PR of the dependency was merged into main then the run may start', async () => {
+    assert.equal((await load(github(closed, { pulls: [harnessPull()] }))).sbi.id, 'ISSUE-7');
+  });
+  it('when the dependency Issue was closed as completed by hand and no PR was merged then refuses to start', async () => {
+    await assert.rejects(load(github(closed)), /#6.*merge/);
+  });
+  it('when the PR that closes the dependency was closed without merging then refuses to start', async () => {
+    await assert.rejects(load(github(closed, { pulls: [harnessPull({ merged_at: null })] })), /#6/);
+  });
+  it('when the merged PR targets another base branch than main then refuses to start', async () => {
+    await assert.rejects(load(github(closed, { pulls: [harnessPull({ base: { ref: 'develop' } })] })), /#6/);
+  });
+  it('when the merged PR says Closes #6 but no commit carries SBI-Issue for #6, so the Harness did not make it, then refuses to start', async () => {
+    await assert.rejects(load(github(closed, { pulls: [harnessPull({ commits: ['fix typo'] })] })), /#6/);
+  });
+  it('when the merged Harness PR of another SBI only mentions the dependency then refuses to start', async () => {
+    await assert.rejects(load(github(closed, { pulls: [harnessPull({ body: 'See #6\n' })] })), /#6/);
+  });
+  it('when the PRs of the dependency cannot be read from GitHub then refuses to start', async () => {
+    await assert.rejects(load(github(closed, { pulls: [harnessPull()], timelineFails: true })), /#6/);
   });
   it('when the dependency Issue is still open because its Schema PR is not merged then refuses to start', async () => {
-    await assert.rejects(load(github({ ...schema, state: 'open' })), /#6/);
+    await assert.rejects(load(github({ ...schema, state: 'open' }, { pulls: [harnessPull({ merged_at: null })] })), /#6/);
   });
-  it('when the dependency Issue was closed as not planned then refuses to start', async () => {
-    await assert.rejects(load(github({ ...schema, state: 'closed', state_reason: 'not_planned' })), /#6/);
+  it('when the dependency Issue was closed as not planned then refuses to start even with a merged PR', async () => {
+    await assert.rejects(load(github({ ...schema, state: 'closed', state_reason: 'not_planned' }, { pulls: [harnessPull()] })), /#6/);
   });
   it('when the dependency Issue cannot be read then refuses to start', async () => {
     await assert.rejects(load(github(null)), /#6/);
   });
   it('when a dependency is listed without its Issue number then refuses to start', async () => {
-    await assert.rejects(load(github(null, issue({ body: body({}) }, dependent))), /SBI-001/);
+    await assert.rejects(load(github(null, { own: issue({ body: body({}) }, dependent) })), /SBI-001/);
   });
 });
