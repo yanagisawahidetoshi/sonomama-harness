@@ -72,9 +72,12 @@ describe('PBI → SBI Planner', () => {
         assert.match(issue.body, /Scenario: 登録済みプロフィールを表示する\n\s+Given ログイン済みの受講生がいる\n\s+And プロフィールが登録されている\n\s+When プロフィール画面を開く\n\s+Then 登録済みの氏名が表示される/);
         assert.match(issue.body, /- \[ \] AC-1: 登録済みの氏名が画面に表示される/);
         assert.match(issue.body, /Risk: L2 candidate\nSecurity: None/);
-        assert.match(issue.body, /Application Test: RNTL\n受け入れ要件: Trusted Acceptance\nE2E: 不要/);
+        const { verification } = validPlan().find(s => s.id === sbiId);
+        assert.ok(issue.body.includes(`Application Test: ${verification.applicationTest}\n受け入れ要件: ${verification.acceptance}\nE2E: ${verification.e2e}`));
       }
       assert.match(state.created[0].body, /## 依存SBI\n\nなし/);
+      assert.match(state.created[0].body, /Application Test: RNTL\n受け入れ要件: Trusted Acceptance\nE2E: 不要/);
+      assert.match(state.created[1].body, /E2E: Maestro（実API \+ Rails \+ DB）/);
       assert.match(state.created[1].body, /## 依存SBI\n\n- SBI-001 \(#101\)\n\n/);
       assert.match(state.created[2].body, /## 依存SBI\n\n- SBI-002 \(#102\)\n\n/);
       assert.match(state.created[0].body, /## 種類\n\n実装SBI（implementation）/);
