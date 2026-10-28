@@ -1,32 +1,40 @@
-# アーキテクチャテンプレート
-
-## 目的
-[対象機能と境界]
+# アーキテクチャ
 
 ## 構成
-Rails API / Expo / React admin。契約はpackages/api-schemaのOpenAPI。
-アプリ内はappがfeaturesを合成し、featuresはsharedだけに依存する。
+
+SONOMAMAは、APIサーバ（Rails）、受講生向けのスマホアプリ（Expo）、運営向けの管理画面（React）の3つで構成する。
+3つのアプリがやり取りするAPIの仕様は、packages/api-schemaのOpenAPIファイル1つにまとめて定義する。
+アプリの中は、画面を組み立てる層（app）、機能ごとの層（features）、共通部品の層（shared）に分ける。featuresはsharedだけに依存し、機能どうしは直接参照しない。
+
+デザイナーが画面を試作する場所として、prototypes/web（管理画面向け）とprototypes/mobile（受講生アプリ向け）がある。試作のコードは本番にコピーせず、採用が決まったら本番のアプリで実装し直す。
+
+## 開発の自動化（Harness）
+
+このリポジトリでは、AIによる実装と検証を管理する仕組み（Harness）を使う。
+Harnessは、作業単位（SBI）ごとにAIに実装させ、自動の検証と、決まったルールとの照合を行い、完了かどうかを判定する。失敗した場合は、その結果をAIに渡してやり直させる。
+完了かどうかは、AIの自己申告ではなく検証の結果で決める。ルールとの照合は機械的なチェックであり、設計やセキュリティの専門的なレビューの代わりにはならない。
+mergeは必ず人が行う。開発の流れは[workflows/README.md](../workflows/README.md)に書いている。
+
+## セキュリティ要件とHarnessの役割分担
+
+セキュリティ要件は人が決め、docs/security・docs/product・ADRに書く。誰が何を見られるか、何を個人情報とするか、どれだけ保存するか、どう匿名化するかを、Harnessが決めることはない。
+
+Harnessが受け持つのは、人が決めた要件を守らせることである。安全性に関わる変更を見つけて実装前に人の承認を求め、必要な検証を必ず実行させ、検証が通らない変更や検証が用意されていない変更を完了扱いにしない。ログやレビュー用の資料に秘密情報が残らないようにもする。
+人の承認の数が足りていても、AIによるレビューの結果が良くても、検証に失敗した変更は通さない。
+
+Harnessは実際のmergeを行わない。PBIを作業単位（SBI）に分ける機能と、API仕様の案を作る機能も、案を作って人にレビューを依頼するところまでを受け持つ。承認、実装、mergeには関わらず、API仕様をpackages/api-schemaへ反映することもしない。
+
+## 機能ごとの設計を書くテンプレート
+
+機能ごとの設計は、次の見出しで書く。
+
+```markdown
+## 目的
+[対象機能と境界]
 
 ## データと信頼境界
 [認証・権限・個人情報・外部接続]
 
-## Harness v1
-State → Agent → Verifier → Reviewer → Completion Judge。
-失敗時は証跡を次iterationに渡す。各runは新しい作業領域を持つ。
-実装箇所はtools/harness、設定は.harness/config、判断規則は.harness/rules。
-Reviewerは決定的なポリシーチェックで、設計・セキュリティの専門レビューは含まない。
-
 ## 未決事項 / 関連ADR
-[人間が判断する項目とリンク]
-
-## Security Requirementsとの境界
-
-docs/security・docs/product・ADRが、人間の決めるSecurity RequirementsのSSOT。
-Harnessは権限表、PII定義、retention期間、匿名化の要件を決定しない。
-Security rule IDを文書とsecurity.jsonで共有し、human-gates.jsonは同じIDを参照する。
-
-HarnessはSecurity impact検知、必須Verifier選択、事前Gate、最低Risk、検証、完了・merge禁止、
-伏せ字化されたEvidenceの保存を担当する。Semantic Reviewや人間の人数だけで検証失敗を上書きしない。
-workspace・prompt・ログ・レビューZIPの秘密情報保護はevidence-protection.mjsを経由する。
-NOT_CONFIGUREDはFAIL/SKIPと区別し、必須なら処理を停止する。実際のmergeは対象外。PBI → SBI PlannerはSBI Issueの作成までで、実行・判定・mergeに関与しない。
-API Schema PlannerはOpenAPI Proposalの生成とレビュー依頼までで、承認・実装・packages/api-schemaへの反映はしない。
+[人が判断する項目とリンク]
+```

@@ -22,7 +22,7 @@ GitHub Issue → Requirement Reader → Existing API Schema Reader（packages/ap
    取り消しは`--decision revoke`、差し戻しは`--decision request-changes`。
 7. `pnpm planner:api-schema-status <Issue URL>`で判定する。APPROVEDならexit 0、それ以外はexit 2。
 8. 承認後、人間がopenapi.yamlを`packages/api-schema/openapi.yaml`へ反映し、それを参照するFrontend / Backendの実装SBIを作る。
-   Frontendは`pnpm api:mock <Issue URL>`で反映したOpenAPIのMock Serverを使える（[api-mock.md](api-mock.md)）。
+   Frontendは`pnpm api:mock <Issue URL>`で反映したOpenAPIのMock Serverを使える（[api-mock.md](../../docs/workflows/api-mock.md)）。
 
 承認まではFrontend / Backendの実装へ進めない。
 

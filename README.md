@@ -35,7 +35,7 @@ SBI → 意図的な誤実装 → Verifier FAIL
 
 | 場所 | 役割 |
 | --- | --- |
-| apps/api・mobile・admin | Rails / Expo / Reactのplaceholder |
+| apps/api・mobile・admin | Rails / Expo / Reactのアプリ |
 | packages/api-schema | 将来のOpenAPI SSOT |
 | .harness/config/harness.json | provider、閾値、Verifier Registry、Semantic Review設定 |
 | .harness/state/sample-sbi.json | Gherkin、AC、許可ファイル、risk |
@@ -53,9 +53,10 @@ SBI → 意図的な誤実装 → Verifier FAIL
 | .harness/state/api-schema/ | API Schema Plannerが署名した生成記録。Git管理対象外 |
 | .harness/runs/ | 実行証跡と元リポジトリを共有するGit worktree |
 | tools/harness/ | 実行ループ・分類・承認・マージ可否の判定、PBI → SBI Planner、API Schema Planner |
-| docs/ | アーキテクチャ、SBI、ADR、workflow |
+| docs/ | 人間向けの設計・方針・ADR・運用の概要（[docs/README.md](docs/README.md)） |
+| .ai/ | AIが実装・レビュー時に読む前提・制約・作業手順 |
 
-開発指示は[AGENTS.md](AGENTS.md)、Harness配下の指示は[tools/harness/AGENTS.md](tools/harness/AGENTS.md)。
+AIへの開発指示の入口は[AGENTS.md](AGENTS.md)。詳細は.ai/にある。
 設定・SBI・リスクポリシー・agentレスポンス・承認レコードはZodで検証する。
 
 ## 同じworkspaceを実装・検証・レビューする
@@ -263,7 +264,7 @@ pnpm harness:resume --run RUN_ID
 ```
 
 `pnpm harness:pr --run RUN_ID`でPRを作ったrun（GitHub PR mode）では、実装後の承認はGitHub Reviewで判定し、`--phase merge`は使わない。
-base branchの先頭がrunのbaselineのままであること、tested SHAとPR HEADの一致、必須CIのPASS、CHANGES_REQUESTEDがないことも条件にする。Approveはwrite以上の権限を持つ人のものだけを数える。手順は[docs/workflows/github-pr-adapter.md](docs/workflows/github-pr-adapter.md)。
+base branchの先頭がrunのbaselineのままであること、tested SHAとPR HEADの一致、必須CIのPASS、CHANGES_REQUESTEDがないことも条件にする。Approveはwrite以上の権限を持つ人のものだけを数える。手順は[.ai/workflows/pull-request.md](.ai/workflows/pull-request.md)。
 
 実装前承認は1人、実装後はRisk別の人数を要求する。承認待ちは連続失敗に数えない。
 実装前の仕様曖昧・未決の重要設計はESCALATED。agentが未宣言のHIGH変更を提案した場合も、
@@ -400,7 +401,7 @@ digest不一致（PBIやモデル出力が変わった）、人間による本�
 
 Plannerは`needs-review`のSBIをExecution Harnessへ投入しない。人間がレビューして`needs-review`を外し`ready`を付ける。
 Execution Harnessは引き続きSBI JSONを入力にし、Issueからの自動実行・`ready`への自動遷移・Risk確定・mergeは行わない。
-手順は[docs/workflows/pbi-sbi-planner.md](docs/workflows/pbi-sbi-planner.md)。
+手順は[.ai/workflows/pbi-sbi-planner.md](.ai/workflows/pbi-sbi-planner.md)。
 
 ## API Schema Planner
 
@@ -426,7 +427,7 @@ Quality Judgeは決定的なルールで構造・認証認可・Security Impact�
 承認は`pnpm planner:api-schema-approve <Issue URL>`で署名付き台帳に記録し、Proposalのdigestとcommit SHAに紐づける。
 判定は`pnpm planner:api-schema-status <Issue URL>`。Issueの`api-schema-approved`ラベルは目印で、承認の正本ではない。
 Execution Harnessの実装前Gate・Merge Approvalとは別で、どちらの代わりにもならない。承認後に人間がpackages/api-schemaへ反映し、実装SBIを作る。
-手順は[docs/workflows/api-schema-planner.md](docs/workflows/api-schema-planner.md)。
+手順は[.ai/workflows/api-schema.md](.ai/workflows/api-schema.md)。
 
 承認済みOpenAPIのMock Serverは`pnpm api:mock <Issue URL>`で`127.0.0.1:4010`に起動する。承認済みProposalと`packages/api-schema/openapi.yaml`のdigestが一致するときだけ起動する。
 手順は[docs/workflows/api-mock.md](docs/workflows/api-mock.md)。

@@ -1,6 +1,6 @@
 # GitHub PR Adapterの運用
 
-Harnessが検証したcommitを、そのままGitHub PRとして公開する。実装後のMerge Approvalは、そのPRへのGitHub Reviewで判定する（[ADR-0001](../adr/0001-github-review-merge-approval.md)）。
+Harnessが検証したcommitを、そのままGitHub PRとして公開する。実装後のMerge Approvalは、そのPRへのGitHub Reviewで判定する（[ADR-0001](../../docs/adr/0001-github-review-merge-approval.md)）。
 Harnessが出すのは`MERGE_ALLOWED`まで。mergeは人間がGitHubで行う。
 
 ```text
