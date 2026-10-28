@@ -416,9 +416,9 @@ describe('GitHub PR Adapter', () => {
 
   describe('given a harness:run stopped at the implementation gate', () => {
     const good = 'export function greet(name) { return `こんにちは、${name?.trim() || "ゲスト"}さん`; }';
+    // An unclassified risk stops the run at the implementation gate without bringing in a security rule.
     const gated = async root => {
-      await update(root, '.harness/config/harness.json', c => c.securityVerifiers = [{ id: 'rails-rls-test', directory: 'apps/api', commands: [[process.execPath, '-e', 'require("node:assert/strict").ok(true)']] }]);
-      await update(root, sbiPath, s => s.risks = ['RLS']);
+      await update(root, sbiPath, s => s.risks = ['外部サービス連携']);
       await commitFixture(root);
     };
     const agent = async () => ({ files: [{ path: 'greeting.mjs', content: good }] });
