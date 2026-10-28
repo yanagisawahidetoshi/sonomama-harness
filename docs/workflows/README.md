@@ -15,6 +15,7 @@ PBI（プロダクトバックログの項目）を受け取ってからmergeす
 
 - [api-docs.md](api-docs.md): API仕様をブラウザで見る
 - [api-mock.md](api-mock.md): 承認済みのAPI仕様から、ローカルでモックサーバを起動する
+- [dependency-updates.md](dependency-updates.md): AdminとRails APIのdependency更新をRenovateのPRで受け取る
 
 ## AI向けの詳しい手順
 
