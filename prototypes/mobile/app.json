@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "SONOMAMA Prototype",
+    "slug": "sonomama-prototype-mobile",
+    "scheme": "sonomama-prototype",
+    "version": "0.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "bundleIdentifier": "com.sonomama.prototype.dev",
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.sonomama.prototype.dev"
+    },
+    "plugins": ["expo-router"]
+  }
+}

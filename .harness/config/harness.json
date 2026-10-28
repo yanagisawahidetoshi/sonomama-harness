@@ -449,11 +449,18 @@
       ],
       "planned": [
         "TypeScript",
-        "ESLint",
-        "Prettier",
-        "build/export"
+        "Biome",
+        "Expo Doctor"
       ],
       "commands": [
+        [
+          "pnpm",
+          "install",
+          "--frozen-lockfile",
+          "--prefer-offline",
+          "--filter",
+          "prototype-mobile"
+        ],
         [
           "pnpm",
           "run",
@@ -462,19 +469,48 @@
         [
           "pnpm",
           "run",
-          "lint"
+          "check"
         ],
         [
           "pnpm",
           "run",
-          "format:check"
-        ],
-        [
-          "pnpm",
-          "run",
-          "build"
+          "doctor"
         ]
       ]
+    },
+    {
+      "id": "prototype-mobile-acceptance",
+      "directory": "prototypes/mobile",
+      "marker": "package.json",
+      "planned": [
+        "Trusted Acceptance"
+      ],
+      "commands": [],
+      "acceptanceIds": [
+        "PMOB-AC-1",
+        "PMOB-AC-2",
+        "PMOB-AC-3",
+        "PMOB-AC-4",
+        "PMOB-AC-5",
+        "PMOB-AC-6",
+        "PMOB-AC-7",
+        "PMOB-AC-8",
+        "PMOB-AC-9",
+        "PMOB-AC-10",
+        "PMOB-AC-11",
+        "PMOB-AC-12",
+        "PMOB-AC-13",
+        "PMOB-AC-14",
+        "PMOB-AC-15",
+        "PMOB-AC-16"
+      ],
+      "appliesTo": [],
+      "lanes": [
+        "prototype",
+        "production"
+      ],
+      "trust": "acceptance",
+      "trustedScript": ".harness/verification/prototype-mobile-env.mjs"
     }
   ],
   "semanticReview": {
