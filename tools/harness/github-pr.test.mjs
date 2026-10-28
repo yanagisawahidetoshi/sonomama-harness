@@ -562,6 +562,21 @@ describe('GitHub PR Adapter', () => {
       assert.equal(approved.executionStatus, 'DONE');
       assert.equal((await github.state()).pulls.length, 1);
     })));
+    // .harness/state/runs/*.json is a projection anyone can edit. The run to approve is chosen from .harness/runs/<id>/summary.json and re-checked before the decision.
+    it('when the run projections are edited to make another run look like the one waiting for the Issue then the approval still goes to the run of the Issue', () => fixture(root => update(root, sbiPath, s => { s.risks = ['RLS']; }).then(() => withIssue(root, sbiIssue(['sbi', 'ready'], planned({ riskCandidate: 'L3' })), async () => {
+      const own = await start(root), other = await startRun({ root, quiet: true, provider: 'fake' });
+      assert.deepEqual([own.status, other.status], ['WAITING_FOR_HUMAN_GATE', 'WAITING_FOR_HUMAN_GATE']);
+      await update(root, `.harness/state/runs/${other.id}.json`, s => { s.sbiIssue = { repo: 'acme/app', number: 7, url: issueUrl }; });
+      await update(root, `.harness/state/runs/${own.id}.json`, s => { s.gate.state = 'APPROVED'; delete s.sbiIssue; });
+      const approved = await approveRun({ root, issueUrl, purpose: 'implementation-gate', identityProvider: human('Designer'), agent: agent(), quiet: true });
+      assert.equal(approved.id, own.id);
+      assert.equal(await exists(join(root, '.harness/state/human', `${other.id}.json`)), false);
+    }))));
+    it('when a decision for the Issue is recorded on a run of another SBI then it is refused before anything is recorded', () => fixture(root => update(root, sbiPath, s => { s.risks = ['RLS']; }).then(() => withIssue(root, sbiIssue(), async () => {
+      const other = await startRun({ root, quiet: true, provider: 'fake' });
+      await assert.rejects(recordDecision({ root, runId: other.id, purpose: 'implementation-gate', issueUrl, identityProvider: human('Designer') }), /issues\/7/);
+      assert.equal(await exists(join(root, '.harness/state/human', `${other.id}.json`)), false);
+    }))));
     // The exit code is what a person or a script sees: only a failed run is non-zero. cli.mjs of the fixture is spawned with a codex stub on PATH.
     describe('when the commands are run from the CLI', () => {
       const cli = async (root, args, response = { files: [{ path: home, content: 'ホーム' }], escalation: null }) => {
