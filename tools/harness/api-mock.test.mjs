@@ -213,17 +213,22 @@ describe('Prism Mock check of a Schema SBI', () => {
   const courses = { get: { operationId: 'listCourses', responses: { 200: { description: 'OK', content: json({ type: 'array', items: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } } }, [{ id: 'c1' }]) } } } };
   const write = (root, text) => writeFile(join(root, mockSchemaPath), text);
   it('when the OpenAPI of the workspace is valid then Prism starts and each GET endpoint answers its documented status', () => fixture(async root => {
-    const profile = { get: { operationId: 'getMyProfile', security: [{ bearer: [] }], responses: { 200: { description: 'OK', content: json({ type: 'object', properties: { id: { type: 'string' } } }, { id: 'p1' }) }, 401: { description: 'NG' } } } };
-    await write(root, openapi({ '/api/v1/courses': courses, '/api/v1/me/profile': profile }, { components: { securitySchemes: { bearer: { type: 'http', scheme: 'bearer' } } } }));
+    const levels = { get: { operationId: 'listLevels', responses: { 200: { description: 'OK', content: json({ type: 'array', items: { type: 'string' } }, ['basic']) } } } };
+    await write(root, openapi({ '/api/v1/courses': courses, '/api/v1/levels': levels }));
     const result = await checkApiMock({ root });
     assert.equal(result.status, 'PASS', result.errors.join('; '));
-    assert.deepEqual(result.checked.sort(), ['GET /api/v1/courses 200', 'GET /api/v1/me/profile 200']);
+    assert.deepEqual(result.checked.sort(), ['GET /api/v1/courses 200', 'GET /api/v1/levels 200']);
   }));
   it('when an endpoint has a path parameter without an example then it is listed as not called instead of passing silently', () => fixture(async root => {
     await write(root, openapi({ '/api/v1/courses': courses, '/api/v1/courses/{id}': { get: { operationId: 'getCourse', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: { description: 'OK' } } } } }));
     const result = await checkApiMock({ root });
     assert.equal(result.status, 'PASS');
     assert.deepEqual(result.skipped, ['GET /api/v1/courses/{id}']);
+  }));
+  it('when an endpoint has a security requirement then it is listed as not called, since the Verifier sends no credential', () => fixture(async root => {
+    await write(root, openapi({ '/api/v1/courses': courses, '/api/v1/me': { get: { operationId: 'getMe', security: [{ bearer: [] }], responses: { 200: { description: 'OK' } } } } }));
+    const result = await checkApiMock({ root });
+    assert.deepEqual([result.status, result.checked, result.skipped], ['PASS', ['GET /api/v1/courses 200'], ['GET /api/v1/me']]);
   }));
   it('when Prism cannot load the OpenAPI then fails', () => fixture(async root => {
     await write(root, 'openapi: 3.1.0\npaths: [not, a, map]\n');
