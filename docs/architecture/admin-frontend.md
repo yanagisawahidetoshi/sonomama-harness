@@ -15,7 +15,7 @@
 | `src/features` | 業務機能ごとの UI・API adapter・hooks・schema・型・test | 同じ Feature と `shared` |
 | `src/shared` | Feature に依存しない横断的なもの | `shared` |
 
-`src/test`（テストの setup）と `vite-env.d.ts` はどの層にも属さない。
+`src/test`（テストの setup）と `*.d.ts` はどの層にも属さない非layerファイルで、層のコードから import できない。`src/` 直下にこれ以外のディレクトリやファイル（`src/lib` など）を置くと、その import は `unknown top-level layer` として architecture check が FAIL する。未分類の層を経由して features/A → features/B などの禁止依存を迂回させないため。
 
 ### 禁止する依存
 

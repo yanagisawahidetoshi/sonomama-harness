@@ -7,7 +7,7 @@
 - apps/api: Rails API。apps/mobile: Expo（受講生アプリ）。apps/admin: React（管理画面）。
 - prototypes/web・prototypes/mobile: デザイナー用の試作。本番コードではなく、ここからコピーして本番化しない。
 - API契約のSSOTはpackages/api-schemaのOpenAPI。Rails・Expo・adminは同じスキーマを参照する。
-- アプリ内の依存方向はapp → features → shared。feature間の直接依存は禁止。
+- アプリ内の依存方向はapp → features → shared。feature間の直接依存は禁止。apps/admin・apps/mobileのsrc直下はapp / features / shared / providersとentrypoint・test setup・d.tsだけ。未分類のtop-level（src/lib等）はarchitecture checkでFAILする。
 - Auth providerは未決定。明示的な承認なしにCognito / Firebase / Google等のProvider固有SDKを追加しない。
 
 ## Harness v1

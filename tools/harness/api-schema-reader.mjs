@@ -31,6 +31,7 @@ export async function readExistingSchema(root) {
       parameters: [...(item.parameters ?? []), ...(operation.parameters ?? [])].filter(p => p?.name).map(p => ({ name: p.name, in: p.in, required: Boolean(p.required) })),
       successStatuses: Object.keys(operation.responses ?? {}).filter(status => /^2\d\d$/.test(status)).map(Number),
       authenticated: (operation.security ?? document.security ?? []).length > 0,
+      authz: operation['x-sonomama-authz'] ? { roles: [...(operation['x-sonomama-authz'].roles ?? [])], rule: operation['x-sonomama-authz'].rule ?? null } : null,
     };
   }));
   const components = Object.entries(document.components?.schemas ?? {}).map(([name, schema]) => ({

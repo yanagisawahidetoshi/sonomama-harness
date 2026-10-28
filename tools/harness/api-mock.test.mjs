@@ -25,7 +25,7 @@ const proposal = {
   title: 'プロフィールAPI', summary: '受講生が自分のプロフィールを取得する', version: 'v1', securityImpact: ['APIAuthentication', 'APIAuthorization', 'PII'],
   endpoints: [
     { method: 'GET', path: '/api/v1/me/profile', operationId: 'getMyProfile', summary: 'ログイン中の受講生のプロフィールを取得する', tags: ['profile'], change: 'add',
-      authN: 'cognito-jwt', authZ: { roles: [], rule: 'JWTのsubに対応する本人のプロフィールだけを返す' }, pii: true, logCaution: ['displayNameをログへ出さない'],
+      authN: 'bearer-jwt', authZ: { roles: [], rule: 'JWTのsubに対応する本人のプロフィールだけを返す' }, pii: true, logCaution: ['displayNameをログへ出さない'],
       parameters: [], requestBody: null, responses: [response(200, 'Profile'), response(401, 'Error'), response(500, 'Error')] },
     { method: 'GET', path: '/api/v1/courses', operationId: 'listCourses', summary: '講座一覧を取得する', tags: ['course'], change: 'add',
       authN: 'public', authZ: { roles: [], rule: null }, pii: false, logCaution: [],

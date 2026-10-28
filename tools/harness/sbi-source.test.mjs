@@ -19,11 +19,11 @@ const labels = (...names) => names.map(name => ({ name }));
 const pbi = { owner: 'acme', repo: 'app', number: 3, url: 'https://github.com/acme/app/issues/3', title: '管理画面のホーム' };
 // The SBI Issue as the Planner wrote it and a human marked it ready, with its Trusted Acceptance registered in harness.json.
 const planned = {
-  id: 'SBI-001', title: '管理画面のホーム', purpose: 'ホームを表示する',
+  id: 'SBI-001', kind: 'implementation', title: '管理画面のホーム', purpose: 'ホームを表示する',
   scope: { included: ['apps/admin ホーム画面'], excluded: [] },
   acceptanceCriteria: [{ id: 'HOME-AC-1', description: '見出しが出る' }],
-  scenarios: [{ name: '表示', given: ['管理者である'], when: ['ホームを開く'], then: ['見出しが出る'], acceptanceIds: ['HOME-AC-1'] }],
-  dependsOn: [], changeAreas: ['apps/admin'], riskCandidate: 'L2', securityImpact: [],
+  scenarios: [{ name: '表示', given: ['管理者である'], when: ['ホームを開く'], then: ['見出しが出る'], acceptanceIds: ['HOME-AC-1'], test: 'Vitest: apps/admin/src/features/home/index.test.tsx' }],
+  dependsOn: [], changeAreas: ['apps/admin'], layers: ['画面Component'], estimatedFiles: 2, oversizeReason: null, riskCandidate: 'L2', securityImpact: [],
   verification: { applicationTest: 'Vitest', acceptance: 'Trusted Acceptance', e2e: '不要' },
 };
 const readyIssue = { number: 7, title: 'SBI-001 管理画面のホーム', body: renderSbiBody(planned, pbi), html_url: ref.url, state: 'open', labels: labels('sbi', 'ready') };
