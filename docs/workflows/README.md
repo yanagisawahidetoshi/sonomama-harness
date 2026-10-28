@@ -24,3 +24,4 @@ PBI（プロダクトバックログの項目）を受け取ってからmergeす
 | API仕様の案を作って承認する | [.ai/workflows/api-schema.md](../../.ai/workflows/api-schema.md) |
 | Harnessで実装・検証する | [.ai/workflows/implementation.md](../../.ai/workflows/implementation.md) |
 | PRを作ってレビューで判定する | [.ai/workflows/pull-request.md](../../.ai/workflows/pull-request.md) |
+| CIで必要な検証を選んで実行する | [.ai/workflows/ci.md](../../.ai/workflows/ci.md) |
