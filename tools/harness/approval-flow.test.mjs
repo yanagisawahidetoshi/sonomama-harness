@@ -1,9 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fixture, update, human, runFixture as runHarness } from './test-fixture.mjs';
-import { resumeRun } from './index.mjs';
+import { resumeRun, openPullRequest } from './index.mjs';
 import { recordDecision } from './human-approvals.mjs';
 import { execute, readJson } from './io.mjs';
 const good = 'export function greet(name) { return `こんにちは、${name?.trim() || "ゲスト"}さん`; }';
@@ -189,6 +189,90 @@ describe('Snapshot includes ignored runtime inputs', () => {
       const resumed = await resumeRun({ root, runId: run.id, quiet: true });
       assert.equal(resumed.status, 'ESCALATED');
       assert.match(resumed.reason, /snapshot/);
+    }));
+  });
+});
+
+describe('Merge assessment failure after Execution DONE', () => {
+  const unrelatedEdit = root => writeFile(join(root, 'notes.txt'), 'uncommitted');
+  describe('given a completed run whose source checkout has an uncommitted unrelated file', () => {
+    it('when resumed then keeps Execution DONE and records a retryable merge failure instead of escalating', () => fixture(async root => {
+      const run = await runHarness({ root, quiet: true });
+      await unrelatedEdit(root);
+      const resumed = await resumeRun({ root, runId: run.id, quiet: true });
+      assert.equal(resumed.executionStatus, 'DONE');
+      assert.equal(resumed.status, 'RETRYABLE');
+      assert.equal(resumed.merge.state, 'RETRYABLE');
+      assert.equal(resumed.merge.autoMergeEligible, false);
+      assert.deepEqual({ code: resumed.merge.failure.code, retryable: resumed.merge.failure.retryable }, { code: 'SOURCE_DIRTY', retryable: true });
+      assert.deepEqual({ status: resumed.events.at(-1).status, phase: resumed.events.at(-1).phase }, { status: 'RETRYABLE', phase: 'merge' });
+      assert.equal(resumed.events.some(e => e.status === 'ESCALATED'), false);
+      await assert.rejects(readFile(join(root, run.runDir, 'escalation.json')), /ENOENT/);
+      assert.equal((await readJson(join(root, run.runDir, 'summary.json'))).executionStatus, 'DONE');
+    }));
+    it('when the file is removed and resumed again then the merge decision returns to waiting and then to MERGE_ALLOWED', () => fixture(async root => {
+      const run = await runHarness({ root, quiet: true });
+      await unrelatedEdit(root);
+      assert.equal((await resumeRun({ root, runId: run.id, quiet: true })).status, 'RETRYABLE');
+      await rm(join(root, 'notes.txt'));
+      const waiting = await resumeRun({ root, runId: run.id, quiet: true });
+      assert.equal(waiting.status, 'WAITING_FOR_HUMAN_REVIEW');
+      assert.equal(waiting.merge.failure, undefined);
+      await recordDecision({ root, runId: run.id, purpose: 'merge', identityProvider: human('A') });
+      const allowed = await resumeRun({ root, runId: run.id, quiet: true });
+      assert.equal(allowed.status, 'MERGE_ALLOWED');
+      assert.equal(allowed.executionStatus, 'DONE');
+    }));
+  });
+  describe('given the source checkout becomes dirty while the first run executes', () => {
+    it('when the run finishes then Execution stays DONE and only the merge assessment is retryable', () => fixture(async root => {
+      const run = await runHarness({ root, quiet: true, agent: async () => { await unrelatedEdit(root); return { files: [{ path: 'greeting.mjs', content: good }] }; } });
+      assert.equal(run.executionStatus, 'DONE');
+      assert.equal(run.status, 'RETRYABLE');
+      assert.equal(run.merge.failure.code, 'SOURCE_DIRTY');
+    }));
+  });
+  describe('given a dirty change to a trusted input', () => {
+    it('when resumed then still requires a new run instead of retrying', () => fixture(async root => {
+      const run = await runHarness({ root, quiet: true });
+      await writeFile(join(root, 'tools/harness/sample-bdd.mjs'), '// changed');
+      const resumed = await resumeRun({ root, runId: run.id, quiet: true });
+      assert.equal(resumed.status, 'ESCALATED');
+      assert.deepEqual({ code: resumed.merge.failure.code, retryable: resumed.merge.failure.retryable }, { code: 'SOURCE_CHANGED', retryable: false });
+    }));
+  });
+  describe('given the verified workspace changes after Execution DONE', () => {
+    it('when resumed then escalates the merge assessment but keeps Execution DONE', () => fixture(async root => {
+      const run = await runHarness({ root, quiet: true });
+      await writeFile(join(root, run.runDir, 'workspace/greeting.mjs'), 'bad change');
+      const resumed = await resumeRun({ root, runId: run.id, quiet: true });
+      assert.equal(resumed.status, 'ESCALATED');
+      assert.equal(resumed.executionStatus, 'DONE');
+      assert.equal(resumed.merge.state, 'BLOCKED');
+      assert.deepEqual({ code: resumed.merge.failure.code, retryable: resumed.merge.failure.retryable }, { code: 'WORKSPACE_CHANGED', retryable: false });
+      assert.deepEqual({ status: resumed.events.at(-1).status, phase: resumed.events.at(-1).phase }, { status: 'ESCALATED', phase: 'merge' });
+      assert.equal((await readJson(join(root, run.runDir, 'escalation.json'))).code, 'WORKSPACE_CHANGED');
+    }));
+    it('when the change is reverted then the escalated run neither resumes to a merge decision nor opens a pull request', () => fixture(async root => {
+      const run = await runHarness({ root, quiet: true });
+      const path = join(root, run.runDir, 'workspace/greeting.mjs');
+      const original = await readFile(path, 'utf8');
+      await recordDecision({ root, runId: run.id, purpose: 'merge', identityProvider: human('A') });
+      await writeFile(path, 'bad change');
+      assert.equal((await resumeRun({ root, runId: run.id, quiet: true })).status, 'ESCALATED');
+      await writeFile(path, original);
+      const again = await resumeRun({ root, runId: run.id, quiet: true });
+      assert.equal(again.status, 'ESCALATED');
+      assert.equal(again.merge.state, 'BLOCKED');
+      await assert.rejects(openPullRequest({ root, runId: run.id, quiet: true }), /ESCALATED/);
+    }));
+  });
+  describe('given the execution itself escalates', () => {
+    it('when the run stops then the escalation is an execution event and no merge failure is recorded', () => fixture(async root => {
+      const run = await runHarness({ root, quiet: true, agent: async () => ({ escalation: 'cannot decide', files: [] }) });
+      assert.equal(run.executionStatus, 'ESCALATED');
+      assert.deepEqual({ status: run.events.at(-1).status, phase: run.events.at(-1).phase }, { status: 'ESCALATED', phase: 'execution' });
+      assert.equal(run.merge.failure, undefined);
     }));
   });
 });

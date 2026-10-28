@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { startsWith } from './lib/commands.mjs';
 // Trusted acceptance for SBI-API-ENV (#21). Reads the worktree only; the rails application verifier runs Docker.
 const root = process.argv[2];
 const app = join(root, 'apps/api');
@@ -22,7 +23,7 @@ const hasGems = names => { for (const name of names) assert.ok(gems().includes(n
 const forbids = (pattern, label) => { for (const name of gems()) assert.doesNotMatch(name, pattern, `${label}: ${name}`); };
 // Top-level service block of compose.yaml, enough to assert keys without a YAML parser.
 const service = name => compose().match(new RegExp(`^ {2}${name}:\\n((?: {4,}.*\\n|\\s*\\n)*)`, 'm'))?.[1] ?? '';
-const verifierCommands = () => JSON.parse(read('.harness/config/harness.json')).verifiers.find(v => v.id === 'rails').commands.map(c => c.join(' '));
+const verifierCommands = () => JSON.parse(read('.harness/config/harness.json')).verifiers.find(v => v.id === 'rails').commands;
 const rubyFiles = dir => files(join(app, dir)).filter(p => p.endsWith('.rb')).map(p => readFileSync(p, 'utf8')).join('\n');
 try {
   const scenarios = [
@@ -92,7 +93,7 @@ try {
     ['API-AC-16', 'Given the Harness, When verifying rails, Then RSpec, RuboCop, Brakeman, Bundler Audit and Zeitwerk run through Docker Compose', () => {
       const commands = verifierCommands();
       for (const tool of ['rspec', 'rubocop', 'brakeman', 'bundler-audit', 'zeitwerk:check']) {
-        assert.ok(commands.some(c => c.startsWith('docker compose') && c.includes(tool)), tool);
+        assert.ok(commands.some(c => startsWith(c, ['docker', 'compose']) && c.includes(tool)), tool);
       }
     }],
     ['API-AC-17', 'Given the Gemfile, When listing gems, Then no auth provider SDK is installed', () => {

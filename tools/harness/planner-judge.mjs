@@ -1,4 +1,5 @@
 // Deterministic SBI Quality Judge. Structural rules are exact; granularity and wording rules are bounded heuristics.
+import { sbiKinds } from './schemas.mjs';
 export const limits = Object.freeze({ acceptanceCriteria: 6, changeAreas: 4, scenarios: 8, purposeSentences: 2 });
 const vagueTerms = ['など', '等々', '適切', 'いい感じ', 'なるべく', '可能な限り', 'できれば', '使いやすい', 'わかりやすい', '十分'];
 const vagueWords = /\b(etc|appropriate|properly)\b/i;
@@ -19,7 +20,8 @@ export function judgePlan(sbis, { securityCategories = null } = {}) {
     if (!sbi.scope.included.length || sbi.scope.included.some(blank)) add(sbi.id, 'scope-blank', '対象範囲が空です');
     if (sbi.scope.excluded.some(blank)) add(sbi.id, 'scope-blank', '対象範囲（対象外）に空の項目があります');
     if (sbi.acceptanceCriteria.length > limits.acceptanceCriteria) add(sbi.id, 'granularity', `粒度が過大です: 受け入れ要件が${sbi.acceptanceCriteria.length}件（上限${limits.acceptanceCriteria}）`);
-    if (sbi.changeAreas.length > limits.changeAreas) add(sbi.id, 'granularity', `粒度が過大です: 想定変更範囲が${sbi.changeAreas.length}領域（上限${limits.changeAreas}）`);
+    // Validation runs one E2E across the whole PBI, so only implementation SBIs are bounded by change areas.
+    if (sbi.kind === 'implementation' && sbi.changeAreas.length > limits.changeAreas) add(sbi.id, 'granularity', `粒度が過大です: 想定変更範囲が${sbi.changeAreas.length}領域（上限${limits.changeAreas}）`);
     if (sbi.scenarios.length > limits.scenarios) add(sbi.id, 'granularity', `粒度が過大です: Scenarioが${sbi.scenarios.length}件（上限${limits.scenarios}）`);
     const sentences = sbi.purpose.split(sentenceEnd).filter(part => part.trim()).length;
     if (sentences > limits.purposeSentences) add(sbi.id, 'single-purpose', `目的が1つに絞られていません（${sentences}文。${limits.purposeSentences}文以内）`);
@@ -58,8 +60,30 @@ export function judgePlan(sbis, { securityCategories = null } = {}) {
       if (blank(sbi.verification[key])) add(sbi.id, 'verification', `検証方法（${label}）が未記載です`);
     }
   }
+  judgeKinds(sbis, add);
   for (const cycle of dependencyCycles(sbis)) add(cycle[0], 'dependency-cycle', `依存SBIが循環しています: ${cycle.join(' → ')}`);
   return { status: findings.length ? 'FAIL' : 'PASS', findings };
+}
+
+// A PBI is implementation SBIs, then at most one validation SBI when it needs Integration / E2E. Human acceptance is a PBI Gate, not an SBI.
+function judgeKinds(sbis, add) {
+  const of = kind => sbis.filter(s => s.kind === kind);
+  const implementations = of('implementation').map(s => s.id), validations = of('validation');
+  if (!implementations.length) add('*', 'kind-implementation', '実装SBI（implementation）がありません');
+  if (validations.length > 1) add('*', 'kind-validation', `最終確認SBI（validation）が${validations.length}件です。PBIごとに1件までです`);
+  for (const sbi of sbis.filter(s => !sbiKinds.includes(s.kind))) {
+    add(sbi.id, 'kind-unknown', `SBIの種類 ${sbi.kind} は使えません。人間確認はSBIにせず、PBI Human Acceptance Gateで扱います`);
+  }
+  for (const sbi of of('implementation')) {
+    const later = sbi.dependsOn.filter(id => sbis.some(s => s.id === id && s.kind !== 'implementation'));
+    if (later.length) add(sbi.id, 'kind-dependency', `実装SBIが最終確認SBI（${later.join(', ')}）に依存しています`);
+  }
+  for (const sbi of validations) {
+    const missing = implementations.filter(id => !sbi.dependsOn.includes(id));
+    const extra = sbi.dependsOn.filter(id => !implementations.includes(id));
+    if (missing.length) add(sbi.id, 'kind-dependency', `最終確認SBIはすべての実装SBIに依存してください（不足: ${missing.join(', ')}）`);
+    if (extra.length) add(sbi.id, 'kind-dependency', `最終確認SBIは実装SBIだけに依存してください（${extra.join(', ')}）`);
+  }
 }
 
 function dependencyCycles(sbis) {
