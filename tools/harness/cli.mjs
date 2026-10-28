@@ -100,7 +100,8 @@ try {
   } else if (command === 'push-gate') {
     // git hands the pushed refs to .githooks/pre-push on stdin; the hook passes them through HARNESS_PUSH_REFS.
     const result = await runPushGate({ root, refs: process.env.HARNESS_PUSH_REFS ?? '', log: line => console.log(redactText(line)),
-      runFull: async () => spawnSync('pnpm', ['harness:test'], { cwd: root, stdio: 'inherit' }).status === 0,
+      // The refs describe this push only; hook tests inside harness:test must not inherit them.
+      runFull: async () => { const { HARNESS_PUSH_REFS, ...env } = process.env; return spawnSync('pnpm', ['harness:test'], { cwd: root, stdio: 'inherit', env }).status === 0; },
       verifyOne: async (id, base) => { process.env.HARNESS_BASE_REF = base; return printVerifier({ base, all: false, id }); } });
     process.exitCode = result.passed ? 0 : 1;
   } else if (command === 'pr') {
