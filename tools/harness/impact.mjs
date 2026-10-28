@@ -7,6 +7,7 @@ import { readSbiFiles, verifySbiSource } from './sbi-source.mjs';
 import { configSchema, securityPolicySchema } from './schemas.mjs';
 import { classifySecurity, combineSecurity, securityPassed, verifySecurity } from './security-enforcement.mjs';
 import { checksPassed, verify } from './verifier.mjs';
+import { withAcceptance } from './acceptance-registry.mjs';
 import { changedFiles as diffFiles, git } from './workspace.mjs';
 // SBI Impact Analysis for CI scheduling. harness.json stays the single definition of verifiers; this only decides which of them a change needs.
 const sorted = values => [...new Set(values)].sort();
@@ -95,9 +96,10 @@ export async function changedSbis(root, files) {
 }
 
 export async function loadImpact({ root, base, all = false }) {
-  const config = configSchema.parse(await readJson(join(root, '.harness/config/harness.json')));
   const files = all ? [] : await changedFiles(root, base);
-  const sbis = await changedSbis(root, files);
+  const { sbis, snapshots } = await readSbiFiles(root, files);
+  // Each Run snapshot brings the Trusted Acceptance of its own SBI Issue only (.harness/acceptance/sbi-<N>.json).
+  const config = await withAcceptance(root, configSchema.parse(await readJson(join(root, '.harness/config/harness.json'))), snapshots.map(s => s.snapshot.source.number));
   return { config, files, sbis, impact: analyzeImpact({ config, sbis, files, all }) };
 }
 

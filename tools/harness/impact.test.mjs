@@ -7,6 +7,7 @@ import { readJson } from './io.mjs';
 import { analyzeImpact, describeImpact, describeJudge, judgeCi, runCompletionJudge } from './impact.mjs';
 import { renderSbiBody } from './planner.mjs';
 import { sbiFromIssue } from './sbi-issue.mjs';
+import { withAcceptance } from './acceptance-registry.mjs';
 import { snapshotFromIssue, snapshotPath } from './sbi-source.mjs';
 import { git } from './workspace.mjs';
 import { verify } from './verifier.mjs';
@@ -306,15 +307,17 @@ describe('CI Completion Judge for Trusted Acceptance and Security', () => {
     };
     const readyIssue = { number: 7, title: 'SBI-001 CI judge', body: renderSbiBody(planned, pbi), html_url: ref.url, state: 'open', labels: [{ name: 'sbi' }, { name: 'ready' }] };
     // The sample acceptance script registered on main as the Trusted Acceptance of SBI Issue #7.
-    const issueAcceptance = { id: 'issue-7-acceptance', trust: 'acceptance', trustedScript: 'tools/harness/sample-bdd.mjs', directory: '.', planned: ['Trusted Acceptance'], commands: [], acceptanceIds: ['AC-1', 'AC-2', 'AC-3'], sbiIssue: 7, appliesTo: ['^never/'] };
+    const issueAcceptance = { version: 1, sbiIssue: 7, verifiers: [{ id: 'issue-7-acceptance', trustedScript: 'tools/harness/sample-bdd.mjs', planned: ['Trusted Acceptance'], acceptanceIds: ['AC-1', 'AC-2', 'AC-3'] }] };
     const runId = '2026-10-28T00-00-00-000Z-1a2b3c4d';
     const branch = async (root, change) => {
-      await update(root, '.harness/config/harness.json', c => { c.verifiers.push(issueAcceptance); });
-      await git(root, ['commit', '-am', 'register the Trusted Acceptance of SBI Issue #7']);
+      await mkdir(join(root, '.harness/acceptance'), { recursive: true });
+      await writeFile(join(root, '.harness/acceptance/sbi-7.json'), JSON.stringify(issueAcceptance));
+      await git(root, ['add', '--all']);
+      await git(root, ['commit', '-m', 'register the Trusted Acceptance of SBI Issue #7']);
       await git(root, ['switch', '-c', 'feature']);
       await mkdir(join(root, 'apps/admin/src'), { recursive: true });
       await writeFile(join(root, 'greeting.mjs'), "export const greet = name => `こんにちは、${name?.trim() || 'ゲスト'}さん`;\n");
-      const sbi = sbiFromIssue({ ref, issue: readyIssue, config: await readJson(join(root, '.harness/config/harness.json')) });
+      const sbi = sbiFromIssue({ ref, issue: readyIssue, config: await withAcceptance(root, await readJson(join(root, '.harness/config/harness.json')), [7]) });
       const snapshot = snapshotFromIssue({ ref, issue: readyIssue, runId, sbi });
       await writeFile(join(root, snapshotPath(snapshot)), JSON.stringify(snapshot));
       await change(root);
