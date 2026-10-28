@@ -49,7 +49,10 @@ export async function verify({ root, workspace, config, sbi, files = sbi.allowed
     }
     const cwd=join(workspace,adapter.directory);
     const missing=!await exists(cwd) || (adapter.marker && !await exists(join(cwd,adapter.marker)));
-    if (missing) checks.push({...base,status:base.required?'FAIL':'SKIP',cwd,reason:base.required?'required app is missing':'missing app (placeholder)',planned:adapter.planned});
+    // A shared root file (lockfile, workspace config) alone does not require a not-yet-generated app.
+    const ownsChange = mandatory || files.some(f => f.path.startsWith(`${adapter.directory}/`));
+    if (missing && !ownsChange) checks.push({...base,required:false,status:'SKIP',cwd,reason:'missing app (placeholder)',planned:adapter.planned});
+    else if (missing) checks.push({...base,status:'FAIL',cwd,reason:'required app is missing',planned:adapter.planned});
     else if (!adapter.commands.length) checks.push({...base,required:true,status:'NOT_CONFIGURED',cwd,reason:'app exists but verifier commands are not configured'});
     else {
       const processes=[];

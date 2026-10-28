@@ -1,0 +1,127 @@
+{
+  "id": "SBI-ADMIN-ENV",
+  "title": "管理画面用React開発環境を apps/admin に構築する",
+  "description": "Issue #20。apps/adminにReact + TypeScript + Viteの開発環境を構築し、TanStack Router / Query、Axios、React Hook Form + Zod、Biome、Vitest + RTLを導入する。業務画面・認証・UI component libraryは導入しない。",
+  "gherkin": "Feature: 管理画面の開発環境\n  Scenario: 後続SBIが機能を追加できる\n    Given apps/adminにReact + TypeScript + Vite環境がある\n    When pnpm --filter admin の typecheck / check / test / build を実行する\n    Then すべてPASSする\n  Scenario: Harnessから検証できる\n    Given harness.jsonのadmin verifierにコマンドが登録されている\n    When Harnessがapps/adminの変更を検証する\n    Then typecheck / Biome check / test / build が実行される\n  Scenario: 未決定の技術を固定しない\n    Given 認証ProviderとDesign Systemが未決定である\n    When 依存関係を確認する\n    Then 認証Provider SDK・UI component library・ESLint・Prettierは存在しない",
+  "acceptanceCriteria": [
+    {
+      "id": "ADMIN-AC-1",
+      "description": "apps/adminにReact + TypeScript + Vite環境が存在する",
+      "verifier": "admin-acceptance"
+    },
+    {
+      "id": "ADMIN-AC-2",
+      "description": "pnpm workspaceに参加している",
+      "verifier": "admin-acceptance"
+    },
+    {
+      "id": "ADMIN-AC-3",
+      "description": "TanStack Routerを利用できる",
+      "verifier": "admin-acceptance"
+    },
+    {
+      "id": "ADMIN-AC-4",
+      "description": "TanStack Queryを利用できる",
+      "verifier": "admin-acceptance"
+    },
+    {
+      "id": "ADMIN-AC-5",
+      "description": "Axiosを利用できる",
+      "verifier": "admin-acceptance"
+    },
+    {
+      "id": "ADMIN-AC-6",
+      "description": "React Hook Form + Zodを利用できる",
+      "verifier": "admin-acceptance"
+    },
+    {
+      "id": "ADMIN-AC-7",
+      "description": "Biomeでlint / formatを実行できる",
+      "verifier": "admin-acceptance"
+    },
+    {
+      "id": "ADMIN-AC-8",
+      "description": "ESLint / Prettierを導入していない",
+      "verifier": "admin-acceptance"
+    },
+    {
+      "id": "ADMIN-AC-9",
+      "description": "VITE_API_BASE_URLを設定できる",
+      "verifier": "admin-acceptance"
+    },
+    {
+      "id": "ADMIN-AC-10",
+      "description": "dev / build / typecheck / lint / format:check / check / testが実行できる",
+      "verifier": "admin-acceptance"
+    },
+    {
+      "id": "ADMIN-AC-11",
+      "description": "unit/component testが最低1件PASSする",
+      "verifier": "admin-acceptance"
+    },
+    {
+      "id": "ADMIN-AC-12",
+      "description": "production buildがPASSする",
+      "verifier": "admin-acceptance"
+    },
+    {
+      "id": "ADMIN-AC-13",
+      "description": "Harnessのadmin verifierから検証できる",
+      "verifier": "admin-acceptance"
+    },
+    {
+      "id": "ADMIN-AC-14",
+      "description": "認証Provider固有ライブラリを導入していない",
+      "verifier": "admin-acceptance"
+    },
+    {
+      "id": "ADMIN-AC-15",
+      "description": "UI component libraryを勝手に固定していない",
+      "verifier": "admin-acceptance"
+    },
+    {
+      "id": "ADMIN-AC-16",
+      "description": "READMEに開発手順が記載されている",
+      "verifier": "admin-acceptance"
+    }
+  ],
+  "allowedFiles": [
+    "apps/admin/package.json",
+    "apps/admin/README.md",
+    "apps/admin/.env.example",
+    "apps/admin/.gitignore",
+    "apps/admin/biome.json",
+    "apps/admin/index.html",
+    "apps/admin/tsconfig.json",
+    "apps/admin/tsconfig.app.json",
+    "apps/admin/tsconfig.node.json",
+    "apps/admin/vite.config.ts",
+    "apps/admin/src/main.tsx",
+    "apps/admin/src/vite-env.d.ts",
+    "apps/admin/src/test/setup.ts",
+    "apps/admin/src/app/router.tsx",
+    "apps/admin/src/app/providers.tsx",
+    "apps/admin/src/app/HomePage/index.tsx",
+    "apps/admin/src/app/HomePage/index.test.tsx",
+    "apps/admin/src/shared/config/env.ts",
+    "apps/admin/src/shared/config/env.test.ts",
+    "apps/admin/src/shared/api/index.ts",
+    "apps/admin/src/shared/api/http-client.ts",
+    "apps/admin/src/shared/api/http-client.test.ts",
+    "apps/admin/src/shared/api/query-client.ts",
+    "apps/admin/src/shared/api/query-client.test.ts",
+    "pnpm-lock.yaml"
+  ],
+  "risks": [
+    "pnpm-lock.yamlの更新はworkspace全体に影響する"
+  ],
+  "ambiguous": false,
+  "requiresDesignDecision": false,
+  "securityImpact": [],
+  "requiredSecurityRules": [],
+  "requiredVerifiers": [
+    "admin"
+  ],
+  "preImplementationGate": false,
+  "minimumRiskLevel": 2
+}

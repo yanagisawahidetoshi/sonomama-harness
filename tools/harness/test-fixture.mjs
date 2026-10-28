@@ -6,10 +6,13 @@ import { runHarness } from './index.mjs';
 const source = new URL('../../', import.meta.url).pathname;
 export async function fixture(fn) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'sonomama-risk-')));
+  const ignored = (await git(source, ['ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '--', 'apps', 'prototypes', 'packages'])).stdout
+    .split('\n').filter(Boolean).map(path => join(source, path.replace(/\/$/, '')));
   try {
     for (const path of ['apps', 'prototypes', 'packages', 'docs', '.harness/config', '.harness/verification', '.harness/rules', '.harness/skills', '.harness/state/sample-sbi.json', 'tools/harness', 'AGENTS.md', 'package.json', 'pnpm-workspace.yaml', '.gitignore']) {
       await mkdir(join(root, path, '..'), { recursive: true });
-      await cp(join(source, path), join(root, path), { recursive: true });
+      // Locally installed dependencies and build output are not fixture inputs; only the files Git would see are copied.
+      await cp(join(source, path), join(root, path), { recursive: true, filter: src => !ignored.some(dir => src === dir || src.startsWith(`${dir}/`)) });
     }
     await mkdir(join(root, '.harness/runs'), { recursive: true });
     await git(root, ['init', '--template=', '--initial-branch=main']);
