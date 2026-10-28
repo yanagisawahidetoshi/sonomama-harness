@@ -26,6 +26,9 @@ importers:
       '@stoplight/prism-cli':
         specifier: 5.14.2
         version: 5.14.2
+      swagger-ui-dist:
+        specifier: 5.33.2
+        version: 5.33.2
 
   apps/admin:
     dependencies:
@@ -585,6 +588,10 @@ packages:
 
   /@rolldown/pluginutils@1.0.1:
     resolution: {integrity: sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw==}
+    dev: true
+
+  /@scarf/scarf@1.4.0:
+    resolution: {integrity: sha512-xxeapPiUXdZAE3che6f3xogoJPeZgig6omHEy1rIY5WVsB3H2BHNnZH+gHG6x91SCWyQCzWGsuL2Hh3ClO5/qQ==}
     dev: true
 
   /@standard-schema/utils@0.3.0:
@@ -2677,6 +2684,12 @@ packages:
     engines: {node: '>=8'}
     dependencies:
       has-flag: 4.0.0
+    dev: true
+
+  /swagger-ui-dist@5.33.2:
+    resolution: {integrity: sha512-MyrWX06zkJRYPnIau8Qj8F6KfzS+Qj8D9AR36vCWkkC9ts1r1DYF84apgCvZBzO2Wzm7G7loCd5VS+4JLWoyLQ==}
+    dependencies:
+      '@scarf/scarf': 1.4.0
     dev: true
 
   /tinybench@6.2.2:
