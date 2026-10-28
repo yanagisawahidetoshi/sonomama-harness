@@ -11,7 +11,7 @@
 
 ## Verifierの選び方
 
-PRで追加・変更された `.harness/state/sbi-*.json` と、base branchとの差分から決める。
+PRで追加・変更された `.harness/state/sbi-*.json`（Harness Runのsnapshotと手書きのSBI JSON）と、base branchとの差分から決める。
 
 | 根拠 | 選ばれるVerifier | 必須か |
 | --- | --- | --- |
@@ -24,9 +24,18 @@ PRで追加・変更された `.harness/state/sbi-*.json` と、base branchと�
 
 ## SBIが必須の変更
 
-Production（`apps/`・`packages/`と`.harness/config/lanes.json`の`productionPaths`）を変更するPRは、`.harness/state/sbi-*.json`の追加か変更が必須。無ければCompletion JudgeがFAILする。
-それ以外（`prototypes/`、docs、Harness本体など）だけを変更するPRはSBIなしで通り、Verifierは差分だけで選ぶ。
-判定理由はimpact jobとharness jobのログの`SBI required:`行に出る。
+Production（`apps/`・`packages/`と`.harness/config/lanes.json`の`productionPaths`）を変更するPRは、承認済みSBI Issueを起点にしたHarness Runから作られていることが必須。Completion Judge（`harness` job）が次をすべて確かめ、1つでも欠ければFAILする。
+
+| 確認 | 内容 |
+| --- | --- |
+| snapshot | PRで追加・変更された `.harness/state/sbi-<Issue番号>.json` が `sbiSnapshotSchema` を満たす。source Issue（repo / number / url）、Run開始時のtitle / body digest、Run ID、RunのSBIを持つ |
+| source Issue | GitHub APIで読んだ現在のIssueが、このリポジトリのもので、open・`sbi`・`ready`あり・`needs-review`なし。読めなければFAIL |
+| Run の紐付け | PRのcommitのどれかが、snapshotと同じ値の `Harness-Run: <Run ID>` と `SBI-Issue: <Issue URL>` trailerを持つ |
+
+snapshotとtrailerはHarnessがRunとPR作成のときに書く。人間はSBI JSONを書かない。snapshotのSBIは手書きのSBI JSONと同じくImpact AnalysisとTrusted Acceptanceに使う。Issueが後から編集されてもRunの前提はsnapshotに残り、digestが変わったことだけをログに出す。
+source Issueを持たない手書きの `sbi-*.json`（`sbi-admin-env.json` など）はProduction変更の根拠にならない。触らないPRには影響しない。
+それ以外（`prototypes/`、docs、Harness本体など）だけを変更するPRはSBIなしで通り、Verifierは差分だけで選ぶ。mainへのpushでも確認しない。
+判定理由はimpact jobとharness jobのログの `SBI required:` 行と、harness jobの `SBI source` 行に出る。harness jobはIssueを読むため `issues: read` と `GH_TOKEN` を持つ。
 
 `impact.fullGate` のパス（`tools/harness/`、`.harness/config|verification|rules|skills/`、`.github/`、`.githooks/`、`AGENTS.md`、`.ai/`）が変わったときはFull Gateも実行する。
 `impact.toolchain` のパス（`.node-version`、`.tool-versions`、root の `package.json`、`pnpm-workspace.yaml`、`.npmrc`）が変わったときは、全Application VerifierとFull Gateを実行する。ログの理由は`toolchain:<path>`になる。workflowはこの判定の出力を使うだけで、pathを持たない。
@@ -63,9 +72,11 @@ pnpm harness:verify --verifier admin --base origin/main
 
 `.githooks/pre-push`は`harness:check`と`harness:push-gate`を呼ぶだけで、Verifierの一覧を持たない。`harness:push-gate`がgitから渡されたpush先のcommitをbaseに`harness:impact`と同じ判定を行い、required verifierを順に実行する。新しいbranchは`origin/main`と比べる。
 
+検証はcheckoutのworking treeではなく、pushするcommitのdetached worktree（OSの一時ディレクトリ）で行う。未commitの修正でworking treeだけがPASSしても、壊れたcommitはpushできない。worktreeでは`pnpm install --frozen-lockfile --prefer-offline`を先に実行する。検証後は`git worktree remove`（forceなし）で消し、検証が未追跡ファイルを残して消せなかったときはパスをログに出して残す。
+
 次の場合はFull Gateとして`harness:test`全件を実行する。
 
 - `impact.fullGate`か`impact.toolchain`のパスが変わった
-- 複数のrefを同時にpushした、pushするcommitがHEADではない、push先のcommitが手元に無い、比較するbaseが無い、refを読めない
+- 複数のrefを同時にpushした（pushするcommitごとに実行）、push先のcommitが手元に無い、比較するbaseが無い、refを読めない（HEADのcommitで実行）
 
 hookはローカルの早期検出用で、回避できる。SBI必須・Trusted Acceptance・Security・`harness:demo --full`はCIのCompletion Judgeが最終判定する。

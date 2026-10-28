@@ -11,11 +11,12 @@ import { startApiDocs } from './api-docs.mjs';
 import { relativePath } from './schemas.mjs';
 import { describeImpact, describeJudge, loadImpact, runCompletionJudge, runVerifier } from './impact.mjs';
 import { runPushGate } from './push-gate.mjs';
+import { describeSbiSource } from './sbi-source.mjs';
 import { appendFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 const root = fileURLToPath(new URL('../../', import.meta.url));
-async function printVerifier({ base, all, id }) {
-  const { impact, result, passed } = await runVerifier({ root, base, all, id });
+async function printVerifier({ root: workspace = root, base, all, id }) {
+  const { impact, result, passed } = await runVerifier({ root: workspace, base, all, id });
   const selection = impact.verifiers.find(v => v.id === id);
   console.log(redactText(`Selected by: ${selection ? selection.reasons.join(', ') : '(not selected by impact)'}`));
   for (const c of result.checks) {
@@ -91,6 +92,7 @@ try {
       const needs = JSON.parse(process.env.HARNESS_NEEDS || '{}');
       const judged = await runCompletionJudge({ root, base, all, needs });
       for (const line of describeImpact(judged.impact)) console.log(redactText(line));
+      for (const line of describeSbiSource(judged.source)) console.log(redactText(line));
       for (const c of [...judged.checks, ...judged.security.checks.filter(c => c.required)]) console.log(redactText(`${c.id}: ${c.status}${c.reason ? ` (${c.reason})` : ''}`));
       for (const [job, value] of Object.entries(needs)) console.log(`job ${job}: ${value.result}`);
       for (const line of describeJudge({ needs, ...judged })) console.log(redactText(line));
@@ -99,10 +101,14 @@ try {
     }
   } else if (command === 'push-gate') {
     // git hands the pushed refs to .githooks/pre-push on stdin; the hook passes them through HARNESS_PUSH_REFS.
-    const result = await runPushGate({ root, refs: process.env.HARNESS_PUSH_REFS ?? '', log: line => console.log(redactText(line)),
-      // The refs describe this push only; hook tests inside harness:test must not inherit them.
-      runFull: async () => { const { HARNESS_PUSH_REFS, ...env } = process.env; return spawnSync('pnpm', ['harness:test'], { cwd: root, stdio: 'inherit', env }).status === 0; },
-      verifyOne: async (id, base) => { process.env.HARNESS_BASE_REF = base; return printVerifier({ base, all: false, id }); } });
+    // The refs describe this push only; hook tests inside harness:test must not inherit them.
+    const { HARNESS_PUSH_REFS: refs = '', ...env } = process.env;
+    const pnpm = (args, cwd) => spawnSync('pnpm', args, { cwd, stdio: 'inherit', env }).status === 0;
+    // Each check runs in the detached worktree of the pushed commit, which starts without node_modules.
+    const result = await runPushGate({ root, refs, log: line => console.log(redactText(line)),
+      install: workspace => pnpm(['install', '--frozen-lockfile', '--prefer-offline'], workspace),
+      runFull: workspace => pnpm(['harness:test'], workspace),
+      verifyOne: async (id, base, workspace) => { process.env.HARNESS_BASE_REF = base; return printVerifier({ root: workspace, base, all: false, id }); } });
     process.exitCode = result.passed ? 0 : 1;
   } else if (command === 'pr') {
     if (!options['--run']) throw new Error('pr requires --run ID');

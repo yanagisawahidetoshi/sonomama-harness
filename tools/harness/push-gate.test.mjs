@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, chmod, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, chmod, readFile, rm, rmdir, access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
@@ -74,22 +74,24 @@ describe('Push gate planning',()=>{
   const head=sha('a');
   describe('given a single branch push of HEAD',()=>{
     it('when the remote branch exists then analyses the impact against the remote commit',()=>{
-      assert.deepEqual(planPushGate({refs:`refs/heads/x ${head} refs/heads/x ${sha('b')}\n`,head,fallbackBase:'origin/main'}),{mode:'impact',base:sha('b'),reasons:['remote:refs/heads/x']});
+      assert.deepEqual(planPushGate({refs:`refs/heads/x ${head} refs/heads/x ${sha('b')}\n`,head,fallbackBase:'origin/main'}),{mode:'impact',shas:[head],base:sha('b'),reasons:['remote:refs/heads/x']});
     });
     it('when the branch is new then analyses the impact against the default branch',()=>{
-      assert.deepEqual(planPushGate({refs:`refs/heads/x ${head} refs/heads/x ${zero}\n`,head,fallbackBase:'origin/main'}),{mode:'impact',base:'origin/main',reasons:['new-branch:origin/main']});
+      assert.deepEqual(planPushGate({refs:`refs/heads/x ${head} refs/heads/x ${zero}\n`,head,fallbackBase:'origin/main'}),{mode:'impact',shas:[head],base:'origin/main',reasons:['new-branch:origin/main']});
+    });
+    it('when the pushed commit is not HEAD then still analyses the impact of the pushed commit',()=>{
+      assert.deepEqual(planPushGate({refs:`refs/heads/x ${sha('d')} refs/heads/x ${sha('b')}\n`,head,fallbackBase:'origin/main'}),{mode:'impact',shas:[sha('d')],base:sha('b'),reasons:['remote:refs/heads/x']});
     });
   });
   describe('given a push the gate cannot scope safely',()=>{
-    for (const [name,refs,fallbackBase,reason] of [
-      ['no ref is given','',  'origin/main','push refs unknown'],
-      ['several refs are pushed',`refs/heads/x ${head} refs/heads/x ${sha('b')}\nrefs/heads/y ${head} refs/heads/y ${sha('c')}\n`,'origin/main','several refs pushed'],
-      ['the pushed commit is not HEAD',`refs/heads/x ${sha('d')} refs/heads/x ${sha('b')}\n`,'origin/main','pushed commit is not HEAD'],
-      ['a new branch has no default branch to compare with',`refs/heads/x ${head} refs/heads/x ${zero}\n`,null,'no base for a new branch'],
-      ['a line is malformed','refs/heads/x\n','origin/main','push refs unknown'],
+    for (const [name,refs,fallbackBase,shas,reason] of [
+      ['no ref is given','','origin/main',[head],'push refs unknown'],
+      ['several refs are pushed',`refs/heads/x ${head} refs/heads/x ${sha('b')}\nrefs/heads/y ${sha('d')} refs/heads/y ${sha('c')}\n`,'origin/main',[head,sha('d')],'several refs pushed'],
+      ['a new branch has no default branch to compare with',`refs/heads/x ${head} refs/heads/x ${zero}\n`,null,[head],'no base for a new branch'],
+      ['a line is malformed','refs/heads/x\n','origin/main',[head],'push refs unknown'],
     ]) {
-      it(`when ${name} then runs the Full Gate`,()=>{
-        assert.deepEqual(planPushGate({refs,head,fallbackBase}),{mode:'full',reasons:[reason]});
+      it(`when ${name} then runs the Full Gate on the commits that are pushed, or on HEAD when they are unknown`,()=>{
+        assert.deepEqual(planPushGate({refs,head,fallbackBase}),{mode:'full',shas,reasons:[reason]});
       });
     }
   });
@@ -111,7 +113,7 @@ describe('Push gate execution',()=>{
   };
   const gate=async (root,refs,results={})=>{
     const verified=[]; let full=0;
-    const result=await runPushGate({root,refs,runFull:async()=>{ full++; return true; },verifyOne:async id=>{ verified.push(id); return results[id] ?? true; }});
+    const result=await runPushGate({root,refs,install:async()=>true,runFull:async()=>{ full++; return true; },verifyOne:async id=>{ verified.push(id); return results[id] ?? true; }});
     return {...result,verified,full};
   };
   describe('given a change in one application area',()=>{
@@ -146,7 +148,7 @@ describe('Push gate execution',()=>{
     }));
     it('when the full Harness test fails then stops the push',()=>fixture(async root=>{
       const refs=await branch(root,['tools/harness/verifier.mjs']);
-      const result=await runPushGate({root,refs,runFull:async()=>false,verifyOne:async()=>true});
+      const result=await runPushGate({root,refs,install:async()=>true,runFull:async()=>false,verifyOne:async()=>true});
       assert.equal(result.passed,false);
     }));
   });
@@ -167,6 +169,67 @@ describe('Push gate execution',()=>{
       assert.deepEqual(result.verified,[]);
       assert.equal(result.full,0);
       assert.equal(result.passed,true);
+    }));
+  });
+  describe('given a working tree that differs from the pushed commit',()=>{
+    const worktrees=async root=>(await git(root,['worktree','list','--porcelain'])).stdout.split('\n').filter(l=>l.startsWith('worktree '));
+    const gone=async path=>access(path).then(()=>false,()=>true);
+    it('when HEAD is broken and only an uncommitted fix passes then verifies the pushed commit and stops the push',()=>fixture(async root=>{
+      const refs=await branch(root,['apps/admin/src/main.ts']);
+      await writeFile(join(root,'apps/admin/src/main.ts'),'export const fixed = true;\n');
+      const result=await runPushGate({root,refs,install:async()=>true,runFull:async()=>true,
+        verifyOne:async (id,base,workspace)=>(await readFile(join(workspace,'apps/admin/src/main.ts'),'utf8')).includes('fixed')});
+      assert.equal(result.passed,false);
+    }));
+    it('when the Full Gate runs then runs it on the pushed commit, not on the uncommitted working tree',()=>fixture(async root=>{
+      const refs=await branch(root,['tools/harness/verifier.mjs']);
+      await writeFile(join(root,'tools/harness/verifier.mjs'),'export const fixed = true;\n');
+      const seen=[];
+      const result=await runPushGate({root,refs,install:async()=>true,verifyOne:async()=>true,
+        runFull:async workspace=>{ seen.push(await readFile(join(workspace,'tools/harness/verifier.mjs'),'utf8')); return true; }});
+      assert.equal(result.mode,'full');
+      assert.deepEqual(seen,['export const changed = true;\n']);
+    }));
+    it('when the gate verifies then hands over a detached worktree at the pushed commit outside the checkout and removes it afterwards',()=>fixture(async root=>{
+      const refs=await branch(root,['apps/admin/src/main.ts']);
+      const pushed=refs.split(' ')[1];
+      const seen=[];
+      await runPushGate({root,refs,install:async()=>true,runFull:async()=>true,verifyOne:async (id,base,workspace)=>{
+        seen.push({workspace,head:(await git(workspace,['rev-parse','HEAD'])).stdout.trim(),branch:(await git(workspace,['rev-parse','--abbrev-ref','HEAD'])).stdout.trim()});
+        return true;
+      }});
+      assert.equal(seen.length,1);
+      assert.notEqual(seen[0].workspace,root);
+      assert.ok(!seen[0].workspace.startsWith(root));
+      assert.equal(seen[0].head,pushed);
+      assert.equal(seen[0].branch,'HEAD');
+      assert.equal(await gone(seen[0].workspace),true);
+      assert.deepEqual(await worktrees(root),[`worktree ${root}`]);
+    }));
+    it('when the dependencies cannot be installed in the worktree then stops the push and removes the worktree',()=>fixture(async root=>{
+      const refs=await branch(root,['apps/admin/src/main.ts']);
+      let verified=0;
+      const result=await runPushGate({root,refs,install:async()=>false,runFull:async()=>true,verifyOne:async()=>{ verified++; return true; }});
+      assert.equal(result.passed,false);
+      assert.equal(verified,0);
+      assert.deepEqual(await worktrees(root),[`worktree ${root}`]);
+    }));
+    it('when a verifier throws then still removes the worktree',()=>fixture(async root=>{
+      const refs=await branch(root,['apps/admin/src/main.ts']);
+      await assert.rejects(runPushGate({root,refs,install:async()=>true,runFull:async()=>true,verifyOne:async()=>{ throw new Error('boom'); }}),/boom/);
+      assert.deepEqual(await worktrees(root),[`worktree ${root}`]);
+    }));
+    it('when verification leaves untracked files then keeps the worktree without force and reports its path',()=>fixture(async root=>{
+      const refs=await branch(root,['apps/admin/src/main.ts']);
+      const lines=[]; let workspace;
+      const result=await runPushGate({root,refs,install:async()=>true,runFull:async()=>true,log:line=>lines.push(line),
+        verifyOne:async (id,base,w)=>{ workspace=w; await writeFile(join(w,'stray.txt'),'left behind\n'); return true; }});
+      try {
+        assert.equal(result.passed,true);
+        assert.deepEqual(result.leftovers,[workspace]);
+        assert.ok(lines.some(l=>l.includes(workspace)));
+        assert.equal(await gone(workspace),false);
+      } finally { await rm(join(workspace,'stray.txt')); await git(root,['worktree','remove',workspace]); await rmdir(join(workspace,'..')); }
     }));
   });
 });
