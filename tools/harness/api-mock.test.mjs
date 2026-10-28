@@ -219,16 +219,45 @@ describe('Prism Mock check of a Schema SBI', () => {
     assert.equal(result.status, 'PASS', result.errors.join('; '));
     assert.deepEqual(result.checked.sort(), ['GET /api/v1/courses 200', 'GET /api/v1/levels 200']);
   }));
-  it('when an endpoint has a path parameter without an example then it is listed as not called instead of passing silently', () => fixture(async root => {
-    await write(root, openapi({ '/api/v1/courses': courses, '/api/v1/courses/{id}': { get: { operationId: 'getCourse', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: { description: 'OK' } } } } }));
+  // A path parameter gets its value from the OpenAPI itself (example, enum, then type), so a typical GET /courses/{id} is really called.
+  it('when an endpoint has a path parameter with an example then Prism is called with that value', () => fixture(async root => {
+    const course = { get: { operationId: 'getCourse', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', example: 'c1' } }], responses: { 200: { description: 'OK', content: json({ type: 'object', properties: { id: { type: 'string' } } }, { id: 'c1' }) } } } };
+    await write(root, openapi({ '/api/v1/courses/{id}': course }));
+    const result = await checkApiMock({ root });
+    assert.deepEqual([result.status, result.checked], ['PASS', ['GET /api/v1/courses/{id} 200']], result.errors.join('; '));
+  }));
+  it('when a path parameter has only an integer type or an enum then a value is made from it and Prism is called', () => fixture(async root => {
+    const byType = { get: { operationId: 'getLesson', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], responses: { 200: { description: 'OK', content: json({ type: 'object' }, {}) } } } };
+    const byEnum = { get: { operationId: 'getLevel', parameters: [{ name: 'level', in: 'path', required: true, schema: { type: 'string', enum: ['basic', 'advanced'] } }], responses: { 200: { description: 'OK', content: json({ type: 'object' }, {}) } } } };
+    await write(root, openapi({ '/api/v1/lessons/{id}': byType, '/api/v1/levels/{level}': byEnum }));
+    const result = await checkApiMock({ root });
+    assert.deepEqual([result.status, result.checked.sort()], ['PASS', ['GET /api/v1/lessons/{id} 200', 'GET /api/v1/levels/{level} 200']], result.errors.join('; '));
+  }));
+  it('when no value can be made for a path parameter then that endpoint is listed as not called with the reason', () => fixture(async root => {
+    await write(root, openapi({ '/api/v1/courses': courses, '/api/v1/courses/{id}': { get: { operationId: 'getCourse', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', pattern: '^c[0-9]+$' } }], responses: { 200: { description: 'OK' } } } } }));
     const result = await checkApiMock({ root });
     assert.equal(result.status, 'PASS');
-    assert.deepEqual(result.skipped, ['GET /api/v1/courses/{id}']);
+    assert.deepEqual(result.skipped.map(s => s.endpoint), ['GET /api/v1/courses/{id}']);
+    assert.match(result.skipped[0].reason, /path parameter id/);
   }));
-  it('when an endpoint has a security requirement then it is listed as not called, since the Verifier sends no credential', () => fixture(async root => {
+  it('when an endpoint has a security requirement then it is listed as not called with the reason, since the Verifier sends no credential', () => fixture(async root => {
     await write(root, openapi({ '/api/v1/courses': courses, '/api/v1/me': { get: { operationId: 'getMe', security: [{ bearer: [] }], responses: { 200: { description: 'OK' } } } } }));
     const result = await checkApiMock({ root });
-    assert.deepEqual([result.status, result.checked, result.skipped], ['PASS', ['GET /api/v1/courses 200'], ['GET /api/v1/me']]);
+    assert.deepEqual([result.status, result.checked, result.skipped.map(s => s.endpoint)], ['PASS', ['GET /api/v1/courses 200'], ['GET /api/v1/me']]);
+    assert.match(result.skipped[0].reason, /security/);
+  }));
+  // Nothing called is nothing confirmed: a Schema of only POST, unresolvable parameters and secured GETs does not pass.
+  it('when no endpoint could be requested from Prism then fails instead of passing with nothing checked', () => fixture(async root => {
+    await write(root, openapi({
+      '/api/v1/users': { post: { operationId: 'createUser', responses: { 201: { description: 'Created' } } } },
+      '/api/v1/users/{id}': { get: { operationId: 'getUser', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', pattern: '^u[0-9]+$' } }], responses: { 200: { description: 'OK' } } } },
+      '/api/v1/me': { get: { operationId: 'getMe', security: [{ bearer: [] }], responses: { 200: { description: 'OK' } } } },
+    }));
+    const result = await checkApiMock({ root });
+    assert.equal(result.status, 'FAIL');
+    assert.deepEqual(result.checked, []);
+    assert.match(result.errors.join('\n'), /1件も/);
+    assert.deepEqual(result.skipped.map(s => s.endpoint).sort(), ['GET /api/v1/me', 'GET /api/v1/users/{id}', 'POST /api/v1/users']);
   }));
   it('when Prism cannot load the OpenAPI then fails', () => fixture(async root => {
     await write(root, 'openapi: 3.1.0\npaths: [not, a, map]\n');
