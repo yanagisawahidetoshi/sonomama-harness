@@ -18,7 +18,10 @@ export function assertWritablePath(path, { allowSensitiveDeclaration = false } =
 export async function sourceIntegrity(root, baselineSha) {
   const head = (await git(root, ['rev-parse', 'HEAD'])).stdout.trim();
   const dirty = (await git(root, ['status', '--porcelain', '--untracked-files=all'])).stdout;
-  if (dirty || (baselineSha && head !== baselineSha)) throw new Error('Source must be clean; uncommitted inputs or source HEAD changed');
+  if (dirty || (baselineSha && head !== baselineSha)) {
+    // Uncommitted files alone can be cleaned up and retried; a moved HEAD cannot.
+    throw Object.assign(new Error('Source must be clean; uncommitted inputs or source HEAD changed'), { code: baselineSha && head === baselineSha ? 'SOURCE_DIRTY' : 'SOURCE_CHANGED' });
+  }
   return head;
 }
 export async function prepareWorkspace(root, workspace) {

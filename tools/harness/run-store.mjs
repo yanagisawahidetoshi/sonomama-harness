@@ -29,7 +29,8 @@ export async function loadRun(root, runId) {
   const summary = await readJson(paths.summary);
   if (summary.id !== runId) throw new Error('run ID mismatch');
   if (summary.cleanedAt) throw new Error('Run workspace was cleaned; start a new run');
-  await sourceIntegrity(root, summary.baselineSha);
+  // A dirty checkout is retryable only when every trusted input below still matches the snapshot.
+  const dirty = await sourceIntegrity(root, summary.baselineSha).then(() => null, error => { if (error.code !== 'SOURCE_DIRTY') throw error; return error; });
   await assertWorktreeOwner(root, paths.workspace, summary.baselineSha);
   const inputs = await readJson(join(paths.directory, 'inputs.json'));
   if (digest(inputs) !== summary.inputsDigest) throw new Error('input snapshot changed');
@@ -40,5 +41,6 @@ export async function loadRun(root, runId) {
   if (await toolFingerprint(root) !== inputs.toolFingerprint || await readFile(join(root, '.harness/skills/implement.md'), 'utf8') !== inputs.skill) throw new Error('trusted tool/skill snapshot changed');
   await workspaceIntegrity(paths.workspace, summary.headSha);
   if (await workspaceFingerprint(paths.workspace) !== summary.workspaceDigest) throw new Error('workspace snapshot changed; repeat verification in a new run');
+  if (dirty) throw dirty;
   return { summary, inputs, paths };
 }

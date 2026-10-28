@@ -76,6 +76,9 @@ CLIが直接ファイルを変更した場合も停止する。差分をロー�
 承認・resume時はHEAD、未commit変更、Gitで無視されたファイルを含むsource fingerprint、
 入力設定、SBI、rules、スキル、信頼するHarnessコードの一致を確認する。
 いずれか変われば以前の検証・承認を使わずESCALATED。新しいrunで再検証・再承認する。
+実装DONE後のmerge判定で止まってもexecutionStatusはDONEのまま残し、merge.failureに理由（code・retryable）を記録する。
+元のcheckoutの未commitファイルだけ（信頼する入力は一致）や一時的なGit/IOエラーはmerge.state=RETRYABLEとし、
+原因を解消して同じrunを`harness:resume`で再判定できる。上記の不一致はESCALATEDで、原因が消えてもそのrunは再開しない。
 node_modulesはworktreeへ持ち込まず、fingerprintの対象外。アプリを接続する際は同じworkspaceに必要な実行環境を準備する。
 検証コマンドによるsource変更も拒否する。アプリのverifierは先頭で`pnpm install --frozen-lockfile --filter <app>`を実行し、
 build出力はnode_modules配下へ出してsnapshotを変えない。
@@ -236,7 +239,7 @@ MERGED状態を生成するコードやGitHub merge APIは持たない。
 - 試作採用時の設計承認: designApproval.state = NOT_REQUIRED / WAITING_FOR_DESIGN_APPROVAL / APPROVED / REJECTED
 - 実装前: gate.state = NOT_REQUIRED / WAITING_FOR_HUMAN_GATE / APPROVED / REJECTED
 - 実装: executionStatus = PENDING / IMPLEMENTING / VERIFYING / REVIEWING / JUDGING / FAILED / DONE / ESCALATED
-- 実装後: merge.state = NOT_ASSESSED / RISK_ASSESSING / WAITING_FOR_DESIGN_APPROVAL / WAITING_FOR_HUMAN_GATE / WAITING_FOR_HUMAN_REVIEW / MERGE_ALLOWED / REJECTED / BLOCKED
+- 実装後: merge.state = NOT_ASSESSED / RISK_ASSESSING / WAITING_FOR_DESIGN_APPROVAL / WAITING_FOR_HUMAN_GATE / WAITING_FOR_HUMAN_REVIEW / MERGE_ALLOWED / REJECTED / BLOCKED / RETRYABLE
 
 Human Gate未充足ならMerge JudgeもWAITING_FOR_HUMAN_GATEを返す。
 Design Approval未充足（未承認・撤回後）ならMerge JudgeはWAITING_FOR_DESIGN_APPROVALを返し、WAITING_FOR_HUMAN_GATEを流用しない。
