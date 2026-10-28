@@ -12,6 +12,7 @@
 7. GitHubで共有するなら`harness:pr --run ID`でPRを作り、GitHub Reviewで承認する（[pull-request.md](pull-request.md)）。
    PRを作らないLocal modeでは、LEVEL 2は1人、LEVEL 3は異なる2人以上がapprove --phase mergeで承認する。
 8. resume --run IDで再評価し、MERGE_ALLOWEDとautoMergeEligibleを確認する。
+   merge判定の一時エラーはRETRYABLE（executionStatusはDONEのまま）。原因を解消してresumeし直す。
 9. 実際のmergeは人間または別の将来adapterが行う。このHarnessはmergeしない。
 
 ゲート承認とマージ承認は別purpose・別context。使い回せない。
