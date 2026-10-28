@@ -37,7 +37,7 @@ untrusted applicationのコンテナは次の条件で起動する。ローカ�
 - ホストからmountするのはworkspaceだけ。HOME、Docker socket、ホストのnode_modulesはmountしない。
 - workspaceがリポジトリそのもの（`harness:verify`、CI）でも、`.git`・`.harness/state`・`.harness/runs`・`.harness/exports`と秘密ファイルは空のmountで隠す。
 - 環境変数は`HOME=/tmp/home`、`CI`、`LANG`、`TZ`、XDG、pnpm storeの場所だけ。Harnessの環境変数は引き継がない。
-- 非rootのユーザー、capabilityなし、`no-new-privileges`、読み取り専用のroot filesystemで動かす。
+- 非rootのユーザー、`no-new-privileges`、読み取り専用のroot filesystemで動かす。capabilityはCHOWNだけ残し、volumeを準備するrootのexecだけが使う。検証コマンドのユーザーはcapabilityを持たない。
 - networkは既定で無効。依存のinstallやExpo Doctorで外部接続が必要なverifierだけ、`harness.json`で`network: true`を宣言する。
 - node_modulesとpnpm storeはverifierごとの使い捨てvolumeに置き、コンテナ内でinstallする。
 - Dockerが使えないとき、imageを作れないとき、コンテナを起動できないときは`FAIL`（`isolation unavailable`）にする。ホストで代わりに実行しない。
