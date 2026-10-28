@@ -79,6 +79,22 @@ maestro test apps/mobile/.maestro/smoke.yaml   # repo rootから
 `smoke.yaml` はアプリを起動し、初期画面の `testID="home-title"` と `SONOMAMA` が表示されることだけを確認する。
 Harness / CIのrequired checkには含めない。
 
+### Android Emulator
+
+`expo-dev-client` は入れていないため、Android Emulatorのdevelopment buildは既定で `10.0.2.2:8081`（ホストPCのMetro）からbundleを読む。
+`prototypes/mobile` など別のMetroが8081を使っていると、`expo start` は8083等へずれるが、アプリは8081の別アプリのbundleを読み込んでしまう（`Can't find ViewManager 'RNSVGPath'` などの赤画面になる）。
+8081を空けてから起動するか、debug buildの接続先を変える。
+
+```sh
+# 8083で起動したMetroへ向ける例
+printf '<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n<map><string name="debug_http_host">10.0.2.2:8083</string></map>\n' > /tmp/rn-prefs.xml
+adb push /tmp/rn-prefs.xml /data/local/tmp/rn-prefs.xml
+adb shell "run-as com.sonomama.student.dev sh -c 'mkdir -p shared_prefs && cat /data/local/tmp/rn-prefs.xml > shared_prefs/com.sonomama.student.dev_preferences.xml'"
+adb shell am force-stop com.sonomama.student.dev
+```
+
+Pixel 7 Pro API 35 Emulator + Maestro CLI 1.39.13 で `smoke.yaml` のPASSを確認済み。
+
 ## API接続
 
 接続先は `EXPO_PUBLIC_API_BASE_URL` で切り替える。値は `src/shared/api` を初めてimportしたときにZodで検証する。

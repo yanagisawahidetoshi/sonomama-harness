@@ -1,8 +1,11 @@
 import { z } from 'zod';
 const text = z.string().min(1);
+// implementation: feature work (Maestro against the mock API). validation: optional real API + Rails + DB E2E after every implementation SBI.
+// Human acceptance changes no code and runs no test, so it is a PBI Gate (pbiAcceptanceRecordSchema), never an SBI kind.
+export const sbiKinds = Object.freeze(['implementation', 'validation']);
 export const relativePath = text.refine(p => !p.startsWith('/') && !p.includes('\\') && p.split('/').every(s => s !== '..' && s !== '.' && s !== ''), 'unsafe relative path');
 export const sbiSchema = z.strictObject({
-  id: text.regex(/^[A-Za-z0-9_-]+$/), title: text, description: text,
+  id: text.regex(/^[A-Za-z0-9_-]+$/), kind: z.enum(sbiKinds).default('implementation'), title: text, description: text,
   gherkin: text.refine(s => ['Feature:', 'Scenario:', 'Given ', 'When ', 'Then '].every(k => s.includes(k)), 'BDD/Gherkin required'),
   acceptanceCriteria: z.array(z.strictObject({ id: text, description: text, verifier: text })).min(1),
   allowedFiles: z.array(relativePath).min(1), risks: z.array(text),
@@ -54,7 +57,7 @@ export const responseJsonSchema = {
 
 const line = text.max(200);
 export const plannedSbiSchema = z.strictObject({
-  id: text.max(20), title: text.max(80), purpose: text.max(300),
+  id: text.max(20), kind: z.enum(sbiKinds), title: text.max(80), purpose: text.max(300),
   scope: z.strictObject({ included: z.array(line).max(8), excluded: z.array(line).max(8) }),
   acceptanceCriteria: z.array(z.strictObject({ id: text.max(20), description: z.string().max(200) })).max(12),
   scenarios: z.array(z.strictObject({ name: line, given: z.array(line).max(8), when: z.array(line).max(8), then: z.array(line).max(8), acceptanceIds: z.array(text.max(20)).max(12) })).max(12),
@@ -67,7 +70,7 @@ const strings = { type: 'array', items: { type: 'string' } };
 const object = (properties) => ({ type: 'object', additionalProperties: false, required: Object.keys(properties), properties });
 export const planJsonSchema = object({
   sbis: { type: 'array', items: object({
-    id: { type: 'string' }, title: { type: 'string' }, purpose: { type: 'string' },
+    id: { type: 'string' }, kind: { type: 'string', enum: [...sbiKinds] }, title: { type: 'string' }, purpose: { type: 'string' },
     scope: object({ included: strings, excluded: strings }),
     acceptanceCriteria: { type: 'array', items: object({ id: { type: 'string' }, description: { type: 'string' } }) },
     scenarios: { type: 'array', items: object({ name: { type: 'string' }, given: strings, when: strings, then: strings, acceptanceIds: strings }) },
@@ -91,7 +94,7 @@ export const apiPropertySchema = z.strictObject({
 });
 export const apiEndpointSchema = z.strictObject({
   method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']), path: z.string().max(200), operationId: word, summary: sentence, tags: z.array(word).max(10),
-  change: z.enum(['add', 'modify', 'remove']), authN: z.enum(['cognito-jwt', 'public']), authZ: z.strictObject({ roles: z.array(word).max(10), rule: maybe(sentence) }),
+  change: z.enum(['add', 'modify', 'remove']), authN: z.enum(['bearer-jwt', 'public']), authZ: z.strictObject({ roles: z.array(word).max(10), rule: maybe(sentence) }),
   pii: z.boolean(), logCaution: z.array(sentence).max(10),
   parameters: z.array(z.strictObject({ name: z.string().max(64), in: z.enum(['path', 'query', 'header']), required: z.boolean(), description: sentence, type: z.enum(scalarTypes), format: maybe(z.string().max(40)), enum: enumValues, example: maybe(z.string().max(200)) })).max(20),
   requestBody: maybe(z.strictObject({ ...bodyRef, required: z.boolean() })),
@@ -115,7 +118,7 @@ const propertyJson = object({
 });
 const endpointJson = object({
   method: { type: 'string', enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] }, path: { type: 'string' }, operationId: { type: 'string' }, summary: { type: 'string' }, tags: strings,
-  change: { type: 'string', enum: ['add', 'modify', 'remove'] }, authN: { type: 'string', enum: ['cognito-jwt', 'public'] }, authZ: object({ roles: strings, rule: nullableString }),
+  change: { type: 'string', enum: ['add', 'modify', 'remove'] }, authN: { type: 'string', enum: ['bearer-jwt', 'public'] }, authZ: object({ roles: strings, rule: nullableString }),
   pii: { type: 'boolean' }, logCaution: strings,
   parameters: { type: 'array', items: object({ name: { type: 'string' }, in: { type: 'string', enum: ['path', 'query', 'header'] }, required: { type: 'boolean' }, description: { type: 'string' }, type: { type: 'string', enum: scalarTypes }, format: nullableString, enum: enumJson, example: nullableString }) },
   requestBody: nullable(object({ ...bodyRefJson, required: { type: 'boolean' } })),
@@ -161,6 +164,13 @@ export const apiSchemaApprovalRecordSchema = z.strictObject({
   id: text, purpose: z.literal('api-schema'), issueUrl: z.url(), reviewer: text, kind: z.literal('human'), identitySource: text,
   decision: z.enum(['APPROVE', 'REQUEST_CHANGES', 'REVOKE']), decidedAt: z.iso.datetime(),
   commitSha: z.string().regex(/^[0-9a-f]{40,64}$/), proposalDigest: z.string().regex(/^[0-9a-f]{64}$/), signature: text,
+});
+// The PBI Human Acceptance Gate is bound to the PBI and the evidence it confirms (validation evidence, or the merged implementation evidence).
+// It is separate from implementation-gate / design-approval / merge / api-schema records and never substitutes for them.
+export const pbiAcceptanceRecordSchema = z.strictObject({
+  id: text, purpose: z.literal('pbi-acceptance'), pbiUrl: z.url(), reviewer: text, kind: z.literal('human'), identitySource: text,
+  decision: z.enum(['APPROVE', 'REQUEST_CHANGES', 'REVOKE']), decidedAt: z.iso.datetime(),
+  evidenceDigest: z.string().regex(/^[0-9a-f]{64}$/), signature: text,
 });
 export const apiSchemaGenerationRecordSchema = z.strictObject({
   purpose: z.literal('api-schema-generation'), issueUrl: z.url(), runId: text, required: z.union([z.literal(1), z.literal(2)]),

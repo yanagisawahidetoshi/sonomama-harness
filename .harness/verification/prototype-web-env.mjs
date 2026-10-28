@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { hasCommand } from './lib/commands.mjs';
 // Trusted acceptance for SBI-PROTOTYPE-WEB-ENV (#24). Reads the worktree only; the prototype-web verifier runs the commands.
 const root = process.argv[2];
 const app = join(root, 'prototypes/web');
@@ -19,7 +20,7 @@ const pkg = () => JSON.parse(read('prototypes/web/package.json'));
 const deps = () => ({ ...pkg().dependencies, ...pkg().devDependencies });
 const hasDeps = names => { const all = deps(); for (const name of names) assert.ok(all[name], `missing dependency ${name}`); };
 const forbids = (pattern, label) => { for (const name of Object.keys(deps())) assert.doesNotMatch(name, pattern, `${label}: ${name}`); };
-const commands = () => JSON.parse(read('.harness/config/harness.json')).verifiers.find(v => v.id === 'prototype-web').commands.map(c => c.join(' '));
+const commands = () => JSON.parse(read('.harness/config/harness.json')).verifiers.find(v => v.id === 'prototype-web').commands;
 try {
   const scenarios = [
     ['PWEB-AC-1', 'Given prototypes/web, When reading it, Then the prototype package exists', () => {
@@ -43,18 +44,18 @@ try {
     }],
     ['PWEB-AC-5', 'Given the Harness, When verifying the prototype, Then the Storybook static build is a registered command', () => {
       assert.match(pkg().scripts['build-storybook'], /storybook build/);
-      assert.ok(commands().some(c => c.includes('run build-storybook')));
+      assert.ok(hasCommand(commands(), ['pnpm', 'run', 'build-storybook']));
     }],
     ['PWEB-AC-6', 'Given the package, When linting and formatting, Then Biome is configured and ESLint / Prettier are absent', () => {
       hasDeps(['@biomejs/biome']);
       assert.ok(existsSync(join(app, 'biome.json')), 'biome.json');
       for (const name of ['lint', 'format:check', 'check']) assert.match(pkg().scripts[name], /\bbiome\b/, name);
       forbids(/eslint|prettier/i, 'ESLint/Prettier must not be installed');
-      assert.ok(commands().some(c => c.includes('run check')));
+      assert.ok(hasCommand(commands(), ['pnpm', 'run', 'check']));
     }],
     ['PWEB-AC-7', 'Given the Harness, When verifying the prototype, Then typecheck and Vite build are registered', () => {
       assert.match(pkg().scripts.typecheck, /\btsc\b/);
-      for (const script of ['typecheck', 'build']) assert.ok(commands().some(c => c.includes(`run ${script}`)), script);
+      for (const script of ['typecheck', 'build']) assert.ok(hasCommand(commands(), ['pnpm', 'run', script]), script);
     }],
     ['PWEB-AC-8', 'Given the source, When listing stories, Then at least one sample component has a story', () => {
       const stories = sources().filter(p => p.endsWith('.stories.tsx'));

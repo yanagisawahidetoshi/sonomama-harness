@@ -48,7 +48,7 @@ API Schemaを利用する後続処理は、必ず`planner:api-schema-status`（`
 | 項目 | 表現 |
 | --- | --- |
 | Endpoint | method、`/api/v1/...`のpath、camelCaseのoperationId、summary、tags、change（add / modify / remove） |
-| AuthN | `cognito-jwt`は`security: [cognitoJwt]`と401。`public`は`security: []`で401 / 403なし |
+| AuthN | `bearer-jwt`は`security: [bearerAuth]`（HTTP Bearer / JWT。発行する認証Providerは契約に書かない）と401。`public`は`security: []`で401 / 403なし |
 | AuthZ | Railsが判定するroleと条件を`x-sonomama-authz`に記録。roleがあれば403 |
 | Request | path / query / header parameter、request body、required、type / format / enum、constraints |
 | Response | status、body schema、一覧はarray、204はbodyなし |
