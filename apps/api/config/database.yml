@@ -1,0 +1,20 @@
+# PostgreSQL runs in Docker Compose (service "db") without a password. Production connects through DATABASE_URL.
+default: &default
+  adapter: postgresql
+  encoding: unicode
+  max_connections: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
+  host: <%= ENV.fetch("DATABASE_HOST", "localhost") %>
+  port: <%= ENV.fetch("DATABASE_PORT", 5432) %>
+  username: <%= ENV.fetch("DATABASE_USERNAME", "postgres") %>
+
+development:
+  <<: *default
+  database: sonomama_development
+
+test:
+  <<: *default
+  database: sonomama_test
+
+production:
+  <<: *default
+  database: <%= ENV["DATABASE_NAME"] %>

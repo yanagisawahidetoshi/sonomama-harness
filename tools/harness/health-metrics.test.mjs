@@ -36,7 +36,7 @@ describe('Health metrics signal collection', () => {
       assert.equal(metrics.autoMergeEligible, false);
       assert.equal(metrics.cleaned, false);
       assert.deepEqual(metrics.iterations, { total: 2, failed: 1, done: true, limitReached: false, consecutiveFailure: false });
-      assert.deepEqual(metrics.verifiers.summary, { pass: 1, fail: 0, skip: 7, notConfigured: 0 });
+      assert.deepEqual(metrics.verifiers.summary, { pass: 1, fail: 0, skip: 8, notConfigured: 0 });
       assert.deepEqual(metrics.verifiers.checks.find(c => c.id === 'sample-bdd'), { id: 'sample-bdd', status: 'PASS', required: true });
       assert.equal(metrics.security.securitySensitive, false);
       assert.deepEqual(metrics.security.matchedRules, []);
@@ -169,6 +169,7 @@ describe('Health metrics signal collection', () => {
     }));
     it('when a selected application verifier has no commands then records VERIFIER_NOT_CONFIGURED and counts it', () => fixture(async root => {
       await writeFile(join(root, 'apps/api/Gemfile'), '# Rails');
+      await update(root, '.harness/config/harness.json', c => { c.verifiers.find(v => v.id === 'rails').commands = []; });
       await update(root, sbiPath, s => s.allowedFiles = ['greeting.mjs', 'apps/api/note.txt']);
       const run = await runHarness({ root, quiet: true, agent: async () => ({ files: [{ path: 'greeting.mjs', content: 'export const greet = () => "wrong";' }, { path: 'apps/api/note.txt', content: 'note' }] }) });
       assert.equal(run.status, 'ESCALATED');
