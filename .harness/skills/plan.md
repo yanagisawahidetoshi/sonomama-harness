@@ -15,11 +15,11 @@ PBIを、人間が短時間でレビューできる粒度のSBIへ分割する�
 各SBIは次の項目を持つ。
 
 - id: SBI-001から連番。title: 実現する振る舞いを1行で。
-- kind: implementation / validation / acceptance。
+- kind: implementation / validation。
   - implementation（実装SBI）: 通常の機能実装。1件以上。Mobile E2EはモックAPI（承認済みOpenAPI / Prism）で行う。
-  - validation（最終確認SBI）: 1件だけ。dependsOnはすべての実装SBI。Expo → 実API → Rails → DBのMaestro E2Eで確認する。
-  - acceptance（人間確認SBI）: 1件だけ。dependsOnは最終確認SBIだけ。人間が画面・操作感・文言・要件適合を確認する。changeAreasは空でよい。
-  - 実装SBIは最終確認・人間確認SBIに依存させない。
+  - validation（最終確認SBI）: Integration / E2Eが必要なPBIだけ、1件まで。dependsOnはすべての実装SBI。Expo → 実API → Rails → DBのMaestro E2Eで確認する。
+  - 実装SBIは最終確認SBIに依存させない。
+  - 人間による画面・操作感・文言・要件適合の確認はSBIにしない。PBI Human Acceptance Gateで扱う。
 - purpose: 何を実現するSBIかを1〜2文で。目的は1つに絞る。
 - scope.included: 対象となる画面・API・機能・アプリ領域。scope.excluded: 必要な場合だけ簡潔に。
 - acceptanceCriteria: 「何ができればこのSBIを受け入れられるか」を3〜5項目（上限はlimits.acceptanceCriteria）。
@@ -27,11 +27,11 @@ PBIを、人間が短時間でレビューできる粒度のSBIへ分割する�
 - scenarios: BDDのScenario。given / when / thenは1行ずつの配列。acceptanceIdsで対応する受け入れ要件を示す。
   すべての受け入れ要件を少なくとも1つのScenarioが対応付ける。
   testでScenarioを検証する実テストを「種類: 対象」の1行で示す（例: RSpec Request Spec: GET /students）。ファイル名は書かない。
-  lint / typecheckはテストに数えない。最終確認SBIはMaestro E2E、人間確認SBIは「人間確認」と書く。
+  lint / typecheckはテストに数えない。最終確認SBIはMaestro E2Eと書く。
 - dependsOn: 依存する他SBIのid。依存がなければ空配列。循環させない。
 - changeAreas: apps/mobile、apps/api、packages/ui のような粗い単位（実装SBIの上限はlimits.changeAreas）。ファイル名は列挙しない。
-- layers: 実装SBIは1つだけ。最終確認SBIは確認するレイヤーをすべて、人間確認SBIは空配列。
-- estimatedFiles: 想定する変更ファイル数（テストを含む）。人間確認SBIは0。
+- layers: 実装SBIは1つだけ。最終確認SBIは確認するレイヤーをすべて。
+- estimatedFiles: 想定する変更ファイル数（テストを含む）。
 - oversizeReason: estimatedFilesがlimits.estimatedFilesを超える実装SBIだけ、分割できない理由を書く。それ以外はnull。
 - riskCandidate: L1 / L2 / L3の候補。既定はL2。securityImpactがあればL3。最終判定はExecution Harnessが行う。
 - securityImpact: securityCategoriesから該当する分類。影響がなければ空配列。

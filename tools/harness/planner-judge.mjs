@@ -1,4 +1,5 @@
 // Deterministic SBI Quality Judge. Structural rules are exact; granularity and wording rules are bounded heuristics.
+import { sbiKinds } from './schemas.mjs';
 export const limits = Object.freeze({ acceptanceCriteria: 6, changeAreas: 4, scenarios: 8, purposeSentences: 2, estimatedFiles: 10 });
 const vagueTerms = ['など', '等々', '適切', 'いい感じ', 'なるべく', '可能な限り', 'できれば', '使いやすい', 'わかりやすい', '十分'];
 const vagueWords = /\b(etc|appropriate|properly)\b/i;
@@ -53,8 +54,7 @@ export function judgePlan(sbis, { securityCategories = null } = {}) {
       if (dependency === sbi.id) add(sbi.id, 'dependency-self', '依存SBIが自分自身を指しています');
       else if (!ids.includes(dependency)) add(sbi.id, 'dependency-unknown', `依存SBI ${dependency} が存在しません`);
     }
-    // An acceptance SBI is a human check and changes no code.
-    if ((sbi.kind !== 'acceptance' && !sbi.changeAreas.length) || sbi.changeAreas.some(blank)) add(sbi.id, 'change-areas', '想定変更範囲が空です');
+    if (!sbi.changeAreas.length || sbi.changeAreas.some(blank)) add(sbi.id, 'change-areas', '想定変更範囲が空です');
     const categories = sbi.securityImpact.filter(category => category !== 'None');
     if (sbi.securityImpact.some(blank)) add(sbi.id, 'security-blank', 'Security Impactに空の項目があります');
     if (categories.length && sbi.securityImpact.includes('None')) add(sbi.id, 'security-mixed', 'Security ImpactにNoneと分類が混在しています');
@@ -70,17 +70,18 @@ export function judgePlan(sbis, { securityCategories = null } = {}) {
   return { status: findings.length ? 'FAIL' : 'PASS', findings };
 }
 
-// A PBI completes only through: every implementation SBI → one validation SBI → one acceptance SBI.
+// A PBI is implementation SBIs, then at most one validation SBI when it needs Integration / E2E. Human acceptance is a PBI Gate, not an SBI.
 function judgeKinds(sbis, add) {
   const of = kind => sbis.filter(s => s.kind === kind);
-  const implementations = of('implementation').map(s => s.id), validations = of('validation'), acceptances = of('acceptance');
+  const implementations = of('implementation').map(s => s.id), validations = of('validation');
   if (!implementations.length) add('*', 'kind-implementation', '実装SBI（implementation）がありません');
-  for (const [list, label, kind] of [[validations, '最終確認SBI', 'validation'], [acceptances, '人間確認SBI', 'acceptance']]) {
-    if (list.length !== 1) add('*', `kind-${kind}`, `${label}（${kind}）が${list.length}件です。PBIごとに1件必要です`);
+  if (validations.length > 1) add('*', 'kind-validation', `最終確認SBI（validation）が${validations.length}件です。PBIごとに1件までです`);
+  for (const sbi of sbis.filter(s => !sbiKinds.includes(s.kind))) {
+    add(sbi.id, 'kind-unknown', `SBIの種類 ${sbi.kind} は使えません。人間確認はSBIにせず、PBI Human Acceptance Gateで扱います`);
   }
   for (const sbi of of('implementation')) {
     const later = sbi.dependsOn.filter(id => sbis.some(s => s.id === id && s.kind !== 'implementation'));
-    if (later.length) add(sbi.id, 'kind-dependency', `実装SBIが最終確認・人間確認SBI（${later.join(', ')}）に依存しています`);
+    if (later.length) add(sbi.id, 'kind-dependency', `実装SBIが最終確認SBI（${later.join(', ')}）に依存しています`);
   }
   for (const sbi of validations) {
     const missing = implementations.filter(id => !sbi.dependsOn.includes(id));
@@ -88,14 +89,10 @@ function judgeKinds(sbis, add) {
     if (missing.length) add(sbi.id, 'kind-dependency', `最終確認SBIはすべての実装SBIに依存してください（不足: ${missing.join(', ')}）`);
     if (extra.length) add(sbi.id, 'kind-dependency', `最終確認SBIは実装SBIだけに依存してください（${extra.join(', ')}）`);
   }
-  for (const sbi of acceptances) {
-    const expected = validations.map(s => s.id);
-    if (sbi.dependsOn.length !== expected.length || !expected.every(id => sbi.dependsOn.includes(id))) add(sbi.id, 'kind-dependency', `人間確認SBIは最終確認SBI（${expected.join(', ') || 'なし'}）だけに依存してください`);
-  }
 }
 
 // One implementation SBI is one layer, one PR of about two hours and at most limits.estimatedFiles files, verified by a real test per scenario.
-// Validation spans the whole PBI and its real test is the E2E; acceptance is a human check and changes no code.
+// Validation spans the whole PBI and its real test is the E2E. Human acceptance is a PBI Gate, not an SBI.
 function judgeGranularity(sbis, add) {
   for (const sbi of sbis.filter(s => s.kind === 'implementation')) {
     if (sbi.layers.length !== 1 || sbi.layers.some(blank)) add(sbi.id, 'layer-mixed', `レイヤーは1つにしてください（${sbi.layers.length}件: ${sbi.layers.join(', ') || 'なし'}）`);
@@ -108,7 +105,7 @@ function judgeGranularity(sbis, add) {
   for (const sbi of sbis.filter(s => s.kind === 'validation')) {
     if (!blank(sbi.verification.e2e) && !realTest(sbi.verification.e2e)) add(sbi.id, 'real-test', `最終確認SBIのE2Eに実テストがありません: ${sbi.verification.e2e}`);
   }
-  for (const sbi of sbis.filter(s => s.kind !== 'acceptance')) {
+  for (const sbi of sbis) {
     for (const scenario of sbi.scenarios) if (!realTest(scenario.test)) add(sbi.id, 'gherkin-test', `Scenario「${scenario.name}」を検証する実テストがありません（lint / typecheckだけでは不可）`);
   }
 }

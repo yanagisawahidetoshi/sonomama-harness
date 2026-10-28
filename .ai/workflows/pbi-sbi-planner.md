@@ -8,18 +8,18 @@
 5. PASSなら依存順にSBI Issueを作成し、`sbi`と`needs-review`を付与する。元PBIに`## Generated SBI`一覧をコメントする。
 6. 人間がSBI Issueをレビューする。見るのは分割粒度、受け入れ要件、Gherkin、依存関係、Security影響、検証方法。
 7. 採用するSBIは`needs-review`を外して`ready`を付ける。`gh issue edit <number> --remove-label needs-review --add-label ready`。
-8. `ready`のSBIを人間がSBI JSON（docs/product/sbi-template.md）へ落とし、Execution Harnessで実行する。
+8. `ready`のSBIをExecution Harnessで実行する。
 
 ## SBIの種類
 
 | kind | 開始条件 | 完了条件 |
 | --- | --- | --- |
 | implementation（実装SBI） | dependsOnのSBIが完了 | PRがmainへmerge済み、必須VerifierがPASS、E2E対象ならモックAPIのMaestro E2EがPASS |
-| validation（最終確認SBI、PBIに1件） | 同じPBIの実装SBIがすべて完了 | 実API / Rails / DBへ接続したMaestro E2EがPASS |
-| acceptance（人間確認SBI、PBIに1件） | 最終確認SBIがPASS | 最終確認のEvidence digestに対する人間の`pbi-acceptance`承認 |
+| validation（最終確認SBI、Integration / E2Eが必要なPBIだけ1件まで） | 同じPBIの実装SBIがすべて完了 | 実API / Rails / DBへ接続したMaestro E2EがPASS |
 
-PBIは、上の3種類がすべて完了し、PBIをブロックする未解決バグがないときだけ完了する。判定は`pbi-judge.mjs`の`judgePbi`で行う。
-人間確認SBIはExecution Harnessで実行せず、Completion JudgeもDONEにしない。
+人間確認はコード変更も実テストも持たないので、SBIにしない。PBI Human Acceptance Gateとして扱い、
+すべての実装SBIが完了し、最終確認SBIがあればPASSした後に、そのEvidence digestに対する人間の`pbi-acceptance`承認で通る。
+PBIは、すべてのSBIが完了し、PBI Human Acceptance Gateが承認され、PBIをブロックする未解決バグがないときだけ完了する。判定は`pbi-judge.mjs`の`judgePbi`で行う。
 `pbi-acceptance`はImplementation Gate・Design Approval・Merge Approval・API Schema Approvalとは別の承認で、どれの代わりにもならない。
 `pbi-acceptance`を署名付き台帳へ記録するCLI、Maestroのモック / 実API切り替え、E2E Evidenceの保存は未実装。
 
@@ -37,7 +37,6 @@ SBI Quality Judgeは次を検査し、満たさなければIssueを作成しな�
 | --- | --- | --- | --- |
 | implementation | 1つだけ。想定変更範囲が複数の`apps/*`にまたがればFAIL | 1以上。10を超えるなら分割できない理由が必須 | Application TestとScenarioごとのtestが必須。lint / typecheckだけや「不要」はFAIL |
 | validation | 制約なし（PBI全体を通す） | 制約なし | E2EとScenarioごとのtestが必須 |
-| acceptance | 制約なし | 制約なし | 不要（人間確認） |
 
 2時間の目安はPlannerの判断基準で、Judgeは機械判定しない。
 実装後PRの変更ファイル数を想定と比べる`judgeChangedFileCount`（10と想定の両方を超えたらFAIL）はあるが、Completion Judge・CIにはまだ組み込んでいない。
