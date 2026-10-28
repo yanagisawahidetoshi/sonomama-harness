@@ -202,6 +202,12 @@ describe('Exit code of a run command', () => {
     it('when the PR is blocked for a reason other than CI, such as a commit pushed after verification, then exits 2', () => {
       assert.equal(runExitCode(run({ merge: { reasons: ['tested_sha_mismatch'] } })), 2);
     });
+    it('when the merge assessment after DONE failed but can be retried (RETRYABLE) then exits 2', () => {
+      assert.equal(runExitCode(run({ status: 'RETRYABLE', merge: { reasons: ['merge_assessment_failed'], failure: { code: 'GITHUB_UNAVAILABLE', retryable: true } } })), 2);
+    });
+    it('when the merge assessment after DONE stopped because the source moved then exits 2', () => {
+      assert.equal(runExitCode(run({ status: 'ESCALATED', merge: { reasons: ['required_ci_not_passed'], failure: { code: 'SOURCE_CHANGED', retryable: false } } })), 2);
+    });
     it('when a run meant to publish is DONE without a PR then exits 2', () => {
       assert.equal(runExitCode(run({ status: 'WAITING_FOR_HUMAN_REVIEW', pullRequest: undefined })), 2);
     });

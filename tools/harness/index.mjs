@@ -407,17 +407,22 @@ export function runExitCode(run) {
   return run.status === 'WAITING_FOR_HUMAN_REVIEW' || waitingForCi ? 0 : 2;
 }
 // An SBI Issue URL names the run that waits for this decision. More than one candidate is never guessed.
-// Candidates come from .harness/runs/<id>/summary.json, the run state loadRun verifies; .harness/state/runs is a projection and is never read here.
+// Candidates are the signed run states readRunState verifies (#75); .harness/state/runs is a projection and is never read here.
+// A summary that fails verification is never a candidate; it is named only when no verified run waits for the Issue.
 async function waitingRun(root, url, purpose) {
-  const waiting = [];
+  const waiting = [], unverified = [];
   for (const name of await readdir(join(root, '.harness/runs'))) {
-    if (!runIdSchema.safeParse(name).success) continue;
-    // Planner and API Schema directories have their own summary.json; only a run summary for this Issue matches.
+    if (!runIdSchema.safeParse(name).success || !await exists(runPaths(root, name).summary)) continue;
     let summary;
-    try { summary = await readJson(runPaths(root, name).summary); } catch { continue; }
-    if (summary?.id === name && waitsForIssue(summary, url, purpose)) waiting.push(name);
+    try { summary = await readRunState(root, name); }
+    catch (error) {
+      // Planner and API Schema directories have their own unsigned summary.json; only a run summary that names this Issue matters.
+      if (await readJson(runPaths(root, name).summary).then(s => s?.sbiIssue?.url === url, () => false)) unverified.push(`${name}（${error.message}）`);
+      continue;
+    }
+    if (waitsForIssue(summary, url, purpose)) waiting.push(name);
   }
-  if (waiting.length !== 1) throw new Error(`${url} を待っているrunが${waiting.length}件あります${waiting.length ? `（${waiting.join(', ')}）。--run RUN_ID で指定してください` : ''}`);
+  if (waiting.length !== 1) throw new Error(`${url} を待っているrunが${waiting.length}件あります${waiting.length ? `（${waiting.join(', ')}）。--run RUN_ID で指定してください` : ''}${!waiting.length && unverified.length ? `。run stateの検証に失敗したrun: ${unverified.join(', ')}` : ''}`);
   return waiting[0];
 }
 // harness:approve records the decision through the trusted identity adapter, then continues the run as harness:resume and harness:pr would.

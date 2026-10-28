@@ -523,8 +523,8 @@ describe('GitHub PR Adapter', () => {
       assert.equal(source.status, 'PASS', source.reasons.join('; '));
       await git(root, ['commit', '--allow-empty', '-m', 'main moved']);
       const resumed = await resumeRun({ root, runId: run.id, quiet: true });
-      assert.equal(resumed.executionStatus, 'ESCALATED');
-      assert.match(resumed.reason, /source HEAD changed/);
+      // Execution stays DONE (#70); the merge assessment stops for good because the tested SHA is no longer the merge result.
+      assert.deepEqual([resumed.executionStatus, resumed.status, resumed.merge.failure.code, resumed.merge.failure.retryable], ['DONE', 'ESCALATED', 'SOURCE_CHANGED', false]);
     })));
     it('when the snapshot matches the ready Issue then the run is judged by its app change, not by where the snapshot is stored', () => fixture(root => withIssue(root, sbiIssue(), async () => {
       const run = await start(root);
