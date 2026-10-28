@@ -605,6 +605,40 @@
       ],
       "trust": "acceptance",
       "trustedScript": ".harness/verification/prototype-mobile-env.mjs"
+    },
+    {
+      "id": "ci-matrix-acceptance",
+      "directory": ".",
+      "planned": [
+        "Trusted Acceptance"
+      ],
+      "commands": [],
+      "acceptanceIds": [
+        "CI-AC-1",
+        "CI-AC-2",
+        "CI-AC-3",
+        "CI-AC-4",
+        "CI-AC-5",
+        "CI-AC-6",
+        "CI-AC-7",
+        "CI-AC-8",
+        "CI-AC-9",
+        "CI-AC-10",
+        "CI-AC-11",
+        "CI-AC-12",
+        "CI-AC-13",
+        "CI-AC-14",
+        "CI-AC-15",
+        "CI-AC-16",
+        "CI-AC-17",
+        "CI-AC-18"
+      ],
+      "appliesTo": [],
+      "lanes": [
+        "production"
+      ],
+      "trust": "acceptance",
+      "trustedScript": ".harness/verification/ci-matrix.mjs"
     }
   ],
   "semanticReview": {
