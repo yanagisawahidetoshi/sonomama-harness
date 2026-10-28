@@ -1,0 +1,138 @@
+{
+  "id": "SBI-MOBILE-ARCH",
+  "title": "受講生アプリのFEアーキテクチャ雛形（app → features → shared）を apps/mobile に構築する",
+  "description": "Issue #31。apps/mobileをapp / features / shared / providersに分け、app → features → sharedの依存方向とfeature間直接依存の禁止をdocs/architecture/frontend.mdに定義し、決定的なarchitecture checkをexpo verifierから実行する。受講生専用とし、講師・運営向け画面、認証、OpenAPI code generationは実装しない。",
+  "gherkin": "Feature: 受講生アプリのFEアーキテクチャ\n  Scenario: 依存方向を守ったコードはPASSする\n    Given apps/mobile/srcがapp → features → sharedの依存だけを持つ\n    When pnpm --filter mobile run check:architecture を実行する\n    Then PASSする\n  Scenario: 禁止依存はFAILする\n    Given features/A → features/B、shared → features、shared → appのimportを含むfixtureがある\n    When architecture checkを実行する\n    Then 違反したファイルとimportを示してFAILする\n  Scenario: Harnessから検証できる\n    Given harness.jsonのexpo verifierにarchitecture checkが登録されている\n    When Harnessがapps/mobileの変更を検証する\n    Then typecheck / Biome / test / expo-doctor / architecture checkが実行される",
+  "acceptanceCriteria": [
+    {
+      "id": "MOBILE-ARCH-AC-1",
+      "description": "#22のExpo環境を前提としてapps/mobileにFEアーキテクチャ雛形が存在する",
+      "verifier": "mobile-arch-acceptance"
+    },
+    {
+      "id": "MOBILE-ARCH-AC-2",
+      "description": "app / features / shared / providersの責務が明確になっている",
+      "verifier": "mobile-arch-acceptance"
+    },
+    {
+      "id": "MOBILE-ARCH-AC-3",
+      "description": "Mobileが受講生専用であり、coach / 講師向けRouteやFeatureを含まない",
+      "verifier": "mobile-arch-acceptance"
+    },
+    {
+      "id": "MOBILE-ARCH-AC-4",
+      "description": "app → features → sharedの依存方向が定義されている",
+      "verifier": "mobile-arch-acceptance"
+    },
+    {
+      "id": "MOBILE-ARCH-AC-5",
+      "description": "feature間の直接依存が禁止されている",
+      "verifier": "mobile-arch-acceptance"
+    },
+    {
+      "id": "MOBILE-ARCH-AC-6",
+      "description": "Route componentが薄い構造になっている",
+      "verifier": "mobile-arch-acceptance"
+    },
+    {
+      "id": "MOBILE-ARCH-AC-7",
+      "description": "Feature標準構成が定義されている",
+      "verifier": "mobile-arch-acceptance"
+    },
+    {
+      "id": "MOBILE-ARCH-AC-8",
+      "description": "sharedへの昇格ルールが定義されている",
+      "verifier": "mobile-arch-acceptance"
+    },
+    {
+      "id": "MOBILE-ARCH-AC-9",
+      "description": "Server StateはTanStack Query、FormはReact Hook Form、ValidationはZod、Local UIはReact標準stateを基本とする",
+      "verifier": "mobile-arch-acceptance"
+    },
+    {
+      "id": "MOBILE-ARCH-AC-10",
+      "description": "Redux / Zustand等を理由なく導入していない",
+      "verifier": "mobile-arch-acceptance"
+    },
+    {
+      "id": "MOBILE-ARCH-AC-11",
+      "description": "Componentからraw Axios / fetchを直接呼ばない境界が定義されている",
+      "verifier": "mobile-arch-acceptance"
+    },
+    {
+      "id": "MOBILE-ARCH-AC-12",
+      "description": "TypeScript path aliasが利用できる",
+      "verifier": "mobile-arch-acceptance"
+    },
+    {
+      "id": "MOBILE-ARCH-AC-13",
+      "description": "docs/architecture/frontend.mdが存在する",
+      "verifier": "mobile-arch-acceptance"
+    },
+    {
+      "id": "MOBILE-ARCH-AC-14",
+      "description": "AGENTS.mdとArchitecture Contractに矛盾がない",
+      "verifier": "mobile-arch-acceptance"
+    },
+    {
+      "id": "MOBILE-ARCH-AC-15",
+      "description": "feature間直接依存等を機械的に検出するarchitecture checkが存在する",
+      "verifier": "mobile-arch-acceptance"
+    },
+    {
+      "id": "MOBILE-ARCH-AC-16",
+      "description": "architecture checkをHarness mobile verifierから実行できる",
+      "verifier": "mobile-arch-acceptance"
+    },
+    {
+      "id": "MOBILE-ARCH-AC-17",
+      "description": "正常な依存でarchitecture checkがPASSする",
+      "verifier": "mobile-arch-acceptance"
+    },
+    {
+      "id": "MOBILE-ARCH-AC-18",
+      "description": "禁止依存をfixture / test等で与えた場合にarchitecture checkがFAILすることを確認できる",
+      "verifier": "mobile-arch-acceptance"
+    },
+    {
+      "id": "MOBILE-ARCH-AC-19",
+      "description": "typecheck / Biome / testがPASSする",
+      "verifier": "mobile-arch-acceptance"
+    }
+  ],
+  "allowedFiles": [
+    "apps/mobile/package.json",
+    "apps/mobile/tsconfig.json",
+    "apps/mobile/jest.config.js",
+    "apps/mobile/src/app/_layout.tsx",
+    "apps/mobile/src/app/index.tsx",
+    "apps/mobile/src/features/home/index.ts",
+    "apps/mobile/src/features/home/HomeScreen/index.tsx",
+    "apps/mobile/src/features/home/HomeScreen/index.test.tsx",
+    "apps/mobile/src/features/home/HomeScreen/styles.ts",
+    "apps/mobile/src/features/home/screens/HomeScreen/index.tsx",
+    "apps/mobile/src/features/home/screens/HomeScreen/HomeScreen.test.tsx",
+    "apps/mobile/src/features/home/screens/HomeScreen/styles.ts",
+    "apps/mobile/src/shared/theme/colors.ts",
+    "apps/mobile/src/shared/components/ScreenTitle/index.tsx",
+    "apps/mobile/src/shared/components/ScreenTitle/ScreenTitle.test.tsx",
+    "apps/mobile/src/shared/components/ScreenTitle/styles.ts",
+    "apps/mobile/src/providers/QueryProvider/index.tsx",
+    "apps/mobile/src/providers/QueryProvider/QueryProvider.test.tsx",
+    "apps/mobile/scripts/check-architecture.mjs",
+    "apps/mobile/scripts/check-architecture.test.mjs",
+    "docs/architecture/frontend.md"
+  ],
+  "risks": [
+    "既存のfeatures/home/HomeScreenをscreens配下へ移すため、#22のテストとMaestroのtestIDを維持する必要がある"
+  ],
+  "ambiguous": false,
+  "requiresDesignDecision": false,
+  "securityImpact": [],
+  "requiredSecurityRules": [],
+  "requiredVerifiers": [
+    "expo"
+  ],
+  "preImplementationGate": false,
+  "minimumRiskLevel": 2
+}

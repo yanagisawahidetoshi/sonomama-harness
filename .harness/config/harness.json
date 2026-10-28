@@ -214,6 +214,16 @@
         [
           "pnpm",
           "run",
+          "check:architecture"
+        ],
+        [
+          "pnpm",
+          "run",
+          "test:architecture"
+        ],
+        [
+          "pnpm",
+          "run",
           "doctor"
         ]
       ],
@@ -262,6 +272,42 @@
       ],
       "trust": "acceptance",
       "trustedScript": ".harness/verification/mobile-env.mjs"
+    },
+    {
+      "id": "mobile-arch-acceptance",
+      "directory": "apps/mobile",
+      "marker": "package.json",
+      "planned": [
+        "Trusted Acceptance"
+      ],
+      "commands": [],
+      "acceptanceIds": [
+        "MOBILE-ARCH-AC-1",
+        "MOBILE-ARCH-AC-2",
+        "MOBILE-ARCH-AC-3",
+        "MOBILE-ARCH-AC-4",
+        "MOBILE-ARCH-AC-5",
+        "MOBILE-ARCH-AC-6",
+        "MOBILE-ARCH-AC-7",
+        "MOBILE-ARCH-AC-8",
+        "MOBILE-ARCH-AC-9",
+        "MOBILE-ARCH-AC-10",
+        "MOBILE-ARCH-AC-11",
+        "MOBILE-ARCH-AC-12",
+        "MOBILE-ARCH-AC-13",
+        "MOBILE-ARCH-AC-14",
+        "MOBILE-ARCH-AC-15",
+        "MOBILE-ARCH-AC-16",
+        "MOBILE-ARCH-AC-17",
+        "MOBILE-ARCH-AC-18",
+        "MOBILE-ARCH-AC-19"
+      ],
+      "appliesTo": [],
+      "lanes": [
+        "production"
+      ],
+      "trust": "acceptance",
+      "trustedScript": ".harness/verification/mobile-arch.mjs"
     },
     {
       "id": "admin",

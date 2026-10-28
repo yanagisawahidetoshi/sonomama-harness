@@ -1,15 +1,12 @@
-import { QueryClientProvider } from '@tanstack/react-query';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { createQueryClient } from '../shared/api/query-client';
-
-const queryClient = createQueryClient();
+import { QueryProvider } from '@/providers/QueryProvider';
 
 export default function RootLayout() {
   return (
-    <QueryClientProvider client={queryClient}>
+    <QueryProvider>
       <Stack screenOptions={{ headerShown: false }} />
       <StatusBar style="auto" />
-    </QueryClientProvider>
+    </QueryProvider>
   );
 }

@@ -19,7 +19,7 @@ describe('Local Harness', () => {
       assert.equal(run.iterations[0].verification.status, 'FAIL');
       assert.equal(run.iterations[1].verification.status, 'PASS');
       assert.equal(run.iterations[1].review.status, 'PASS');
-      assert.equal(run.iterations[1].verification.checks.filter(c => c.status === 'SKIP').length, 11);
+      assert.equal(run.iterations[1].verification.checks.filter(c => c.status === 'SKIP').length, 12);
       for (let i = 1; i <= 2; i++) {
         for (const file of ['agent.log', 'verify.log', 'result.json']) {
           assert.ok((await readFile(join(root, run.runDir, `iteration-${i}`, file), 'utf8')).length);
