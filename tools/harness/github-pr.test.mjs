@@ -4,7 +4,7 @@ import { mkdtemp, realpath, rm, writeFile, readdir, chmod, symlink, appendFile, 
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { reviewApprovals, ciStatus } from './github-pr.mjs';
+import { reviewApprovals, ciStatus, pullRequestBody } from './github-pr.mjs';
 import { mergeDecision } from './merge-policy.mjs';
 import { fixture, update, human, commitFixture, runFixture as runHarness } from './test-fixture.mjs';
 import { githubMock } from './test-github.mjs';
@@ -201,6 +201,37 @@ describe('Merge Policy Judge with GitHub PR state', () => {
       const failed = checks.map(c => c.id === 'verification' ? { ...c, status: 'FAIL' } : c);
       assert.equal(decide(2, github({ reviews: { approvedHumans: ['alice'] } }), { checks: failed }).decision, 'BLOCKED');
     });
+  });
+});
+
+// Issue #91: the PR of a Schema SBI is traceable from its body alone: PBI, SBI, contract diff and what Prism did and did not call.
+describe('Pull request body of a Schema SBI', () => {
+  const sbi = { id: 'ISSUE-6', title: 'SBI-001 OpenAPI Schemaを作る', description: 'コース一覧APIの契約を定義する。', acceptanceCriteria: [{ id: 'AC-1', description: 'コース一覧の契約がある' }],
+    issueUrl: 'https://github.com/acme/app/issues/6', pbiUrl: 'https://github.com/acme/app/issues/3' };
+  const contract = { id: 'api-contract', status: 'PASS', processes: [
+    { ok: true, stdout: 'CHANGE 追加: paths./api/v1/courses\nCHANGE 説明を変更: info.description\nAPI contract (base HEAD): PASS\n', stderr: '' },
+    { ok: true, stdout: 'Prism Mock: PASS GET /api/v1/courses 200\nPrism Mock: SKIP GET /api/v1/me（security要件があり、Verifierは認証headerを送らないため）\nPrism Mock: SKIP POST /api/v1/courses（GET以外はPrismへrequestしていません）\nPrism Mock check: PASS\n', stderr: '' }] };
+  const summary = (checks = [contract]) => ({ id: 'run-1', headSha: 'a'.repeat(40), runDir: '.harness/runs/run-1', sbiIssue: { repo: 'acme/app', number: 6, url: sbi.issueUrl },
+    iterations: [{ verification: { status: 'PASS', checks }, security: { status: 'PASS' }, securityVerification: { status: 'PASS' } }], risk: { level: 2, reasons: [] }, merge: { requiredApprovals: 1 } });
+  const section = (body, heading) => body.split(/^## /m).find(part => part.startsWith(heading)) ?? '';
+  it('when the body is written then it links the PBI and the Schema SBI Issue', () => {
+    const body = pullRequestBody({ summary: summary(), sbi });
+    assert.ok(body.includes('元PBI: https://github.com/acme/app/issues/3'));
+    assert.ok(body.includes('Issue: https://github.com/acme/app/issues/6'));
+  });
+  it('when the api-contract Verifier ran then the body lists the breaking and non-breaking contract diff item by item', () => {
+    const api = section(pullRequestBody({ summary: summary(), sbi }), 'API Schema');
+    assert.match(api, /breaking: なし/);
+    assert.ok(api.includes('追加: paths./api/v1/courses') && api.includes('説明を変更: info.description'));
+  });
+  it('when Prism was run then the body lists the endpoints it called and those it did not call with the reason', () => {
+    const api = section(pullRequestBody({ summary: summary(), sbi }), 'API Schema');
+    assert.ok(api.includes('GET /api/v1/courses 200'));
+    assert.ok(api.includes('GET /api/v1/me（security要件があり、Verifierは認証headerを送らないため）'));
+    assert.ok(api.includes('POST /api/v1/courses（GET以外はPrismへrequestしていません）'));
+  });
+  it('when the api-contract Verifier did not run for the SBI then the body has no API Schema section', () => {
+    assert.equal(section(pullRequestBody({ summary: summary([{ id: 'admin', status: 'PASS', processes: [] }]), sbi }), 'API Schema'), '');
   });
 });
 

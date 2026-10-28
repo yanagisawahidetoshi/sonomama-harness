@@ -56,6 +56,9 @@ describe('Execution SBI from a ready SBI Issue', () => {
       assert.equal(sbi.issueUrl, ref.url);
       assert.deepEqual([sbi.risks, sbi.securityImpact, sbi.minimumRiskLevel], [[], [], 2]);
     });
+    it('when it is read then the SBI keeps the URL of its PBI from the Planner marker so the PR can link it', () => {
+      assert.equal(sbiFromIssue({ ref, issue: issue(), config: config() }).pbiUrl, pbi.url);
+    });
     it('when it is read then the change areas become directory scopes and no file is allowed by name', () => {
       const sbi = sbiFromIssue({ ref, issue: issue({}, planned({ changeAreas: ['apps/admin', 'packages/ui/'] })), config: config() });
       assert.deepEqual(sbi.allowedDirs, ['apps/admin/', 'packages/ui/']);
