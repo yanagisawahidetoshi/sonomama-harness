@@ -4,7 +4,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fixture, update } from './test-fixture.mjs';
 import { readJson } from './io.mjs';
-import { analyzeImpact, judgeCi } from './impact.mjs';
+import { analyzeImpact, describeImpact, judgeCi } from './impact.mjs';
 import { verify } from './verifier.mjs';
 import { check } from './check.mjs';
 
@@ -123,6 +123,57 @@ describe('SBI Impact Analysis', () => {
   });
 });
 
+describe('SBI requirement for Production changes', () => {
+  describe('given a Production diff without an SBI', () => {
+    for (const path of [touched.admin, touched.mobile, touched.api, 'packages/api-schema/openapi.yaml']) {
+      it(`when ${path} changes then requires an SBI with the path as the reason`, () => {
+        const impact = analyzeImpact({ config, sbis: [], files: files(path, 'docs/architecture/README.md') });
+        assert.equal(impact.sbiRequired, true);
+        assert.deepEqual(impact.sbiRequiredReasons, [`production:${path}`]);
+      });
+    }
+
+    it('when the Completion Judge aggregates then fails because the SBI is missing', () => {
+      const impact = analyzeImpact({ config, sbis: [], files: files(touched.admin) });
+      const needs = { impact: { result: 'success' }, verifiers: { result: 'success' }, 'harness-test': { result: 'skipped' }, 'harness-demo': { result: 'skipped' } };
+      const result = judgeCi({ impact, needs, acceptance: { status: 'PASS', missing: [] } });
+      assert.equal(result.status, 'FAIL');
+      assert.ok(result.reasons.includes(`sbi missing: production:${touched.admin} requires a changed .harness/state/sbi-*.json`));
+    });
+
+    it('when the impact is printed then the CI log shows why the SBI is required', () => {
+      const lines = describeImpact(analyzeImpact({ config, sbis: [], files: files(touched.api) }));
+      assert.ok(lines.includes(`SBI required: yes (production:${touched.api})`));
+    });
+  });
+
+  describe('given a Production diff with a valid SBI', () => {
+    it('when the Completion Judge aggregates then judges the verifiers and acceptance as before', () => {
+      const impact = analyzeImpact({ config, sbis: [sbi(['admin'])], files: files(touched.admin) });
+      const needs = { impact: { result: 'success' }, verifiers: { result: 'success' }, 'harness-test': { result: 'skipped' }, 'harness-demo': { result: 'skipped' } };
+      assert.equal(impact.sbiRequired, true);
+      assert.deepEqual(required(impact), ['admin']);
+      assert.equal(judgeCi({ impact, needs, acceptance: { status: 'PASS', missing: [] } }).status, 'PASS');
+      assert.equal(judgeCi({ impact, needs, acceptance: { status: 'FAIL', missing: ['X-AC-1'] } }).status, 'FAIL');
+    });
+  });
+
+  describe('given a change outside the Production paths', () => {
+    for (const path of ['prototypes/web/src/main.tsx', 'prototypes/mobile/index.ts', 'docs/architecture/README.md', 'tools/harness/verifier.mjs', '.harness/config/harness.json', 'README.md']) {
+      it(`when only ${path} changes then does not require an SBI`, () => {
+        const impact = analyzeImpact({ config, sbis: [], files: files(path) });
+        assert.equal(impact.sbiRequired, false);
+        assert.deepEqual(impact.sbiRequiredReasons, []);
+        assert.ok(describeImpact(impact).includes('SBI required: no (no production path changed)'));
+      });
+    }
+
+    it('when every verifier is requested on main then does not require an SBI', () => {
+      assert.equal(analyzeImpact({ config, sbis: [], files: [], all: true }).sbiRequired, false);
+    });
+  });
+});
+
 describe('Single verifier execution', () => {
   describe('given the verifier selected by Impact Analysis', () => {
     it('when only one verifier is requested then evaluates that verifier alone', () => fixture(async root => {
@@ -152,8 +203,9 @@ describe('Single verifier execution', () => {
 });
 
 describe('CI Completion Judge', () => {
-  const impact = analyzeImpact({ config, sbis: [], files: files(touched.admin) });
-  const harnessImpact = analyzeImpact({ config, sbis: [], files: files('tools/harness/verifier.mjs', touched.admin) });
+  // Production diffs need an SBI (#45), so the matrix and Full Gate cases carry one.
+  const impact = analyzeImpact({ config, sbis: [sbi(['admin'])], files: files(touched.admin) });
+  const harnessImpact = analyzeImpact({ config, sbis: [sbi(['admin'])], files: files('tools/harness/verifier.mjs', touched.admin) });
   const docsImpact = analyzeImpact({ config, sbis: [], files: files('docs/architecture/README.md') });
   const needs = (verifiers, test = 'skipped', demo = 'skipped') => ({ impact: { result: 'success' }, verifiers: { result: verifiers }, 'harness-test': { result: test }, 'harness-demo': { result: demo } });
   const acceptance = { status: 'PASS', missing: [] };
