@@ -264,8 +264,9 @@ async function runProtected({ root, provider, sbiPath, issueUrl, quiet = false, 
   root = await realpath(root);
   if (issueUrl && sbiPath) throw new Error('Give either an SBI Issue URL or --sbi, not both');
   // The Issue is read and validated before any run directory or worktree exists.
-  const source = issueUrl ? await loadSbiIssue({ issueUrl, config: (await check(root)).config, github: issues }) : null;
-  const { config, rules, sbi, riskPolicy, securityPolicy, humanGates, securityDocuments, lanePolicy } = await check(root, sbiPath, source?.sbi);
+  const sbiIssue = issueUrl ? parseIssueUrl(issueUrl).number : null;
+  const source = issueUrl ? await loadSbiIssue({ issueUrl, config: (await check(root, undefined, undefined, { sbiIssue })).config, github: issues }) : null;
+  const { config, rules, sbi, riskPolicy, securityPolicy, humanGates, securityDocuments, lanePolicy } = await check(root, sbiPath, source?.sbi, { sbiIssue });
   assertSafeInput({config,rules,sbi,riskPolicy,securityPolicy,humanGates,securityDocuments,lanePolicy});
   provider ??= config.provider;
   if (!['fake', 'codex', 'claude'].includes(provider)) throw new Error(`Unknown provider: ${provider}`);

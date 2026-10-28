@@ -2,6 +2,7 @@ import { parseIssueUrl, markerPattern } from './planner.mjs';
 import { githubCli } from './planner-github.mjs';
 import { relativePath } from './schemas.mjs';
 import { assertWritablePath } from './workspace.mjs';
+import { acceptancePath } from './acceptance-registry.mjs';
 // harness:run SBI_URL reads the SBI from the GitHub Issue a human marked ready. Nothing here is written back to GitHub,
 // and nobody transcribes the Issue into SBI JSON: the Harness builds the execution SBI and records it as the Run snapshot.
 
@@ -71,7 +72,7 @@ export function sbiFromIssue({ ref, issue, config }) {
 
   // Trusted Acceptance is written, reviewed and registered by a human before ready. Every criterion needs exactly one registration.
   const registered = config.verifiers.filter(v => v.trust === 'acceptance' && v.sbiIssue === ref.number);
-  if (!registered.length) problems.push(`Trusted Acceptance が登録されていません（harness.json の sbiIssue: ${ref.number}）`);
+  if (!registered.length) problems.push(`Trusted Acceptance が登録されていません（${acceptancePath(ref.number)} がありません）`);
   const acceptanceCriteria = criteria.map(criterion => {
     const owners = registered.filter(v => v.acceptanceIds.includes(criterion.id));
     if (registered.length && owners.length !== 1) problems.push(`${criterion.id} に対応するTrusted Acceptanceが${owners.length}件です（1件必要）`);

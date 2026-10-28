@@ -43,6 +43,6 @@ Productionはapps・packages。試作から本番へ採用するときは新し�
 ## SBIとacceptance verifier
 
 SBIの項目は人間向けのdocs/product/sbi-template.md、実行用JSONの例は.harness/state/sample-sbi.json。
-acceptance verifierは、組み込みのsample-bddと、harness.jsonで`trust: acceptance`と`trustedScript`（.harness/verification/*.mjs）を指定したもの。
+acceptance verifierは、組み込みのsample-bddと、harness.jsonで`trust: acceptance`と`trustedScript`（.harness/verification/*.mjs）を指定したもの、SBI Issueごとの`.harness/acceptance/sbi-<番号>.json`に登録したもの。
 別のSBIを実行する前に、信頼する検証adapterとACの対応を追加する。
 SBIのSecurity metadata（securityImpact・requiredSecurityRules・requiredVerifiers・preImplementationGate・minimumRiskLevel）は強制ルールを弱められない（[security-rules.md](../security-rules.md)）。
