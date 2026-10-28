@@ -382,7 +382,7 @@ describe('GitHub PR Adapter', () => {
     const good = 'export function greet(name) { return `こんにちは、${name?.trim() || "ゲスト"}さん`; }';
     const agent = content => async () => ({ files: [{ path: 'greeting.mjs', content }] });
     // The remote must exist before the run, so the run starts from the published baseline.
-    const start = (root, options = {}) => startRun({ root, quiet: true, provider: 'codex', agent: agent(good), publish: true, ...options });
+    const start = (root, options = {}) => startRun({ root, quiet: true, provider: 'codex', agent: agent(good), publish: true, sbiPath, ...options });
     const remoteFirst = (root, test) => commitFixture(root).then(() => withRemote(root, test));
     it('when local verification passes then pushes the tested SHA and opens the PR without harness:pr', () => fixture(root => remoteFirst(root, async ({ bare, github }) => {
       const run = await start(root);
@@ -398,6 +398,12 @@ describe('GitHub PR Adapter', () => {
       const run = await start(root, { agent: agent('export const greet = () => "wrong";') });
       assert.equal(run.status, 'ESCALATED');
       assert.equal(run.pullRequest, undefined);
+      assert.equal(await remoteSha(bare, `harness/${run.id}`), '');
+      assert.deepEqual((await github.state()).pulls, []);
+    })));
+    it('when no SBI is given and the configured sample SBI runs then opens no PR', () => fixture(root => remoteFirst(root, async ({ bare, github }) => {
+      const run = await start(root, { sbiPath: undefined });
+      assert.equal(run.executionStatus, 'DONE');
       assert.equal(await remoteSha(bare, `harness/${run.id}`), '');
       assert.deepEqual((await github.state()).pulls, []);
     })));
@@ -419,7 +425,7 @@ describe('GitHub PR Adapter', () => {
     it('when a human approves the gate then the Harness resumes and opens the PR without harness:resume or harness:pr', () => fixture(async root => {
       await gated(root);
       await withRemote(root, async ({ github }) => {
-        const run = await startRun({ root, quiet: true, provider: 'codex', agent, publish: true });
+        const run = await startRun({ root, quiet: true, provider: 'codex', agent, publish: true, sbiPath });
         assert.equal(run.status, 'WAITING_FOR_HUMAN_GATE');
         assert.deepEqual((await github.state()).pulls, []);
         const approved = await approveRun({ root, runId: run.id, purpose: 'implementation-gate', identityProvider: human('Designer'), agent, quiet: true });
@@ -433,7 +439,7 @@ describe('GitHub PR Adapter', () => {
     it('when the human requests changes instead then the run stays stopped, the agent never runs and no PR is opened', () => fixture(async root => {
       await gated(root);
       await withRemote(root, async ({ github }) => {
-        const run = await startRun({ root, quiet: true, provider: 'codex', agent, publish: true });
+        const run = await startRun({ root, quiet: true, provider: 'codex', agent, publish: true, sbiPath });
         let called = false;
         const rejected = await approveRun({ root, runId: run.id, purpose: 'implementation-gate', decision: 'REQUEST_CHANGES', identityProvider: human('Designer'), agent: async () => { called = true; return agent(); }, quiet: true });
         assert.equal(rejected.gate.state, 'REJECTED');
@@ -445,7 +451,7 @@ describe('GitHub PR Adapter', () => {
     it('when an AI identity tries to approve then nothing is recorded or resumed', () => fixture(async root => {
       await gated(root);
       await withRemote(root, async ({ github }) => {
-        const run = await startRun({ root, quiet: true, provider: 'codex', agent, publish: true });
+        const run = await startRun({ root, quiet: true, provider: 'codex', agent, publish: true, sbiPath });
         await assert.rejects(approveRun({ root, runId: run.id, purpose: 'implementation-gate', identityProvider: () => ({ id: 'agent', kind: 'ai', source: 'agent-json' }), agent, quiet: true }), /human/i);
         assert.equal((await resumeRun({ root, runId: run.id, quiet: true, agent })).status, 'WAITING_FOR_HUMAN_GATE');
         assert.deepEqual((await github.state()).pulls, []);
