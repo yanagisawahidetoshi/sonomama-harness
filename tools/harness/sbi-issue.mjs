@@ -88,11 +88,30 @@ export function sbiFromIssue({ ref, issue, config }) {
   };
 }
 
+// A dependency is done when its Issue was closed as completed, which merging its Harness PR (Closes #N) does.
+// Until then the canonical packages/api-schema/openapi.yaml a Rails or frontend SBI builds on is not on main, so the run does not start.
+async function unfinishedDependencies({ ref, issue, github }) {
+  const lines = (sections(issue.body).get('依存SBI') ?? []).map(l => l.trim()).filter(l => l.startsWith('- '));
+  const problems = [];
+  for (const line of lines) {
+    const number = /\(#([1-9]\d*)\)\s*$/.exec(line)?.[1];
+    if (!number) { problems.push(`依存SBI ${line.slice(2)} のIssue番号がありません`); continue; }
+    let dependency;
+    try { dependency = await github.fetchIssue({ ...ref, number: Number(number) }); }
+    catch (error) { problems.push(`依存SBI #${number} を読めません（${error.message}）`); continue; }
+    if (dependency.state !== 'closed' || dependency.state_reason !== 'completed') problems.push(`依存SBI #${number} が完了していません（${dependency.state ?? 'unknown'}${dependency.state_reason ? ` / ${dependency.state_reason}` : ''}）。そのPRのmerge後に実行してください`);
+  }
+  return problems;
+}
+
 export async function loadSbiIssue({ issueUrl, config, github = githubCli }) {
   const ref = parseIssueUrl(issueUrl);
   let issue;
   try { issue = await github.fetchIssue(ref); } catch (error) { throw new Error(`SBI Issue fetch failed for ${ref.url}: ${error.message}`); }
   const reasons = issueReadiness(issue, ref.url);
   if (reasons.length) throw new Error([`SBI Issue ${ref.url} はreadyではありません。Runは開始していません。`, ...reasons.map(r => `- ${r}`)].join('\n'));
-  return { ref, issue, sbi: sbiFromIssue({ ref, issue, config }) };
+  const sbi = sbiFromIssue({ ref, issue, config });
+  const waiting = await unfinishedDependencies({ ref, issue, github });
+  if (waiting.length) throw new Error([`SBI Issue ${ref.url} の依存SBIが完了していません。Runは開始していません。`, ...waiting.map(p => `- ${p}`)].join('\n'));
+  return { ref, issue, sbi };
 }

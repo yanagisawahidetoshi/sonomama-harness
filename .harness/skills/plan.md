@@ -20,4 +20,7 @@ PBIを、人間が短時間でレビューできる粒度のSBIへ分割する�
 
 含めないもの: 詳細設計、クラス名・関数名、DB実装の細部、テストケースの全列挙、Agentへの実装手順、見積時間、PBI本文の長いコピー。
 
+API契約（packages/api-schemaのOpenAPI）の新規作成・変更が必要なPBIは、changeAreasがpackages/api-schemaだけのOpenAPI Schema SBIを1件作り、
+他のSBIはすべてそのSBIにdependsOnで依存させる。Schema SBIのverificationにはOpenAPI validationとPrism Mock確認を書く。
+
 PBIが曖昧で分割できない、重要設計判断が先に必要、PBIではない内容の場合は、sbisを空にしてescalationに人間への確認事項を記載する。

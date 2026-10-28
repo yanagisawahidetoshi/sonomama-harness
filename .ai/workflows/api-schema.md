@@ -1,4 +1,7 @@
-# API Schema Plannerの運用
+# API Schema Plannerの運用（内部機能）
+
+通常のOpenAPI作成・変更は、PlannerのOpenAPI Schema SBIを`pnpm harness:run <SBI Issue URL>`で実行する（README「OpenAPI Schema SBI」）。
+以下は旧来の専用フローで、人間向けのpackage scriptからは外している。
 
 API変更を伴うPBI / SBIは、実装前にOpenAPIの契約を人間が承認する。PlannerはProposalの生成までを担当し、承認・実装・mergeはしない。
 
@@ -14,11 +17,11 @@ GitHub Issue → Requirement Reader → Existing API Schema Reader（packages/ap
 
 1. Issueに対象画面・操作・データ・権限の要件を書く。
 2. `gh auth status`で対象リポジトリへissues: writeできることを確認する。
-3. `pnpm planner:api-schema https://github.com/<owner>/<repo>/issues/<number> --provider claude`を実行する。
+3. `node tools/harness/cli.mjs api-schema https://github.com/<owner>/<repo>/issues/<number>`を実行する。
 4. Quality JudgeがFAILならIssueを直して再実行する。
 5. PASSなら`.harness/api-schema/<number>/summary.md`のHuman Reviewを人間が確認する。
    生成物はGit管理対象。commitしてPRで差分レビューする。Execution Harnessはcleanなリポジトリでしか起動しない。
-6. 承認する場合は、Proposalをcommitしたうえで`pnpm planner:api-schema-approve <Issue URL>`を実行する。
+6. 承認する場合は、Proposalをcommitしたうえで`node tools/harness/cli.mjs api-schema-approve <Issue URL>`を実行する。
    取り消しは`--decision revoke`、差し戻しは`--decision request-changes`。
 7. `pnpm planner:api-schema-status <Issue URL>`で判定する。APPROVEDならexit 0、それ以外はexit 2。
 8. 承認後、人間がopenapi.yamlを`packages/api-schema/openapi.yaml`へ反映し、それを参照するFrontend / Backendの実装SBIを作る。

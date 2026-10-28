@@ -149,7 +149,7 @@ export const apiSchemaJsonSchema = object({
 // GitHub REST responses carry many more fields; only the ones the Planner relies on are validated.
 export const githubIssueSchema = z.object({
   number: z.number().int().positive(), title: z.string(), body: z.string().nullable().default(null), html_url: z.url(),
-  state: z.string().optional(), labels: z.array(z.object({ name: z.string() })).default([]), pull_request: z.unknown().optional(),
+  state: z.string().optional(), state_reason: z.string().nullable().optional(), labels: z.array(z.object({ name: z.string() })).default([]), pull_request: z.unknown().optional(),
 });
 export const githubIssueListSchema = z.array(githubIssueSchema);
 export const githubCommentSchema = z.object({ id: z.number().int().positive(), body: z.string().nullable().default(null), html_url: z.url() });

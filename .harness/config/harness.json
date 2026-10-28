@@ -185,12 +185,17 @@
       "marker": "openapi.yaml",
       "planned": [
         "OpenAPI 3.1 validation",
-        "Breaking change detection against the base branch"
+        "Breaking change detection against the base branch",
+        "Prism Mock starts from the workspace OpenAPI and answers each documented GET"
       ],
       "commands": [
         [
           "node",
           "../../tools/harness/api-contract.mjs"
+        ],
+        [
+          "node",
+          "../../tools/harness/api-mock-check.mjs"
         ]
       ],
       "appliesTo": [

@@ -118,6 +118,8 @@ export function pullRequestBody({ summary, sbi }) {
   return [
     `<!-- sonomama-harness run=${summary.id} sha=${summary.headSha} -->`,
     '## SBI', `- ${sbi.id}: ${sbi.title}`, `- Issue: ${sbi.issueUrl ?? '未設定'}`, '',
+    // Merging the PR closes the SBI Issue; harness:run of a dependent SBI waits for exactly that.
+    ...(summary.sbiIssue ? [`Closes #${summary.sbiIssue.number}`, ''] : []),
     '## 目的', sbi.description, '',
     '## 受け入れ要件', ...sbi.acceptanceCriteria.map(c => `- ${c.id}: ${c.description}`), '',
     '## Harness',

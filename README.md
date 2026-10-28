@@ -421,13 +421,20 @@ Plannerは`needs-review`のSBIをExecution Harnessへ投入しない。人間が
 `ready`のSBIは`pnpm harness:run <SBI Issue URL>`で実行する。SBI JSONは書かない。`ready`への自動遷移・Risk確定・mergeは行わない。
 手順は[.ai/workflows/pbi-sbi-planner.md](.ai/workflows/pbi-sbi-planner.md)。
 
-## API Schema Planner
+## OpenAPI Schema SBI
+
+API契約の新規作成・変更が要るPBIでは、`planner:sbi`が`packages/api-schema`だけを変えるOpenAPI Schema SBIを1件作り、
+同じPBIの他のSBIをそれに依存させる（SBI Quality Judgeが検査する）。Schema SBIも通常のSBIと同じく、レビューして`ready`にし、`pnpm harness:run <SBI Issue URL>`で実行する。
+api-contract VerifierがOpenAPI 3.1の検証と破壊的変更の検出を行い、続けてrun workspaceのOpenAPIからPrism Mockを起動して、
+path parameterのないGET endpointが記載した2xxとJSONを返すことを確認する。どれかがFAILならPRは作らない。
+Schema SBIのPRをmergeするとSBI Issueが閉じる（PR本文の`Closes #<番号>`）。依存SBIのIssueが完了（closed / completed）していないSBIは`harness:run`が開始しない。
+後続のRails / Frontend SBIは、merge後のmainにある`packages/api-schema/openapi.yaml`を使う。
+
+## API Schema Planner（内部機能）
+
+以下は旧来の専用フロー。人間向けのpackage scriptからは外した。`node tools/harness/cli.mjs api-schema <Issue URL>`で引き続き使える。
 
 API変更を伴うIssueから、実装前に合意するOpenAPI 3.1の契約案を作る。Rails / Frontendの実装はしない。
-
-```sh
-pnpm planner:api-schema https://github.com/<owner>/<repo>/issues/<number> --provider claude
-```
 
 ```text
 GitHub Issue → 既存OpenAPI（packages/api-schema）→ API Schema Planner（codex / claude）→ API Schema Quality Judge
@@ -442,7 +449,7 @@ Quality Judgeは決定的なルールで構造・認証認可・Security Impact�
 
 `modify`で既存の内容が消える場合は、既存OpenAPIとの構造差分から破壊的変更の候補として必ず表示する。
 
-承認は`pnpm planner:api-schema-approve <Issue URL>`で署名付き台帳に記録し、Proposalのdigestとcommit SHAに紐づける。
+承認は`node tools/harness/cli.mjs api-schema-approve <Issue URL>`で署名付き台帳に記録し、Proposalのdigestとcommit SHAに紐づける。
 判定は`pnpm planner:api-schema-status <Issue URL>`。Issueの`api-schema-approved`ラベルは目印で、承認の正本ではない。
 Execution Harnessの実装前Gate・Merge Approvalとは別で、どちらの代わりにもならない。承認後に人間がpackages/api-schemaへ反映し、実装SBIを作る。
 手順は[.ai/workflows/api-schema.md](.ai/workflows/api-schema.md)。
