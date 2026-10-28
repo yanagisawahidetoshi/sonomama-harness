@@ -68,7 +68,7 @@ export function judgeApiSchema(proposal, { securityCategories = null, existing =
       const found = [];
       for (const p of endpoint.parameters) if (p.required && !before.parameters.some(b => b.name === p.name && b.in === p.in && b.required)) found.push(`必須parameterを追加: ${target} ${p.name}`);
       for (const status of before.successStatuses) if (!endpoint.responses.some(r => r.status === status)) found.push(`成功statusを削除: ${target} ${status}`);
-      if (!before.authenticated && endpoint.authN === 'cognito-jwt') found.push(`公開endpointを認証必須へ変更: ${target}`);
+      if (!before.authenticated && endpoint.authN === 'bearer-jwt') found.push(`公開endpointを認証必須へ変更: ${target}`);
       if (found.length) changes.breaking.push(...found);
       else changes.nonBreaking.push(`既存endpointを変更（意味上の破壊的変更は未検出。構造差分も確認）: ${target}`);
     }
@@ -102,9 +102,9 @@ export function judgeApiSchema(proposal, { securityCategories = null, existing =
     }
     if (![...statuses].some(status => status >= 200 && status < 300)) add(target, 'success-missing', '成功response（2xx）がありません');
 
-    const jwt = endpoint.authN === 'cognito-jwt', condition = endpoint.authZ.roles.length > 0 || Boolean(endpoint.authZ.rule?.trim());
+    const jwt = endpoint.authN === 'bearer-jwt', condition = endpoint.authZ.roles.length > 0 || Boolean(endpoint.authZ.rule?.trim());
     authenticated ||= jwt; authorized ||= jwt && condition;
-    if (jwt && !statuses.has(401)) add(target, 'auth-responses', 'Cognito JWT必須のendpointは401を定義してください');
+    if (jwt && !statuses.has(401)) add(target, 'auth-responses', 'Bearer JWT必須のendpointは401を定義してください');
     if (!jwt && (statuses.has(401) || statuses.has(403))) add(target, 'auth-responses', '公開endpointに401 / 403は定義しません');
     if (!jwt && endpoint.authZ.roles.length) add(target, 'auth-responses', '公開endpointにroleは指定できません');
     if (endpoint.authZ.roles.length && !statuses.has(403)) add(target, 'auth-responses', 'role制限があるため403を定義してください');
@@ -169,7 +169,7 @@ export function judgeApiSchema(proposal, { securityCategories = null, existing =
 
   const impact = new Set(proposal.securityImpact);
   for (const category of impact) if (securityCategories && !securityCategories.includes(category)) add('*', 'security-impact', `Security Impact ${category} はsecurity.jsonに定義された分類ではありません`);
-  if (authenticated && !authNImpact.some(c => impact.has(c))) add('*', 'security-impact', `Cognito JWT必須のendpointがあるためSecurity Impactに ${authNImpact.join(' / ')} を宣言してください`);
+  if (authenticated && !authNImpact.some(c => impact.has(c))) add('*', 'security-impact', `Bearer JWT必須のendpointがあるためSecurity Impactに ${authNImpact.join(' / ')} を宣言してください`);
   if (authorized && !authZImpact.some(c => impact.has(c))) add('*', 'security-impact', `Rails側の認可条件があるためSecurity Impactに ${authZImpact.join(' / ')} を宣言してください`);
   const pii = proposal.endpoints.some(e => e.change !== 'remove' && e.pii) || proposal.components.some(c => c.pii);
   if (pii && !impact.has('PII')) add('*', 'security-impact', 'PIIを扱うためSecurity ImpactにPIIを宣言してください');

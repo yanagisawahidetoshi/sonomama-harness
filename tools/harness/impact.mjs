@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readJson } from './io.mjs';
-import { configSchema, sbiSchema } from './schemas.mjs';
+import { configSchema, sbiSchema, securityPolicySchema } from './schemas.mjs';
+import { verifySecurity } from './security-enforcement.mjs';
 import { checksPassed, verify } from './verifier.mjs';
 import { git } from './workspace.mjs';
 // SBI Impact Analysis for CI scheduling. harness.json stays the single definition of verifiers; this only decides which of them a change needs.
@@ -102,6 +103,14 @@ export async function runVerifier({ root, base, all = false, id }) {
   const { config, files, impact } = await loadImpact({ root, base, all });
   const entry = impact.verifiers.find(v => v.id === id);
   const mandatory = entry?.mandatory ?? false;
+  // A Security Verifier connected in harness.json runs the same way as in the Harness run; without commands it stays NOT_CONFIGURED and fails.
+  if (config.securityVerifiers.some(v => v.id === id)) {
+    const policy = securityPolicySchema.parse(await readJson(join(root, '.harness/rules/security.json')));
+    const headSha = (await git(root, ['rev-parse', 'HEAD'])).stdout.trim();
+    const security = await verifySecurity({ workspace: root, sbi: { allowedFiles: [] }, assessment: { requiredVerifiers: [id] }, policy, config, headSha });
+    const checks = security.checks.filter(c => c.id === id).map(c => ({ ...c, selectionReasons: [mandatory ? 'impact-required' : 'requested', 'security'] }));
+    return { impact, result: { checks }, passed: checksPassed(checks) };
+  }
   // An SBI naming the verifier in requiredVerifiers asks for every command, gated ones included.
   const explicit = entry?.reasons.some(r => r.endsWith(' requiredVerifiers')) ?? false;
   const sbi = { title: 'CI matrix', description: id, risks: [], securityImpact: [], acceptanceCriteria: [], requiredVerifiers: explicit ? [id] : [] };

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
+import { hasCommand } from './lib/commands.mjs';
 // Trusted acceptance for SBI-ADMIN-ARCH (#32). Reads the worktree only; the admin verifier runs the architecture check and its tests.
 const root = process.argv[2];
 const app = join(root, 'apps/admin');
@@ -19,7 +20,7 @@ const files = (dir, out = []) => {
 const code = dir => files(dir).filter(p => /\.(ts|tsx)$/.test(p));
 const pkg = () => JSON.parse(read('apps/admin/package.json'));
 const deps = () => ({ ...pkg().dependencies, ...pkg().devDependencies });
-const commands = () => JSON.parse(read('.harness/config/harness.json')).verifiers.find(v => v.id === 'admin').commands.map(c => c.join(' '));
+const commands = () => JSON.parse(read('.harness/config/harness.json')).verifiers.find(v => v.id === 'admin').commands;
 const docText = () => read(doc);
 const mentions = terms => { const text = docText(); for (const term of terms) assert.ok(text.includes(term), `${doc}: ${term}`); };
 // Independent of the app's checker: every import must follow app → features → shared.
@@ -115,10 +116,10 @@ try {
     }],
     ['ADMIN-ARCH-AC-18', 'Given the Harness, When verifying admin, Then the architecture check and its tests are verifier commands', () => {
       assert.match(pkg().scripts['test:architecture'], /node --test/);
-      for (const script of ['check:architecture', 'test:architecture']) assert.ok(commands().some(c => c.includes(`run ${script}`)), script);
+      for (const script of ['check:architecture', 'test:architecture']) assert.ok(hasCommand(commands(), ['pnpm', 'run', script]), script);
     }],
     ['ADMIN-ARCH-AC-19', 'Given valid dependencies, When the checker runs on src, Then it passes', () => {
-      assert.ok(commands().some(c => c.includes('run check:architecture')));
+      assert.ok(hasCommand(commands(), ['pnpm', 'run', 'check:architecture']));
       assert.deepEqual(violations(), []);
     }],
     ['ADMIN-ARCH-AC-20', 'Given forbidden dependencies in fixtures, When the checker runs, Then its tests expect a failure for each kind', () => {
@@ -126,7 +127,7 @@ try {
       for (const kind of ['features/A → features/B', 'shared → features', 'shared → app']) assert.ok(test.includes(kind), kind);
     }],
     ['ADMIN-ARCH-AC-21', 'Given the Harness, When verifying admin, Then typecheck / Biome / Vitest / build stay registered', () => {
-      for (const script of ['typecheck', 'check', 'test', 'build']) assert.ok(commands().some(c => c.includes(`run ${script}`)), script);
+      for (const script of ['typecheck', 'check', 'test', 'build']) assert.ok(hasCommand(commands(), ['pnpm', 'run', script]), script);
     }],
   ];
   const acceptance = [];
