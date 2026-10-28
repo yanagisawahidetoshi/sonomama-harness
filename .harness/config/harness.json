@@ -301,6 +301,16 @@
         [
           "pnpm",
           "run",
+          "check:architecture"
+        ],
+        [
+          "pnpm",
+          "run",
+          "test:architecture"
+        ],
+        [
+          "pnpm",
+          "run",
           "build",
           "--outDir",
           "node_modules/.harness/dist",
@@ -348,6 +358,44 @@
       ],
       "trust": "acceptance",
       "trustedScript": ".harness/verification/admin-env.mjs"
+    },
+    {
+      "id": "admin-arch-acceptance",
+      "directory": "apps/admin",
+      "marker": "package.json",
+      "planned": [
+        "Trusted Acceptance"
+      ],
+      "commands": [],
+      "acceptanceIds": [
+        "ADMIN-ARCH-AC-1",
+        "ADMIN-ARCH-AC-2",
+        "ADMIN-ARCH-AC-3",
+        "ADMIN-ARCH-AC-4",
+        "ADMIN-ARCH-AC-5",
+        "ADMIN-ARCH-AC-6",
+        "ADMIN-ARCH-AC-7",
+        "ADMIN-ARCH-AC-8",
+        "ADMIN-ARCH-AC-9",
+        "ADMIN-ARCH-AC-10",
+        "ADMIN-ARCH-AC-11",
+        "ADMIN-ARCH-AC-12",
+        "ADMIN-ARCH-AC-13",
+        "ADMIN-ARCH-AC-14",
+        "ADMIN-ARCH-AC-15",
+        "ADMIN-ARCH-AC-16",
+        "ADMIN-ARCH-AC-17",
+        "ADMIN-ARCH-AC-18",
+        "ADMIN-ARCH-AC-19",
+        "ADMIN-ARCH-AC-20",
+        "ADMIN-ARCH-AC-21"
+      ],
+      "appliesTo": [],
+      "lanes": [
+        "production"
+      ],
+      "trust": "acceptance",
+      "trustedScript": ".harness/verification/admin-arch.mjs"
     },
     {
       "id": "prototype-web",
