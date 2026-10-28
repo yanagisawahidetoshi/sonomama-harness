@@ -6,6 +6,13 @@ const text = z.string().min(1);
 // implementation: feature work (Maestro against the mock API). validation: optional real API + Rails + DB E2E after every implementation SBI.
 // Human acceptance changes no code and runs no test, so it is a PBI Gate (pbiAcceptanceRecordSchema), never an SBI kind.
 export const sbiKinds = Object.freeze(['implementation', 'validation']);
+// A Harness-owned script (node tools/harness/*.mjs) only parses workspace files and runs on the host.
+export const isHarnessScript = (directory, [command, script]) => command === 'node' && /^tools\/harness\/[^/]+\.mjs$/.test(posix.normalize(posix.join(directory, script || '')));
+export const isComposeCommand = ([docker, compose, flag, file]) => docker === 'docker' && compose === 'compose' && flag === '-f' && Boolean(file);
+function isolationRules(v, ctx) {
+  if (v.isolation === 'harness' && !v.commands.every(c => isHarnessScript(v.directory, c))) ctx.addIssue({ code: 'custom', message: 'harness isolation only runs tools/harness scripts' });
+  if (v.isolation === 'compose' && (!v.network || !v.commands.every(c => isComposeCommand(c) || isHarnessScript(v.directory, c)))) ctx.addIssue({ code: 'custom', message: 'compose isolation only runs docker compose -f FILE or tools/harness scripts and requires network' });
+}
 export const relativePath = text.refine(p => !p.startsWith('/') && !p.includes('\\') && p.split('/').every(s => s !== '..' && s !== '.' && s !== ''), 'unsafe relative path');
 export const sbiSchema = z.strictObject({
   id: text.regex(/^[A-Za-z0-9_-]+$/), kind: z.enum(sbiKinds).default('implementation'), title: text, description: text,
@@ -23,7 +30,8 @@ export const configSchema = z.strictObject({
   version: z.literal(1), provider: z.enum(['fake', 'codex', 'claude']), sbi: relativePath,
   maxConsecutiveFailures: z.number().int().min(1).max(3), maxIterations: z.number().int().min(1).max(20),
   timeoutMs: z.number().int().min(100).max(600000),
-  securityVerifiers: z.array(z.strictObject({ id: text, directory: z.union([z.literal('.'), relativePath]), commands: z.array(z.array(text).min(1)), network: z.boolean().default(false) })).default([]),
+  securityVerifiers: z.array(z.strictObject({ id: text, directory: z.union([z.literal('.'), relativePath]), commands: z.array(z.array(text).min(1)),
+    isolation: z.enum(['container', 'compose', 'harness']).default('container'), network: z.boolean().default(false) }).superRefine(isolationRules)).default([]),
   // Untrusted verifier commands run in a Docker container; docker names the trusted CLI that starts it.
   isolation: z.strictObject({ docker: text }).default({ docker: 'docker' }),
   semanticReview: z.strictObject({ enabled: z.boolean() }).default({ enabled: false }),
@@ -41,8 +49,7 @@ export const configSchema = z.strictObject({
     // harness: a Harness-owned script that only parses workspace files. network grants egress to this verifier only.
     isolation: z.enum(['container', 'compose', 'harness']).default('container'),
     network: z.boolean().default(false),
-  }).refine(v => v.isolation !== 'harness' || v.commands.every(([command, script]) => command === 'node' && /^tools\/harness\/[^/]+\.mjs$/.test(posix.normalize(posix.join(v.directory, script || '')))), 'harness isolation only runs tools/harness scripts')
-    .refine(v => v.isolation !== 'compose' || (v.network && v.commands.every(([docker, compose, flag, file]) => docker === 'docker' && compose === 'compose' && flag === '-f' && file)), 'compose isolation only runs docker compose -f FILE and requires network')).min(1),
+  }).superRefine(isolationRules)).min(1),
   // SBI Impact Analysis: cross-layer contracts added when areas meet, and paths whose change runs the Full Gate.
   impact: z.strictObject({
     crossLayer: z.array(z.strictObject({ all: z.array(text).min(1), any: z.array(text).min(1), add: z.array(text).min(1) })).default([]),

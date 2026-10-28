@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
 import { execute, exists } from './io.mjs';
 import { isSecretPath, isSafeEnvTemplate } from './evidence-protection.mjs';
+import { isComposeCommand } from './schemas.mjs';
 // Untrusted application processes (verifier and security verifier commands) run only in a container that sees the workspace.
 // The trusted Harness keeps credentials, the approval key and run evidence; see .ai/security-rules.md.
 const dockerfile = fileURLToPath(new URL('./isolation/Dockerfile', import.meta.url));
@@ -150,7 +151,7 @@ async function compose({ workspace, adapter, docker, cwd, timeoutMs }) {
   try {
     const empty = join(temp, 'empty');
     await writeFile(empty, '');
-    for (const [, , , file] of adapter.commands) {
+    for (const [, , , file] of adapter.commands.filter(isComposeCommand)) {
       const path = resolve(cwd, file);
       try {
         if (!inside(workspace, path)) throw new Error('Compose file must be inside the workspace');
@@ -159,7 +160,12 @@ async function compose({ workspace, adapter, docker, cwd, timeoutMs }) {
     }
     const processes = [];
     // An empty --env-file keeps a workspace .env out of interpolation.
-    for (const [, sub, ...args] of adapter.commands) processes.push(await execute(docker, [sub, '--env-file', empty, ...args], { cwd, timeoutMs, env: dockerCliEnv() }));
+    // Harness scripts in the list (schema-checked) run on the host like isolation: harness.
+    for (const command of adapter.commands) {
+      const [name, sub, ...args] = command;
+      processes.push(isComposeCommand(command) ? await execute(docker, [sub, '--env-file', empty, ...args], { cwd, timeoutMs, env: dockerCliEnv() })
+        : await execute(name, [sub, ...args], { cwd, timeoutMs, env: harnessEnv() }));
+    }
     return outcome(processes);
   } finally { await rm(temp, { recursive: true, force: true }); }
 }

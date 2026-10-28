@@ -42,7 +42,7 @@ untrusted applicationのコンテナは次の条件で起動する。ローカ�
 - node_modulesとpnpm storeはverifierごとの使い捨てvolumeに置き、コンテナ内でinstallする。
 - Dockerが使えないとき、imageを作れないとき、コンテナを起動できないときは`FAIL`（`isolation unavailable`）にする。ホストで代わりに実行しない。
 
-Rails（Docker Compose）はコンテナの中から入れ子で起動できない。trusted HarnessがComposeを起動し、その前にworkspaceのCompose fileを検査する。workspace外やHarness状態のbind mount、`privileged`等の特権設定、`env_file`、environment以外での環境変数展開は拒否する。Composeの環境変数はDocker CLIに必要なものだけにする。Railsコンテナ内はrootのまま動く。
+Rails と migration-safety（Docker Compose）はコンテナの中から入れ子で起動できない。trusted HarnessがComposeを起動し、その前にworkspaceのCompose fileを検査する。workspace外やHarness状態のbind mount、`privileged`等の特権設定、`env_file`、environment以外での環境変数展開は拒否する。Composeの環境変数はDocker CLIに必要なものだけにする。同じverifierに並ぶ`tools/harness/*.mjs`のスクリプトは、`isolation: harness`と同じ条件でホストで動かす。Railsコンテナ内はrootのまま動く。
 
 `api-contract`のようにHarnessのスクリプトがworkspaceのファイルを読むだけのverifierは、`isolation: harness`としてホストで動かす。対象は`tools/harness/*.mjs`だけで、環境変数は`PATH`と`HARNESS_BASE_REF`に限る。
 

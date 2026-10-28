@@ -788,7 +788,9 @@
           "compose.yaml",
           "down"
         ]
-      ]
+      ],
+      "isolation": "compose",
+      "network": true
     }
   ],
   "semanticReview": {

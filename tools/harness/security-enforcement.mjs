@@ -68,7 +68,7 @@ export async function verifySecurity({ workspace, sbi, assessment, policy, confi
     if (adapter.kind === 'command') {
       const cwd = join(workspace, adapter.directory || '.');
       const {status,reason,processes}=await runIsolated({workspace,adapter,config,cwd});
-      checks.push({id,verifier:id,required:true,status,...(reason&&{reason}),cwd,isolation:'container',processes});
+      checks.push({id,verifier:id,required:true,status,...(reason&&{reason}),cwd,isolation:adapter.isolation||'container',processes});
     } else {
       const patterns = adapter.kind === 'secret' ? policy.secretPatterns : adapter.kind === 'pii-log' ? policy.piiLogPatterns : policy.forbiddenPatterns;
       const findings = [];
