@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, chmod, readFile, rm, access } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, chmod, readFile, rm, rmdir, access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
@@ -223,7 +223,7 @@ describe('Push gate execution',()=>{
         assert.deepEqual(result.leftovers,[workspace]);
         assert.ok(lines.some(l=>l.includes(workspace)));
         assert.equal(await gone(workspace),false);
-      } finally { await rm(join(workspace,'stray.txt')); await git(root,['worktree','remove',workspace]); }
+      } finally { await rm(join(workspace,'stray.txt')); await git(root,['worktree','remove',workspace]); await rmdir(join(workspace,'..')); }
     }));
   });
 });
