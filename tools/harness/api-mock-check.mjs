@@ -6,21 +6,54 @@ import { fileURLToPath } from 'node:url';
 import { readExistingSchema } from './api-schema-reader.mjs';
 import { externalRefs, mockHost, mockSchemaPath } from './api-mock.mjs';
 // Part of the api-contract Verifier for a Schema SBI: Prism must start from the OpenAPI of the run workspace (not an approved proposal),
-// and every GET it can call without inventing a path parameter or a credential must answer its first documented 2xx status with parseable JSON.
+// and every GET it can call without inventing a credential must answer its first documented 2xx status with parseable JSON.
+// Path and required query parameters take their value from the OpenAPI (example, enum, default, then type); one that cannot be made is not called.
 // An endpoint with a security requirement is listed as not called: sending any credential header from a Verifier is a Security Gate matter.
+// A check that requested no endpoint confirms nothing and fails.
 const require = createRequire(import.meta.url);
 const prismScript = () => require.resolve('@stoplight/prism-cli/dist/index.js');
 const freePort = () => new Promise((done, fail) => { const server = createServer().once('error', fail).listen(0, mockHost, () => { const { port } = server.address(); server.close(() => done(port)); }); });
 
+const methods = ['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace'];
+// Local references only; a remote $ref fails before Prism starts.
+const local = (document, value) => {
+  for (let seen = 0; value?.$ref?.startsWith('#/') && seen < 10; seen++) value = value.$ref.slice(2).split('/').reduce((node, key) => node?.[key.replaceAll('~1', '/').replaceAll('~0', '~')], document);
+  return value;
+};
+function sampleValue(document, parameter) {
+  const schema = local(document, parameter.schema) ?? {};
+  const example = parameter.example ?? Object.values(parameter.examples ?? {}).map(e => local(document, e)?.value)[0] ?? schema.example ?? schema.examples?.[0] ?? schema.enum?.[0] ?? schema.default;
+  if (example !== undefined && ['string', 'number', 'boolean'].includes(typeof example)) return String(example);
+  if (schema.type === 'integer' || schema.type === 'number') return String(schema.minimum ?? 1);
+  if (schema.type === 'boolean') return 'true';
+  if (schema.type !== 'string' || schema.pattern) return null;
+  return { uuid: '00000000-0000-4000-8000-000000000000', date: '2026-01-01', 'date-time': '2026-01-01T00:00:00Z' }[schema.format] ?? (schema.format ? null : 'sample'.padEnd(schema.minLength ?? 0, 'x'));
+}
 function operations(document) {
   const result = [];
   for (const [path, item] of Object.entries(document.paths ?? {})) {
-    const get = item?.get;
-    if (!get) continue;
-    const status = Object.keys(get.responses ?? {}).filter(code => /^2\d\d$/.test(code)).sort()[0];
-    if (!status) continue;
-    const secured = (get.security ?? document.security ?? []).some(requirement => Object.keys(requirement).length);
-    result.push({ path, status: Number(status), secured, json: Boolean(get.responses[status]?.content?.['application/json']) });
+    for (const method of methods.filter(m => item?.[m])) {
+      const operation = item[method], endpoint = `${method.toUpperCase()} ${path}`;
+      if (method !== 'get') { result.push({ endpoint, skip: 'GET以外はPrismへrequestしていません' }); continue; }
+      const status = Object.keys(operation.responses ?? {}).filter(code => /^2\d\d$/.test(code)).sort()[0];
+      if (!status) { result.push({ endpoint, skip: '2xxのresponseが記載されていません' }); continue; }
+      if ((operation.security ?? document.security ?? []).some(requirement => Object.keys(requirement).length)) { result.push({ endpoint, skip: 'security要件があり、Verifierは認証headerを送らないため' }); continue; }
+      const parameters = [...(item.parameters ?? []), ...(operation.parameters ?? [])].map(p => local(document, p)).filter(Boolean);
+      let url = path, missing = null;
+      const query = new URLSearchParams();
+      for (const name of [...path.matchAll(/\{([^}]+)\}/g)].map(m => m[1])) {
+        const value = sampleValue(document, parameters.find(p => p.in === 'path' && p.name === name) ?? {});
+        if (value === null) { missing = `path parameter ${name} の値をOpenAPIのexample・enum・型から作れないため`; break; }
+        url = url.replace(`{${name}}`, encodeURIComponent(value));
+      }
+      for (const parameter of parameters.filter(p => p.in === 'query' && p.required)) {
+        if (missing) break;
+        const value = sampleValue(document, parameter);
+        if (value === null) missing = `必須query parameter ${parameter.name} の値をOpenAPIのexample・enum・型から作れないため`; else query.set(parameter.name, value);
+      }
+      if (missing) { result.push({ endpoint, skip: missing }); continue; }
+      result.push({ endpoint, url: query.size ? `${url}?${query}` : url, status: Number(status), json: Boolean(operation.responses[status]?.content?.['application/json']) });
+    }
   }
   return result;
 }
@@ -45,14 +78,15 @@ export async function checkApiMock({ root, timeoutMs = 30000 }) {
       try { await fetch(base); break; } catch { /* not listening yet */ }
     }
     for (const operation of operations(schema.document)) {
-      const name = `GET ${operation.path}`;
-      if (operation.path.includes('{') || operation.secured) { result.skipped.push(name); continue; }
-      const response = await fetch(`${base}${operation.path}`);
+      const name = operation.endpoint;
+      if (operation.skip) { result.skipped.push({ endpoint: name, reason: operation.skip }); continue; }
+      const response = await fetch(`${base}${operation.url}`);
       const text = await response.text();
       if (response.status !== operation.status) { result.errors.push(`${name}: ${response.status}（OpenAPIでは${operation.status}）`); continue; }
       if (operation.json) { try { JSON.parse(text); } catch { result.errors.push(`${name}: JSONではないresponse`); continue; } }
       result.checked.push(`${name} ${operation.status}`);
     }
+    if (!result.checked.length && !result.errors.length) result.errors.push('Prismへrequestしたendpointが1件もありません。呼び出せるGETがなければ想定responseを確認できません');
     result.status = result.errors.length ? 'FAIL' : 'PASS';
     return result;
   } finally { child.kill(); }
@@ -61,9 +95,10 @@ export async function checkApiMock({ root, timeoutMs = 30000 }) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const root = resolve(fileURLToPath(new URL('../../', import.meta.url)));
   const result = await checkApiMock({ root });
-  for (const line of result.checked) console.log(`Prism Mock: ${line}`);
-  for (const line of result.skipped) console.log(`Prism Mock: ${line} はpath parameterの値がない、またはsecurity要件があるため呼び出していません`);
-  for (const line of result.errors) console.error(`Prism Mock: ${line}`);
+  // The PR body of a Schema SBI lists these lines; keep the PASS / SKIP / FAIL prefixes stable.
+  for (const line of result.checked) console.log(`Prism Mock: PASS ${line}`);
+  for (const { endpoint, reason } of result.skipped) console.log(`Prism Mock: SKIP ${endpoint}（${reason}）`);
+  for (const line of result.errors) console.error(`Prism Mock: FAIL ${line}`);
   console.log(`Prism Mock check: ${result.status}`);
   process.exitCode = result.status === 'PASS' ? 0 : 1;
 }
