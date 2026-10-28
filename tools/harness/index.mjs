@@ -81,7 +81,7 @@ async function readGitHub(root, summary, inputs, github) {
 async function riskFiles(root, summary, inputs, files) {
   const snapshot = inputs.sbiSnapshot;
   if (!snapshot) return files;
-  const check = await snapshotVerified({ workspace: runPaths(root, summary.id).workspace, base: summary.baselineSha, files, snapshot });
+  const check = await snapshotVerified({ workspace: runPaths(root, summary.id).workspace, base: summary.baselineSha, files, snapshot, config: inputs.config });
   summary.snapshotVerification = { ...check, headSha: summary.headSha, at: new Date().toISOString() };
   await json(join(runPaths(root, summary.id).directory, 'sbi-source.json'), summary.snapshotVerification);
   return riskView(files, { snapshot, verified: check.verified });

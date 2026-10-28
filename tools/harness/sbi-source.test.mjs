@@ -8,7 +8,9 @@ import { fixture, update } from './test-fixture.mjs';
 import { githubMock } from './test-github.mjs';
 import { git } from './workspace.mjs';
 import { analyzeImpact, describeImpact, judgeCi, runCompletionJudge } from './impact.mjs';
+import { renderSbiBody } from './planner.mjs';
 import { sbiSnapshotSchema } from './schemas.mjs';
+import { sbiFromIssue } from './sbi-issue.mjs';
 import { describeSbiSource, judgeSbiSource, riskView, snapshotFromIssue, snapshotPath, verifySbiSource } from './sbi-source.mjs';
 import { assessRisk } from './risk-classifier.mjs';
 import { classifySecurity } from './security-enforcement.mjs';
@@ -17,14 +19,22 @@ import { readFileSync } from 'node:fs';
 const sha256 = text => createHash('sha256').update(text).digest('hex');
 const ref = { owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' };
 const labels = (...names) => names.map(name => ({ name }));
-const readyIssue = { number: 7, title: 'SBI-001: 管理画面のホーム', body: '## 目的\n\nホームを表示する', html_url: ref.url, state: 'open', labels: labels('sbi', 'ready') };
-const runId = '2026-10-28T00-00-00-000Z-1a2b3c4d';
-const sbi = {
-  id: 'SBI-001', title: '管理画面のホーム', description: 'ホームを表示する',
-  gherkin: 'Feature: ホーム\n  Scenario: 表示\n    Given 管理者である\n    When ホームを開く\n    Then 見出しが出る',
-  acceptanceCriteria: [{ id: 'HOME-AC-1', description: '見出しが出る', verifier: 'home-acceptance' }],
-  allowedFiles: ['apps/admin/src/features/home/index.ts'], risks: [], ambiguous: false, requiresDesignDecision: false, affectedAreas: ['admin'],
+const pbi = { owner: 'acme', repo: 'app', number: 3, url: 'https://github.com/acme/app/issues/3', title: '管理画面のホーム' };
+// The SBI Issue as the Planner wrote it and a human marked it ready, with its Trusted Acceptance registered in harness.json.
+const planned = {
+  id: 'SBI-001', title: '管理画面のホーム', purpose: 'ホームを表示する',
+  scope: { included: ['apps/admin ホーム画面'], excluded: [] },
+  acceptanceCriteria: [{ id: 'HOME-AC-1', description: '見出しが出る' }],
+  scenarios: [{ name: '表示', given: ['管理者である'], when: ['ホームを開く'], then: ['見出しが出る'], acceptanceIds: ['HOME-AC-1'] }],
+  dependsOn: [], changeAreas: ['apps/admin'], riskCandidate: 'L2', securityImpact: [],
+  verification: { applicationTest: 'Vitest', acceptance: 'Trusted Acceptance', e2e: '不要' },
 };
+const readyIssue = { number: 7, title: 'SBI-001 管理画面のホーム', body: renderSbiBody(planned, pbi), html_url: ref.url, state: 'open', labels: labels('sbi', 'ready') };
+const homeAcceptance = { id: 'home-acceptance', trust: 'acceptance', trustedScript: '.harness/verification/home.mjs', directory: '.', planned: ['Trusted Acceptance'], commands: [], acceptanceIds: ['HOME-AC-1'], sbiIssue: 7, appliesTo: ['^never/'] };
+const config = { verifiers: [homeAcceptance] };
+const runId = '2026-10-28T00-00-00-000Z-1a2b3c4d';
+// What the Run took from the Issue when it started.
+const sbi = sbiFromIssue({ ref, issue: readyIssue, config });
 const snapshot = (overrides = {}) => ({ ...snapshotFromIssue({ ref, issue: readyIssue, runId, sbi }), ...overrides });
 const trailers = (s = snapshot()) => `\n\nHarness-Run: ${s.runId}\nSBI-Issue: ${s.source.url}`;
 const admin = 'apps/admin/src/features/home/index.ts';
@@ -52,7 +62,9 @@ async function commit(root, entries, message) {
   await git(root, ['commit', '--allow-empty', '-m', message]);
   return Object.keys(entries).map(path => ({ path }));
 }
-const verifyIn = (root, files, extra = {}) => verifySbiSource({ root, base: 'base', files, required: [`production:${admin}`], repository: 'acme/app', ...extra });
+const verifyIn = (root, files, extra = {}) => verifySbiSource({ root, base: 'base', files, required: [`production:${admin}`], repository: 'acme/app', config, ...extra });
+// Commits a Production change with the given snapshot and the Run trailers of the original snapshot, then verifies it.
+const verifySnapshot = async (root, value) => verifyIn(root, await commit(root, { [admin]: 'export {};', [snapshotPath(snapshot())]: value }, `feat: home${trailers()}`));
 
 describe('SBI snapshot from an approved SBI Issue', () => {
   describe('given a ready SBI Issue, a Run ID and the SBI the Run works on', () => {
@@ -139,11 +151,25 @@ describe('Source SBI verification in the PR', () => {
       assert.ok(describeSbiSource(source).some(l => l.includes(ref.url) && l.includes(runId)));
     })));
 
-    it('when the Issue was edited after the Run started then still passes and notes the change in the CI log', () => mockGitHub({ issue: { ...readyIssue, body: 'edited' } }, () => repository(async root => {
-      const files = await commit(root, { [admin]: 'export {};', [snapshotPath(snapshot())]: snapshot() }, `feat: home${trailers()}`);
-      const source = await verifyIn(root, files);
-      assert.equal(source.status, 'PASS');
-      assert.ok(describeSbiSource(source).some(l => l.includes('edited after the Run snapshot')));
+    it('when the Issue body was edited after the Run started then fails because the snapshot no longer matches the current Issue', () => mockGitHub({ issue: { ...readyIssue, body: readyIssue.body.replace('ホームを表示する', 'ホームと一覧を表示する') } }, () => repository(async root => {
+      const source = await verifySnapshot(root, snapshot());
+      assert.equal(source.status, 'FAIL');
+      assert.ok(source.reasons.some(r => r.includes(ref.url) && r.includes('bodyDigest')), source.reasons.join('; '));
+      assert.ok(source.reasons.some(r => r.includes(ref.url) && r.includes('description')), source.reasons.join('; '));
+      assert.ok(!describeSbiSource(source).some(l => l.includes('edited after the Run snapshot')));
+    })));
+
+    it('when the Issue title was edited after the Run started then fails on the title digest and the SBI title', () => mockGitHub({ issue: { ...readyIssue, title: 'SBI-001 管理画面のホーム（改）' } }, () => repository(async root => {
+      const source = await verifySnapshot(root, snapshot());
+      assert.equal(source.status, 'FAIL');
+      assert.ok(source.reasons.some(r => r.includes('titleDigest')), source.reasons.join('; '));
+      assert.ok(source.reasons.some(r => r.includes('title') && !r.includes('titleDigest')), source.reasons.join('; '));
+    })));
+
+    it('when only a checkbox in the Issue body was ticked then still fails because any edit of the approved Issue fails', () => mockGitHub({ issue: { ...readyIssue, body: readyIssue.body.replace('- [ ] HOME-AC-1', '- [x] HOME-AC-1') } }, () => repository(async root => {
+      const source = await verifySnapshot(root, snapshot());
+      assert.equal(source.status, 'FAIL');
+      assert.ok(source.reasons.some(r => r.includes('bodyDigest')), source.reasons.join('; '));
     })));
 
     it('when the source Issue still has needs-review then fails', () => mockGitHub({ issue: { ...readyIssue, labels: labels('sbi', 'needs-review') } }, () => repository(async root => {
@@ -158,6 +184,48 @@ describe('Source SBI verification in the PR', () => {
       const source = await verifyIn(root, files);
       assert.equal(source.status, 'FAIL');
       assert.ok(source.reasons.some(r => r.includes(ref.url) && r.includes('HTTP 404')), source.reasons.join('; '));
+    })));
+  });
+
+  describe('given a snapshot whose SBI or digests were replaced after the Run while the Issue stayed as approved', () => {
+    for (const [name, change, key] of [
+      ['the directory scopes widened', s => { s.sbi.allowedDirs = ['apps/']; }, 'allowedDirs'],
+      ['files allowed by name in addition', s => { s.sbi.allowedFiles = ['apps/api/app/models/user.rb']; }, 'allowedFiles'],
+      ['the acceptance verifier swapped', s => { s.sbi.acceptanceCriteria[0].verifier = 'other-acceptance'; }, 'acceptanceCriteria'],
+      ['the risks rewritten', s => { s.sbi.risks = ['none']; }, 'risks'],
+      ['the SBI description rewritten', s => { s.sbi.description = '何でも変更してよい'; }, 'description'],
+    ]) {
+      it(`when the snapshot has ${name} then fails and names the field that differs from the SBI rebuilt from the Issue`, () => mockGitHub({}, () => repository(async root => {
+        const value = structuredClone(snapshot());
+        change(value);
+        assert.equal(sbiSnapshotSchema.safeParse(value).success, true);
+        const source = await verifySnapshot(root, value);
+        assert.equal(source.status, 'FAIL');
+        assert.ok(source.reasons.some(r => r.includes(ref.url) && r.includes('does not match') && r.includes(key)), source.reasons.join('; '));
+      })));
+    }
+
+    for (const field of ['titleDigest', 'bodyDigest']) {
+      it(`when the snapshot ${field} is not the digest of the current Issue then fails and names it`, () => mockGitHub({}, () => repository(async root => {
+        const source = await verifySnapshot(root, { ...snapshot(), [field]: sha256('another Issue') });
+        assert.equal(source.status, 'FAIL');
+        assert.ok(source.reasons.some(r => r.includes(ref.url) && r.includes(field)), source.reasons.join('; '));
+      })));
+    }
+  });
+
+  describe('given a current Issue the Harness cannot rebuild an SBI from', () => {
+    it('when a required section was removed from the Issue body then fails with the reason instead of throwing', () => mockGitHub({ issue: { ...readyIssue, body: readyIssue.body.replace('## Gherkin\n', '## 削除済み\n') } }, () => repository(async root => {
+      const source = await verifySnapshot(root, snapshot());
+      assert.equal(source.status, 'FAIL');
+      assert.ok(source.reasons.some(r => r.includes(ref.url) && r.includes('Gherkin')), source.reasons.join('; '));
+    })));
+
+    it('when the Trusted Acceptance of the Issue is no longer registered then fails', () => mockGitHub({}, () => repository(async root => {
+      const files = await commit(root, { [admin]: 'export {};', [snapshotPath(snapshot())]: snapshot() }, `feat: home${trailers()}`);
+      const source = await verifyIn(root, files, { config: { verifiers: [{ ...homeAcceptance, sbiIssue: 8 }] } });
+      assert.equal(source.status, 'FAIL');
+      assert.ok(source.reasons.some(r => r.includes(ref.url) && r.includes('Trusted Acceptance')), source.reasons.join('; '));
     })));
   });
 
@@ -235,7 +303,7 @@ describe('CI Completion Judge for the source SBI Issue', () => {
     const run = (root, extra = {}) => runCompletionJudge({ root, base: 'base', needs, repository: 'acme/app', ...extra });
     const prepare = async root => {
       await writeFile(join(root, '.harness/verification/home.mjs'), 'console.log(JSON.stringify({ acceptance: ["HOME-AC-1"] }));');
-      await update(root, '.harness/config/harness.json', c => { c.verifiers.push({ id: 'home-acceptance', trust: 'acceptance', trustedScript: '.harness/verification/home.mjs', directory: '.', planned: ['Trusted Acceptance'], commands: [], acceptanceIds: ['HOME-AC-1'], appliesTo: ['^never/'] }); });
+      await update(root, '.harness/config/harness.json', c => { c.verifiers.push(homeAcceptance); });
       await git(root, ['add', '--all']);
       await git(root, ['commit', '-m', 'base']);
       await git(root, ['branch', 'base']);
@@ -245,7 +313,7 @@ describe('CI Completion Judge for the source SBI Issue', () => {
       await prepare(root);
       await commit(root, { [admin]: 'export const home = 1;', [snapshotPath(snapshot())]: snapshot() }, `feat: home${trailers()}`);
       const judged = await run(root);
-      assert.deepEqual(judged.impact.sbis, ['SBI-001']);
+      assert.deepEqual(judged.impact.sbis, ['ISSUE-7']);
       assert.ok(describeImpact(judged.impact).includes('Acceptance (Completion Judge): home-acceptance'));
       assert.deepEqual(judged.checks.map(c => [c.id, c.status]), [['home-acceptance', 'PASS']]);
       assert.equal(judged.source.status, 'PASS');
