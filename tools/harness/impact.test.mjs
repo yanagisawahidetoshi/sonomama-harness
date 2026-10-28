@@ -1,10 +1,15 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fixture, update } from './test-fixture.mjs';
 import { readJson } from './io.mjs';
-import { analyzeImpact, describeImpact, judgeCi } from './impact.mjs';
+import { analyzeImpact, describeImpact, describeJudge, judgeCi, runCompletionJudge } from './impact.mjs';
+import { renderSbiBody } from './planner.mjs';
+import { sbiFromIssue } from './sbi-issue.mjs';
+import { withAcceptance } from './acceptance-registry.mjs';
+import { snapshotFromIssue, snapshotPath } from './sbi-source.mjs';
+import { git } from './workspace.mjs';
 import { verify } from './verifier.mjs';
 import { check } from './check.mjs';
 import { parse } from 'yaml';
@@ -16,6 +21,7 @@ const files = (...paths) => paths.map(path => ({ path }));
 const touched = { api: 'apps/api/app/models/lesson.rb', mobile: 'apps/mobile/src/features/home/index.ts', admin: 'apps/admin/src/features/home/index.ts' };
 const required = impact => impact.requiredVerifiers;
 const reasons = (impact, id) => impact.verifiers.find(v => v.id === id)?.reasons ?? [];
+const passingSecurity = { status: 'PASS', requiredVerifiers: ['secret-scan'], checks: [{ id: 'secret-scan', required: true, status: 'PASS' }], violations: [] };
 
 describe('SBI Impact Analysis', () => {
   describe('given an SBI and a diff that agree', () => {
@@ -138,7 +144,7 @@ describe('SBI requirement for Production changes', () => {
     it('when the Completion Judge aggregates without checking the source SBI Issue then fails closed', () => {
       const impact = analyzeImpact({ config, sbis: [], files: files(touched.admin) });
       const needs = { impact: { result: 'success' }, verifiers: { result: 'success' }, 'harness-test': { result: 'skipped' }, 'harness-demo': { result: 'skipped' } };
-      const result = judgeCi({ impact, needs, acceptance: { status: 'PASS', missing: [] } });
+      const result = judgeCi({ impact, needs, acceptance: { status: 'PASS', missing: [] }, security: passingSecurity });
       assert.equal(result.status, 'FAIL');
       assert.ok(result.reasons.includes('sbi source: not evaluated'));
     });
@@ -156,8 +162,8 @@ describe('SBI requirement for Production changes', () => {
       const needs = { impact: { result: 'success' }, verifiers: { result: 'success' }, 'harness-test': { result: 'skipped' }, 'harness-demo': { result: 'skipped' } };
       assert.equal(impact.sbiRequired, true);
       assert.deepEqual(required(impact), ['admin']);
-      assert.equal(judgeCi({ impact, needs, acceptance: { status: 'PASS', missing: [] }, source }).status, 'PASS');
-      assert.equal(judgeCi({ impact, needs, acceptance: { status: 'FAIL', missing: ['X-AC-1'] }, source }).status, 'FAIL');
+      assert.equal(judgeCi({ impact, needs, acceptance: { status: 'PASS', missing: [] }, security: passingSecurity, source }).status, 'PASS');
+      assert.equal(judgeCi({ impact, needs, acceptance: { status: 'FAIL', missing: ['X-AC-1'] }, security: passingSecurity, source }).status, 'FAIL');
     });
   });
 
@@ -213,50 +219,191 @@ describe('CI Completion Judge', () => {
   const needs = (verifiers, test = 'skipped', demo = 'skipped') => ({ impact: { result: 'success' }, verifiers: { result: verifiers }, 'harness-test': { result: test }, 'harness-demo': { result: demo } });
   const acceptance = { status: 'PASS', missing: [] };
   const source = { status: 'PASS', reasons: [] };
+  const judged = options => judgeCi({ security: passingSecurity, source, ...options });
 
   describe('given the required verifier matrix', () => {
     it('when every required verifier passes then passes', () => {
-      assert.equal(judgeCi({ impact, needs: needs('success'), acceptance, source }).status, 'PASS');
+      assert.equal(judged({ impact, needs: needs('success'), acceptance }).status, 'PASS');
     });
 
     it('when one required verifier fails then fails', () => {
-      const result = judgeCi({ impact, needs: needs('failure'), acceptance, source });
+      const result = judged({ impact, needs: needs('failure'), acceptance });
       assert.equal(result.status, 'FAIL');
       assert.ok(result.reasons.includes('verifiers: failure'));
     });
 
     it('when the matrix was skipped although verifiers were required then fails', () => {
-      assert.equal(judgeCi({ impact, needs: needs('skipped'), acceptance, source }).status, 'FAIL');
+      assert.equal(judged({ impact, needs: needs('skipped'), acceptance }).status, 'FAIL');
     });
 
     it('when no verifier was required and the matrix was skipped then passes', () => {
-      assert.equal(judgeCi({ impact: docsImpact, needs: needs('skipped'), acceptance, source }).status, 'PASS');
+      assert.equal(judged({ impact: docsImpact, needs: needs('skipped'), acceptance }).status, 'PASS');
     });
   });
 
   describe('given the Full Gate', () => {
     it('when Harness changes and harness:test fails then fails', () => {
-      assert.equal(judgeCi({ impact: harnessImpact, needs: needs('success', 'failure', 'success'), acceptance, source }).status, 'FAIL');
+      assert.equal(judged({ impact: harnessImpact, needs: needs('success', 'failure', 'success'), acceptance }).status, 'FAIL');
     });
 
     it('when Harness changes and the Full Gate was skipped then fails', () => {
-      assert.equal(judgeCi({ impact: harnessImpact, needs: needs('success'), acceptance, source }).status, 'FAIL');
+      assert.equal(judged({ impact: harnessImpact, needs: needs('success'), acceptance }).status, 'FAIL');
     });
 
     it('when Harness changes and both Full Gate jobs pass then passes', () => {
-      assert.equal(judgeCi({ impact: harnessImpact, needs: needs('success', 'success', 'success'), acceptance, source }).status, 'PASS');
+      assert.equal(judged({ impact: harnessImpact, needs: needs('success', 'success', 'success'), acceptance }).status, 'PASS');
     });
   });
 
   describe('given SBI acceptance', () => {
     it('when an acceptance criterion has no PASS evidence then fails', () => {
-      const result = judgeCi({ impact, needs: needs('success'), acceptance: { status: 'FAIL', missing: ['X-AC-1'] }, source });
+      const result = judged({ impact, needs: needs('success'), acceptance: { status: 'FAIL', missing: ['X-AC-1'] } });
       assert.equal(result.status, 'FAIL');
       assert.ok(result.reasons.includes('acceptance missing: X-AC-1'));
     });
 
     it('when the impact job itself failed then fails', () => {
-      assert.equal(judgeCi({ impact, needs: { ...needs('success'), impact: { result: 'failure' } }, acceptance, source }).status, 'FAIL');
+      assert.equal(judged({ impact, needs: { ...needs('success'), impact: { result: 'failure' } }, acceptance }).status, 'FAIL');
+    });
+  });
+});
+
+describe('CI Completion Judge for Trusted Acceptance and Security', () => {
+  const needs = (verifiers = 'success') => ({ impact: { result: 'success' }, verifiers: { result: verifiers }, 'harness-test': { result: 'skipped' }, 'harness-demo': { result: 'skipped' } });
+  const impact = analyzeImpact({ config, sbis: [sbi(['admin'])], files: files(touched.admin) });
+  const acceptance = { status: 'PASS', missing: [] };
+  const source = { status: 'PASS', reasons: [] };
+  const securityWith = (...checks) => ({ status: checks.every(c => c.status === 'PASS') ? 'PASS' : 'FAIL', requiredVerifiers: checks.map(c => c.id), checks: checks.map(c => ({ required: true, ...c })), violations: [] });
+
+  describe('given the Security result of the Completion Judge', () => {
+    it('when Security was not evaluated then fails even though the application verifiers passed', () => {
+      const result = judgeCi({ impact, needs: needs(), acceptance, source });
+      assert.equal(result.status, 'FAIL');
+      assert.ok(result.reasons.includes('security: not evaluated'));
+    });
+
+    for (const status of ['FAIL', 'NOT_CONFIGURED', 'SKIP']) {
+      it(`when a required Security verifier is ${status} then does not treat it as PASS`, () => {
+        const result = judgeCi({ impact, needs: needs(), acceptance, source, security: securityWith({ id: 'secret-scan', status: 'PASS' }, { id: 'migration-safety', status }) });
+        assert.equal(result.status, 'FAIL');
+        assert.ok(result.reasons.includes(`security: migration-safety ${status}`));
+      });
+    }
+
+    it('when every required Security verifier passes then passes', () => {
+      const security = securityWith({ id: 'secret-scan', status: 'PASS' }, { id: 'forbidden-pattern-check', status: 'PASS' });
+      assert.equal(judgeCi({ impact, needs: needs(), acceptance, security, source }).status, 'PASS');
+    });
+  });
+
+  describe('given a Production change with a ready SBI Issue snapshot on a branch', () => {
+    const ref = { owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' };
+    const pbi = { owner: 'acme', repo: 'app', number: 3, url: 'https://github.com/acme/app/issues/3', title: 'CI judge' };
+    const planned = {
+      id: 'SBI-001', kind: 'implementation', title: 'CI judge', purpose: '名前に応じてあいさつする。',
+      scope: { included: ['apps/admin'], excluded: [] },
+      acceptanceCriteria: ['AC-1', 'AC-2', 'AC-3'].map(id => ({ id, description: `${id} のあいさつ` })),
+      scenarios: [{ name: 'あいさつ', given: ['名前がある'], when: ['greetを呼ぶ'], then: ['あいさつを返す'], acceptanceIds: ['AC-1', 'AC-2', 'AC-3'], test: 'node:test: greeting.test.mjs' }],
+      dependsOn: [], changeAreas: ['apps/admin'], layers: ['画面Component'], estimatedFiles: 2, oversizeReason: null, riskCandidate: 'L2', securityImpact: [],
+      verification: { applicationTest: 'Vitest', acceptance: 'Trusted Acceptance', e2e: '不要' },
+    };
+    const readyIssue = { number: 7, title: 'SBI-001 CI judge', body: renderSbiBody(planned, pbi), html_url: ref.url, state: 'open', labels: [{ name: 'sbi' }, { name: 'ready' }] };
+    // The sample acceptance script registered on main as the Trusted Acceptance of SBI Issue #7.
+    const issueAcceptance = { version: 1, sbiIssue: 7, verifiers: [{ id: 'issue-7-acceptance', trustedScript: 'tools/harness/sample-bdd.mjs', planned: ['Trusted Acceptance'], acceptanceIds: ['AC-1', 'AC-2', 'AC-3'] }] };
+    const runId = '2026-10-28T00-00-00-000Z-1a2b3c4d';
+    const branch = async (root, change) => {
+      await mkdir(join(root, '.harness/acceptance'), { recursive: true });
+      await writeFile(join(root, '.harness/acceptance/sbi-7.json'), JSON.stringify(issueAcceptance));
+      await git(root, ['add', '--all']);
+      await git(root, ['commit', '-m', 'register the Trusted Acceptance of SBI Issue #7']);
+      await git(root, ['switch', '-c', 'feature']);
+      await mkdir(join(root, 'apps/admin/src'), { recursive: true });
+      await writeFile(join(root, 'greeting.mjs'), "export const greet = name => `こんにちは、${name?.trim() || 'ゲスト'}さん`;\n");
+      const sbi = sbiFromIssue({ ref, issue: readyIssue, config: await withAcceptance(root, await readJson(join(root, '.harness/config/harness.json')), [7]) });
+      const snapshot = snapshotFromIssue({ ref, issue: readyIssue, runId, sbi });
+      await writeFile(join(root, snapshotPath(snapshot)), JSON.stringify(snapshot));
+      await change(root);
+      await git(root, ['add', '--all']);
+      await git(root, ['commit', '-m', `feat: ci judge\n\nHarness-Run: ${runId}\nSBI-Issue: ${ref.url}`]);
+    };
+    const judgeBranch = (root, verifiers = 'success') => runCompletionJudge({ root, base: 'main', needs: needs(verifiers), repository: 'acme/app', github: { fetchIssue: async () => readyIssue } });
+    const status = (judged, id) => judged.security.checks.find(c => c.id === id)?.status;
+
+    it('when the Completion Judge runs then executes the Trusted Acceptance of the SBI', () => fixture(async root => {
+      await branch(root, root => writeFile(join(root, 'apps/admin/src/main.ts'), 'export const ready = true;\n'));
+      const judged = await judgeBranch(root);
+      assert.deepEqual(judged.checks.filter(c => c.trust === 'acceptance').map(c => [c.id, c.status]), [['issue-7-acceptance', 'PASS']]);
+      assert.equal(judged.acceptance.status, 'PASS');
+      assert.equal(judged.status, 'PASS');
+    }));
+
+    it('when the Completion Judge runs then always evaluates secret-scan and forbidden-pattern-check', () => fixture(async root => {
+      await branch(root, root => writeFile(join(root, 'apps/admin/src/main.ts'), 'export const ready = true;\n'));
+      const judged = await judgeBranch(root);
+      assert.equal(status(judged, 'secret-scan'), 'PASS');
+      assert.equal(status(judged, 'forbidden-pattern-check'), 'PASS');
+    }));
+
+    it('when the diff adds a forbidden security pattern then fails on forbidden-pattern-check', () => fixture(async root => {
+      const unsafe = ['NODE', 'TLS', 'REJECT', 'UNAUTHORIZED'].join('_');
+      await branch(root, root => writeFile(join(root, 'apps/admin/src/main.ts'), `process.env.${unsafe} = '0';\n`));
+      const judged = await judgeBranch(root);
+      assert.equal(status(judged, 'forbidden-pattern-check'), 'FAIL');
+      assert.equal(judged.status, 'FAIL');
+    }));
+
+    it('when the diff adds a credential then fails on secret-scan', () => fixture(async root => {
+      const token = 'ghp_' + 'z'.repeat(36);
+      await branch(root, root => writeFile(join(root, 'apps/admin/src/main.ts'), `export const token = '${token}';\n`));
+      const judged = await judgeBranch(root);
+      assert.equal(status(judged, 'secret-scan'), 'FAIL');
+      assert.equal(judged.status, 'FAIL');
+    }));
+
+    // main connects migration-safety; this case disconnects it again so that the required verifier is not configured.
+    it('when the Security Impact adds a required verifier that is not configured then fails instead of passing', () => fixture(async root => {
+      await update(root, '.harness/config/harness.json', c => { c.securityVerifiers = c.securityVerifiers.filter(v => v.id !== 'migration-safety'); });
+      await branch(root, async root => {
+        await mkdir(join(root, 'apps/admin/db/migrate'), { recursive: true });
+        await writeFile(join(root, 'apps/admin/db/migrate/001_lessons.rb'), 'class Lessons; end\n');
+      });
+      const judged = await judgeBranch(root);
+      assert.ok(judged.security.requiredVerifiers.includes('migration-safety'));
+      assert.equal(status(judged, 'migration-safety'), 'NOT_CONFIGURED');
+      assert.equal(judged.status, 'FAIL');
+      assert.ok(judged.reasons.includes('security: migration-safety NOT_CONFIGURED'));
+    }));
+
+    it('when the SBI requires an application verifier then takes its result from the verifier matrix', () => fixture(async root => {
+      // An SBI built from an Issue requires no application verifier, so a hand-written SBI JSON on the same branch asks for it.
+      await branch(root, async root => {
+        const sample = await readJson(join(root, '.harness/state/sample-sbi.json'));
+        await writeFile(join(root, '.harness/state/sbi-requires-admin.json'), JSON.stringify({ ...sample, id: 'SBI-REQUIRES-ADMIN', requiredVerifiers: ['admin'] }));
+        await writeFile(join(root, 'apps/admin/src/main.ts'), 'export const ready = true;\n');
+      });
+      assert.equal(status(await judgeBranch(root), 'admin'), 'PASS');
+      const failed = await judgeBranch(root, 'failure');
+      assert.equal(status(failed, 'admin'), 'FAIL');
+      assert.equal(failed.status, 'FAIL');
+    }));
+
+    it('when the Trusted Acceptance fails then fails although the application verifiers passed', () => fixture(async root => {
+      await branch(root, root => writeFile(join(root, 'greeting.mjs'), 'export const greet = () => "";\n'));
+      const judged = await judgeBranch(root);
+      assert.equal(judged.acceptance.status, 'FAIL');
+      assert.equal(judged.status, 'FAIL');
+    }));
+  });
+
+  describe('given the CI log', () => {
+    it('when the judge is described then shows Application, Acceptance and Security separately', () => {
+      const lines = describeJudge({
+        needs: needs(), acceptance, checks: [{ id: 'sample-bdd', trust: 'acceptance', status: 'PASS' }],
+        security: securityWith({ id: 'secret-scan', status: 'PASS' }), status: 'PASS', reasons: [],
+      });
+      assert.ok(lines.includes('Application: verifiers=success harness-test=skipped harness-demo=skipped'));
+      assert.ok(lines.includes('Acceptance: PASS (sample-bdd: PASS)'));
+      assert.ok(lines.includes('Security: PASS (secret-scan: PASS)'));
     });
   });
 });

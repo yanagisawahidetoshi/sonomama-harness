@@ -9,7 +9,7 @@ import { recordApiSchemaDecision, apiSchemaApprovalStatus } from './api-schema-a
 import { startApiMock } from './api-mock.mjs';
 import { startApiDocs } from './api-docs.mjs';
 import { relativePath } from './schemas.mjs';
-import { describeImpact, loadImpact, runCompletionJudge, runVerifier } from './impact.mjs';
+import { describeImpact, describeJudge, loadImpact, runCompletionJudge, runVerifier } from './impact.mjs';
 import { describeSbiSource } from './sbi-source.mjs';
 import { appendFile } from 'node:fs/promises';
 const root = fileURLToPath(new URL('../../', import.meta.url));
@@ -88,8 +88,9 @@ try {
       const judged = await runCompletionJudge({ root, base, all, needs });
       for (const line of describeImpact(judged.impact)) console.log(redactText(line));
       for (const line of describeSbiSource(judged.source)) console.log(redactText(line));
-      for (const c of judged.checks) console.log(redactText(`${c.id}: ${c.status}${c.reason ? ` (${c.reason})` : ''}`));
+      for (const c of [...judged.checks, ...judged.security.checks.filter(c => c.required)]) console.log(redactText(`${c.id}: ${c.status}${c.reason ? ` (${c.reason})` : ''}`));
       for (const [job, value] of Object.entries(needs)) console.log(`job ${job}: ${value.result}`);
+      for (const line of describeJudge({ needs, ...judged })) console.log(redactText(line));
       console.log(`Completion Judge: ${judged.status}${judged.reasons.length ? ` (${judged.reasons.join('; ')})` : ''}`);
       process.exitCode = judged.status === 'PASS' ? 0 : 1;
     }

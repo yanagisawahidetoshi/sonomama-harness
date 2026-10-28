@@ -7,7 +7,7 @@
 | `impact` | `pnpm harness:impact` でrequired verifierとFull Gateの要否を決め、理由をログに出す |
 | `verifiers` | required verifierごとのmatrix。`pnpm harness:verify --verifier <id>` を並列に実行する（`fail-fast: false`） |
 | `harness-test` / `harness-demo` | Full Gateのときだけ、`harness:test` と `harness:demo --full` を並列に実行する |
-| `harness` | Completion Judge。変更されたSBIのTrusted Acceptanceを実行し、各jobの結果を集約する。必須チェック名なのでjob idを変えない |
+| `harness` | Completion Judge。変更されたSBIのTrusted AcceptanceとSecurity Verifierを実行し、各jobの結果を集約する。必須チェック名なのでjob idを変えない |
 
 ## Verifierの選び方
 
@@ -41,6 +41,22 @@ source Issueを持たない手書きの `sbi-*.json`（`sbi-admin-env.json` な�
 判定理由はimpact jobとharness jobのログの `SBI required:` 行と、harness jobの `SBI source` 行に出る。harness jobはIssueを読むため `issues: read` と `GH_TOKEN` を持つ。
 
 `impact.fullGate` のパス（`tools/harness/`、`.harness/config|verification|rules|skills/`、`.github/`、`.githooks/`、`AGENTS.md`、`.ai/`、root の `package.json`）が変わったときはFull Gateも実行する。mainへのpushでは全Verifierを実行し、Full Gateも実行する。
+
+## Completion Judgeの判定
+
+`harness` jobは次の3つがすべてPASSのときだけPASSにする。ログの`Application:` / `Acceptance:` / `Security:`行にそれぞれの結果が出る。
+
+| 区分 | 内容 |
+| --- | --- |
+| Application | `verifiers` matrixと、Full Gateなら`harness-test` / `harness-demo`のjob結果 |
+| Acceptance | 変更されたSBIのTrusted Acceptance（`trust: acceptance`）をjudge内で実行した結果 |
+| Security | `classifySecurity()`がdiffとSBIから決めたrequired verifierを`verifySecurity()`で評価した結果。`alwaysRequiredVerifiers`（secret-scan・forbidden-pattern-check）は常に含む |
+
+- SecurityはFAIL・NOT_CONFIGURED・SKIP・未実行をPASS扱いしない。Security ruleが追加したverifierのコマンドが未設定なら、そのPRはFAILする。
+- SBIの`requiredVerifiers`にあるapplication verifierは、matrix jobの結果をSecurityの判定にも使う。
+- secret-scanとforbidden-pattern-checkは、変更ファイルの追加行を検査する。`tools/harness/*.test.mjs`はredactionのfixtureを含むため、Harness worktree作成時と同じくcredential形式の値だけを秘密値とみなす。
+- mainへのpush（`--all`）は差分が無いので、Securityの検査対象も無い。PRの判定で検査済みの前提。
+- 実装前Gate・Human Approvalの要否はCIでは判定しない。Harness runとGitHub Reviewで扱う。
 
 ## api-contract
 
