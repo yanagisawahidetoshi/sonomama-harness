@@ -41,7 +41,7 @@ pnpm --filter admin test
 
 ## API接続
 
-接続先は `VITE_API_BASE_URL` で切り替える。起動時ではなく `src/shared/api` の初回importでZod検証する。
+接続先は `VITE_API_BASE_URL` で切り替える。値は起動時ではなく、`src/shared/api` を初めてimportしたときにZodで検証する。
 
 ```text
 VITE_API_BASE_URL=http://127.0.0.1:4010
