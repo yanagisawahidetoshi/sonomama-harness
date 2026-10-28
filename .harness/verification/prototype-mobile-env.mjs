@@ -50,11 +50,18 @@ try {
       assert.ok(existsSync(join(app, '.rnstorybook/main.ts')), '.rnstorybook/main.ts');
       assert.match(pkg().scripts.storybook, /STORYBOOK/);
     }],
-    ['PMOB-AC-6', 'Given the entry point, When Storybook is enabled, Then a dedicated entry replaces Expo Router instead of a route', () => {
+    ['PMOB-AC-6', 'Given the entry point, When Storybook is enabled, Then a dedicated entry selected by the storybook script replaces Expo Router instead of a route', () => {
       const entry = read('prototypes/mobile/index.ts');
       assert.equal(pkg().main, 'index.ts');
       assert.match(entry, /\.rnstorybook/);
       assert.match(entry, /expo-router\/entry/);
+      // The storybook script, the entry switch, Metro and the README must agree on one variable name.
+      const name = pkg().scripts.storybook.match(/\b(EXPO_PUBLIC_\w+)=true\b/)?.[1];
+      assert.ok(name, 'storybook script sets an EXPO_PUBLIC_ variable');
+      const reads = new RegExp(`process\\.env\\.${name}\\b`);
+      assert.match(entry, reads, `index.ts reads ${name}`);
+      assert.match(read('prototypes/mobile/metro.config.js'), reads, `metro.config.js reads ${name}`);
+      assert.ok(read('prototypes/mobile/README.md').includes(`${name}=true`), `README sets ${name}`);
       assert.ok(!files(join(app, 'src/app')).some(p => /storybook/i.test(readFileSync(p, 'utf8'))), 'no Storybook inside Expo Router routes');
     }],
     ['PMOB-AC-7', 'Given the package, When running on simulators, Then ios / android / storybook scripts exist and the README explains them', () => {
