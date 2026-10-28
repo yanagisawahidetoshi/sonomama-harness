@@ -29,7 +29,7 @@ const steps = (keyword, lines) => lines.map((line, index) => `  ${index ? 'And' 
 export function renderGherkin(scenarios) {
   return scenarios.map(s => [`Scenario: ${s.name}`, ...steps('Given', s.given), ...steps('When', s.when), ...steps('Then', s.then)].join('\n')).join('\n\n');
 }
-export const kindLabels = Object.freeze({ implementation: '実装SBI', validation: '最終確認SBI', acceptance: '人間確認SBI' });
+export const kindLabels = Object.freeze({ implementation: '実装SBI', validation: '最終確認SBI' });
 export function renderSbiBody(sbi, pbi, issueNumbers = {}) {
   const security = sbi.securityImpact.filter(category => category !== 'None');
   return [

@@ -5,11 +5,11 @@
 PBIを、人間が短時間でレビューできる粒度のSBIへ分割する。各SBIは次の項目を持つ。
 
 - id: SBI-001から連番。title: 実現する振る舞いを1行で。
-- kind: implementation / validation / acceptance。
+- kind: implementation / validation。
   - implementation（実装SBI）: 通常の機能実装。1件以上。Mobile E2EはモックAPI（承認済みOpenAPI / Prism）で行う。
-  - validation（最終確認SBI）: 1件だけ。dependsOnはすべての実装SBI。Expo → 実API → Rails → DBのMaestro E2Eで確認する。
-  - acceptance（人間確認SBI）: 1件だけ。dependsOnは最終確認SBIだけ。人間が画面・操作感・文言・要件適合を確認する。changeAreasは空でよい。
-  - 実装SBIは最終確認・人間確認SBIに依存させない。
+  - validation（最終確認SBI）: Integration / E2Eが必要なPBIだけ、1件まで。dependsOnはすべての実装SBI。Expo → 実API → Rails → DBのMaestro E2Eで確認する。
+  - 実装SBIは最終確認SBIに依存させない。
+  - 人間による画面・操作感・文言・要件適合の確認はSBIにしない。PBI Human Acceptance Gateで扱う。
 - purpose: 何を実現するSBIかを1〜2文で。目的は1つに絞る。
 - scope.included: 対象となる画面・API・機能・アプリ領域。scope.excluded: 必要な場合だけ簡潔に。
 - acceptanceCriteria: 「何ができればこのSBIを受け入れられるか」を3〜5項目（上限はlimits.acceptanceCriteria）。

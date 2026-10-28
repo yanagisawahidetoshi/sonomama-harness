@@ -1,8 +1,8 @@
 import { z } from 'zod';
 const text = z.string().min(1);
-// implementation: feature work (Maestro against the mock API). validation: real API + Rails + DB E2E after every implementation SBI.
-// acceptance: human confirmation after validation PASS; only a trusted human record completes it.
-export const sbiKinds = Object.freeze(['implementation', 'validation', 'acceptance']);
+// implementation: feature work (Maestro against the mock API). validation: optional real API + Rails + DB E2E after every implementation SBI.
+// Human acceptance changes no code and runs no test, so it is a PBI Gate (pbiAcceptanceRecordSchema), never an SBI kind.
+export const sbiKinds = Object.freeze(['implementation', 'validation']);
 export const relativePath = text.refine(p => !p.startsWith('/') && !p.includes('\\') && p.split('/').every(s => s !== '..' && s !== '.' && s !== ''), 'unsafe relative path');
 export const sbiSchema = z.strictObject({
   id: text.regex(/^[A-Za-z0-9_-]+$/), kind: z.enum(sbiKinds).default('implementation'), title: text, description: text,
@@ -165,12 +165,12 @@ export const apiSchemaApprovalRecordSchema = z.strictObject({
   decision: z.enum(['APPROVE', 'REQUEST_CHANGES', 'REVOKE']), decidedAt: z.iso.datetime(),
   commitSha: z.string().regex(/^[0-9a-f]{40,64}$/), proposalDigest: z.string().regex(/^[0-9a-f]{64}$/), signature: text,
 });
-// PBI acceptance is bound to the PBI, the acceptance SBI and the validation evidence it confirms.
+// The PBI Human Acceptance Gate is bound to the PBI and the evidence it confirms (validation evidence, or the merged implementation evidence).
 // It is separate from implementation-gate / design-approval / merge / api-schema records and never substitutes for them.
 export const pbiAcceptanceRecordSchema = z.strictObject({
-  id: text, purpose: z.literal('pbi-acceptance'), pbiUrl: z.url(), sbiId: text, reviewer: text, kind: z.literal('human'), identitySource: text,
+  id: text, purpose: z.literal('pbi-acceptance'), pbiUrl: z.url(), reviewer: text, kind: z.literal('human'), identitySource: text,
   decision: z.enum(['APPROVE', 'REQUEST_CHANGES', 'REVOKE']), decidedAt: z.iso.datetime(),
-  validationDigest: z.string().regex(/^[0-9a-f]{64}$/), signature: text,
+  evidenceDigest: z.string().regex(/^[0-9a-f]{64}$/), signature: text,
 });
 export const apiSchemaGenerationRecordSchema = z.strictObject({
   purpose: z.literal('api-schema-generation'), issueUrl: z.url(), runId: text, required: z.union([z.literal(1), z.literal(2)]),
