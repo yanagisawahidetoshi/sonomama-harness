@@ -214,6 +214,24 @@ describe('Verifier isolation', () => {
       assert.throws(() => configSchema.parse(config));
     });
   });
+
+  describe('given a run workspace whose node_modules is only an empty container mount point', () => {
+    it('when a trusted acceptance script loads Harness modules then their dependencies resolve from the Harness installation', () => fixture(async root => {
+      const workspace = join(root, '.harness/runs/r/workspace');
+      await mkdir(join(root, 'node_modules/harness-dependency'), { recursive: true });
+      await writeFile(join(root, 'node_modules/harness-dependency/package.json'), '{"name":"harness-dependency","type":"module","exports":"./index.js"}');
+      await writeFile(join(root, 'node_modules/harness-dependency/index.js'), 'export const value = "resolved";');
+      await mkdir(join(workspace, 'node_modules'), { recursive: true });
+      await mkdir(join(workspace, 'tools'), { recursive: true });
+      await writeFile(join(workspace, 'tools/module.mjs'), 'export { value } from "harness-dependency";');
+      await writeFile(join(root, '.harness/verification/resolve.mjs'), 'const { value } = await import(new URL("tools/module.mjs", "file://" + process.argv[2] + "/").href); if (value !== "resolved") process.exit(1); console.log(JSON.stringify({ acceptance: ["R-1"] }));');
+      const { config } = await check(root);
+      config.verifiers.push({ id: 'resolve', trust: 'acceptance', trustedScript: '.harness/verification/resolve.mjs', directory: '.', commands: [], acceptanceIds: ['R-1'] });
+      const result = await verify({ root, workspace, config, sbi: { ...sbi, acceptanceCriteria: [{ id: 'R-1', verifier: 'resolve' }] }, files: [], only: new Set(['resolve']) });
+      assert.equal(result.checks.find(c => c.id === 'resolve').status, 'PASS', JSON.stringify(result.checks.find(c => c.id === 'resolve').process?.stderr));
+      assert.deepEqual(result.acceptance, ['R-1']);
+    }));
+  });
 });
 
 describe('Verifier isolation with a real Docker daemon', () => {
