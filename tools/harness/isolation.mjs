@@ -19,7 +19,8 @@ export const dockerCliEnv = () => ({ DOCKER_CONFIG: join(homedir(), '.docker'), 
 const harnessEnv = () => pick(['PATH', 'HARNESS_BASE_REF']);
 // Trust state, evidence and Git metadata stay hidden even when the workspace is the repository root (harness:verify, CI).
 const protectedPaths = ['.git', '.harness/state', '.harness/runs', '.harness/exports'];
-const unavailable = reason => ({ status: 'FAIL', reason: `isolation unavailable: ${reason}`, processes: [] });
+// The docker error is kept for diagnosis; evidence is redacted when it is written.
+const unavailable = (reason, process) => ({ status: 'FAIL', reason: `isolation unavailable: ${reason}`, processes: process ? [process] : [] });
 const outcome = processes => ({ status: processes.every(p => p.ok) ? 'PASS' : 'FAIL', processes });
 const inside = (parent, path) => { const rel = relative(parent, path); return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel)); };
 
@@ -33,7 +34,7 @@ export async function runIsolated({ workspace, adapter, config, cwd }) {
   }
   // Fail closed: without a reachable daemon nothing untrusted runs, and the check cannot pass.
   const ready = await execute(docker, ['info', '--format', '{{.ServerVersion}}'], { env: dockerCliEnv(), timeoutMs: 30000 });
-  if (!ready.ok) return unavailable('docker is not available');
+  if (!ready.ok) return unavailable('docker is not available', ready);
   return mode === 'compose' ? compose({ workspace, adapter, docker, cwd, timeoutMs }) : container({ workspace, adapter, docker, cwd, timeoutMs });
 }
 
@@ -85,13 +86,15 @@ async function container({ workspace, adapter, docker, cwd, timeoutMs }) {
     const volumes = [...(await moduleDirectories(workspace)).map(path => `/workspace/${path}`), '/pnpm-store'];
     const user = `${process.getuid()}:${process.getgid()}`;
     const started = await execute(docker, ['run', '-d', '--name', name, '--network', adapter.network ? 'bridge' : 'none', '--user', user,
-      // CHOWN is only usable by the root setup exec below; the verifier user has no capabilities and cannot gain any.
-      '--cap-drop', 'ALL', '--cap-add', 'CHOWN', '--security-opt', 'no-new-privileges', '--read-only', '--pids-limit', '4096', '--tmpfs', '/tmp:rw,exec,mode=1777',
+      // CHOWN and DAC_READ_SEARCH (to reach volumes under a 0700 workspace) are only usable by the root setup exec below;
+      // the verifier user has no capabilities and cannot gain any.
+      '--cap-drop', 'ALL', '--cap-add', 'CHOWN', '--cap-add', 'DAC_READ_SEARCH', '--security-opt', 'no-new-privileges', '--read-only', '--pids-limit', '4096', '--tmpfs', '/tmp:rw,exec,mode=1777',
       ...Object.entries(containerEnv).flatMap(([k, v]) => ['-e', `${k}=${v}`]),
       '--mount', `type=bind,src=${workspace},dst=/workspace`, ...masks, ...volumes.flatMap(dst => ['--mount', `type=volume,dst=${dst}`]),
       '--workdir', '/workspace', image, 'sleep', 'infinity'], { env: dockerCliEnv(), timeoutMs: 120000 });
-    if (!started.ok) return unavailable('container could not be started');
-    if (!(await execute(docker, ['exec', '-u', '0', name, 'chown', user, ...volumes], { env: dockerCliEnv(), timeoutMs: 60000 })).ok) return unavailable('container volumes could not be prepared');
+    if (!started.ok) return unavailable('container could not be started', started);
+    const prepared = await execute(docker, ['exec', '-u', '0', name, 'chown', user, ...volumes], { env: dockerCliEnv(), timeoutMs: 60000 });
+    if (!prepared.ok) return unavailable('container volumes could not be prepared', prepared);
     const workdir = ['/workspace', relative(workspace, cwd)].filter(Boolean).join('/');
     const processes = [];
     for (const [command, ...args] of adapter.commands) processes.push(await execute(docker, ['exec', '-w', workdir, name, command, ...args], { env: dockerCliEnv(), timeoutMs }));
