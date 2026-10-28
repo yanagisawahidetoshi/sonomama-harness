@@ -298,7 +298,7 @@ describe('Risk view of a verified SBI snapshot', () => {
     assert.equal(classifySecurity({ files: riskView([app, stored()], { snapshot: snapshot(), verified: true }) }, securityPolicy).securitySensitive, false);
   });
   it('when the verified snapshot describes security-sensitive work then the change stays security-sensitive at LEVEL 3', () => {
-    const sensitive = snapshot({ sbi: { ...sbi, issueUrl: ref.url, description: 'CREATE POLICY で受講生の行だけを返す' } });
+    const sensitive = snapshot({ sbi: { ...sbi, issueUrl: ref.url, description: 'security_rule を書き換える' } });
     const view = riskView([app, stored(sensitive)], { snapshot: sensitive, verified: true });
     const assessment = classifySecurity({ files: view }, securityPolicy);
     assert.equal(assessment.securitySensitive, true);
