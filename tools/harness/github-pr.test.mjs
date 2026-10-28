@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, realpath, rm, writeFile, readdir } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, writeFile, readdir, chmod, symlink, appendFile, mkdir } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { reviewApprovals, ciStatus } from './github-pr.mjs';
@@ -561,6 +562,48 @@ describe('GitHub PR Adapter', () => {
       assert.equal(approved.executionStatus, 'DONE');
       assert.equal((await github.state()).pulls.length, 1);
     })));
+    // The exit code is what a person or a script sees: only a failed run is non-zero. cli.mjs of the fixture is spawned with a codex stub on PATH.
+    describe('when the commands are run from the CLI', () => {
+      const cli = async (root, args, response = { files: [{ path: home, content: 'ホーム' }], escalation: null }) => {
+        const bin = await mkdtemp(join(tmpdir(), 'harness-codex-'));
+        try {
+          await writeFile(join(bin, 'codex'), `#!${process.execPath}\nconst fs = require('node:fs'), args = process.argv.slice(2); fs.readFileSync(0); fs.writeFileSync(args[args.indexOf('--output-last-message') + 1], process.env.CODEX_STUB_RESPONSE);\n`);
+          await chmod(join(bin, 'codex'), 0o755);
+          const child = spawn(process.execPath, [join(root, 'tools/harness/cli.mjs'), ...args], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'],
+            env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, CODEX_STUB_RESPONSE: JSON.stringify(response) } });
+          let output = '';
+          child.stdout.on('data', chunk => { output += chunk; }); child.stderr.on('data', chunk => { output += chunk; });
+          const code = await new Promise(resolve => child.on('exit', resolve));
+          return { code, output };
+        } finally { await rm(bin, { recursive: true, force: true }); }
+      };
+      // The fixture copies tools/harness without node_modules; the installed ones are linked and kept out of Git.
+      const linked = async root => {
+        await symlink(join(new URL('../../', import.meta.url).pathname, 'node_modules'), join(root, 'node_modules'));
+        await mkdir(join(root, '.git/info'), { recursive: true });
+        await appendFile(join(root, '.git/info/exclude'), 'node_modules\n');
+      };
+      it('when harness:run SBI_URL opens the PR and only GitHub CI is pending then exits 0', () => fixture(root => linked(root).then(() => withIssue(root, sbiIssue(), async ({ github }) => {
+        const { code, output } = await cli(root, ['run', issueUrl, '--provider', 'codex']);
+        assert.equal(code, 0, output);
+        assert.equal((await github.state()).pulls.length, 1);
+        assert.match(output, /Pull request: https:\/\/github.com\/acme\/app\/pull\//);
+      }))));
+      it('when harness:run SBI_URL stops at the gate as required, and harness:approve SBI_URL then opens the PR, then both exit 0', () => fixture(root => linked(root).then(() => withIssue(root, sbiIssue(['sbi', 'ready'], planned({ riskCandidate: 'L3' })), async ({ github }) => {
+        const started = await cli(root, ['run', issueUrl, '--provider', 'codex']);
+        assert.equal(started.code, 0, started.output);
+        assert.match(started.output, /Human Gate: pnpm harness:approve https:\/\/github.com\/acme\/app\/issues\/7 --phase gate/);
+        assert.deepEqual((await github.state()).pulls, []);
+        const approved = await cli(root, ['approve', issueUrl, '--phase', 'gate']);
+        assert.equal(approved.code, 0, approved.output);
+        assert.equal((await github.state()).pulls.length, 1);
+      }))));
+      it('when harness:run SBI_URL escalates because the agent writes outside the scope then exits 2 and opens no PR', () => fixture(root => linked(root).then(() => withIssue(root, sbiIssue(), async ({ github }) => {
+        const { code, output } = await cli(root, ['run', issueUrl, '--provider', 'codex'], { files: [{ path: 'apps/admin-other/home.txt', content: 'ホーム' }], escalation: null });
+        assert.equal(code, 2, output);
+        assert.deepEqual((await github.state()).pulls, []);
+      }))));
+    });
     it('when two runs of the Issue wait at the gate then approving by the Issue URL refuses to guess and names both runs', () => fixture(root => withIssue(root, sbiIssue(['sbi', 'ready'], planned({ riskCandidate: 'L3' })), async () => {
       const first = await start(root), second = await start(root);
       await assert.rejects(approveRun({ root, issueUrl, purpose: 'implementation-gate', identityProvider: human('Designer'), quiet: true }),
