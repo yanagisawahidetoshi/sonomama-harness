@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fixture, update, human, commitFixture, runFixture as runHarness } from './test-fixture.mjs';
 import { inspectMigration, checkMigrations } from './migration-safety.mjs';
@@ -198,7 +198,11 @@ describe('migration-safety in the CI verifier matrix', () => {
     await writeFile(join(root, '.harness/state/sbi-migration.json'), JSON.stringify({ ...sample, id: 'SBI-MIGRATION', allowedFiles: [migrationPath], securityImpact: ['Migration'], requiredVerifiers: ['migration-safety'] }));
     await commitFixture(root);
   };
-  const matrix = (root, args = []) => execute(process.execPath, ['tools/harness/cli.mjs', 'verify', '--verifier', 'migration-safety', '--base', 'HEAD~1', ...args], { cwd: root });
+  // The fixture copies only tracked files, so the CLI borrows this checkout's installed dependencies.
+  const matrix = async root => {
+    await symlink(new URL('../../node_modules', import.meta.url).pathname, join(root, 'node_modules'));
+    return execute(process.execPath, ['tools/harness/cli.mjs', 'verify', '--verifier', 'migration-safety', '--base', 'HEAD~1'], { cwd: root });
+  };
   describe('given a Production pull request whose SBI makes Impact Analysis require migration-safety', () => {
     it('when the migration is safe then the matrix job runs migration-safety and PASSes instead of reporting NOT_CONFIGURED', () => fixture(async root => {
       await pullRequest(root, safe);
