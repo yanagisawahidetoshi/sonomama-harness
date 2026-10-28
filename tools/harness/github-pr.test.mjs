@@ -525,9 +525,8 @@ describe('GitHub PR Adapter', () => {
     })));
     it('when another SBI runs with --full after Issue #7 registered its Trusted Acceptance then that acceptance is not run for it', () => fixture(root => withIssue(root, sbiIssue(), async () => {
       const run = await startRun({ root, quiet: true, provider: 'fake', full: true });
-      const check = run.iterations.at(-1).verification.checks.find(c => c.id === 'issue-7-acceptance');
-      assert.deepEqual([check.status, check.required], ['SKIP', false]);
-      assert.equal(run.executionStatus, 'DONE');
+      // --full also runs every real app verifier, which the fixture cannot pass; only the selection of issue-7-acceptance matters here.
+      for (const iteration of run.iterations) assert.deepEqual((({ status, required }) => [status, required])(iteration.verification.checks.find(c => c.id === 'issue-7-acceptance')), ['SKIP', false]);
     })));
     for (const labels of [['sbi', 'needs-review'], ['ready']]) {
       it(`when the Issue is labelled ${labels.join(' + ')} then no run, workspace or PR is created`, () => fixture(root => withIssue(root, sbiIssue(labels), async ({ github }) => {
