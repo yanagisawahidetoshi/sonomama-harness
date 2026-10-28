@@ -6,11 +6,10 @@ import { fileURLToPath } from 'node:url';
 import { readExistingSchema } from './api-schema-reader.mjs';
 import { externalRefs, mockHost, mockSchemaPath } from './api-mock.mjs';
 // Part of the api-contract Verifier for a Schema SBI: Prism must start from the OpenAPI of the run workspace (not an approved proposal),
-// and every GET it can call without inventing a path parameter must answer its first documented 2xx status with parseable JSON.
+// and every GET it can call without inventing a path parameter or a credential must answer its first documented 2xx status with parseable JSON.
+// An endpoint with a security requirement is listed as not called: sending any credential header from a Verifier is a Security Gate matter.
 const require = createRequire(import.meta.url);
 const prismScript = () => require.resolve('@stoplight/prism-cli/dist/index.js');
-// Prism checks only that a bearer value is present; the value is a placeholder, never a credential.
-const mockBearer = ['Authorization', 'Bearer mock'];
 const freePort = () => new Promise((done, fail) => { const server = createServer().once('error', fail).listen(0, mockHost, () => { const { port } = server.address(); server.close(() => done(port)); }); });
 
 function operations(document) {
@@ -47,8 +46,8 @@ export async function checkApiMock({ root, timeoutMs = 30000 }) {
     }
     for (const operation of operations(schema.document)) {
       const name = `GET ${operation.path}`;
-      if (operation.path.includes('{')) { result.skipped.push(name); continue; }
-      const response = await fetch(`${base}${operation.path}`, { headers: operation.secured ? [mockBearer] : [] });
+      if (operation.path.includes('{') || operation.secured) { result.skipped.push(name); continue; }
+      const response = await fetch(`${base}${operation.path}`);
       const text = await response.text();
       if (response.status !== operation.status) { result.errors.push(`${name}: ${response.status}（OpenAPIでは${operation.status}）`); continue; }
       if (operation.json) { try { JSON.parse(text); } catch { result.errors.push(`${name}: JSONではないresponse`); continue; } }
@@ -63,7 +62,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const root = resolve(fileURLToPath(new URL('../../', import.meta.url)));
   const result = await checkApiMock({ root });
   for (const line of result.checked) console.log(`Prism Mock: ${line}`);
-  for (const line of result.skipped) console.log(`Prism Mock: ${line} はpath parameterの値がないため呼び出していません`);
+  for (const line of result.skipped) console.log(`Prism Mock: ${line} はpath parameterの値がない、またはsecurity要件があるため呼び出していません`);
   for (const line of result.errors) console.error(`Prism Mock: ${line}`);
   console.log(`Prism Mock check: ${result.status}`);
   process.exitCode = result.status === 'PASS' ? 0 : 1;
