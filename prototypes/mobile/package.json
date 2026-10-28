@@ -7,7 +7,7 @@
     "start": "expo start",
     "ios": "EXPO_USE_PRECOMPILED_MODULES=0 expo run:ios",
     "android": "expo run:android",
-    "storybook": "EXPO_PUBLIC_STORYBOOK=true expo start --clear",
+    "storybook": "EXPO_PUBLIC_STORYBOOK_ENABLED=true expo start --clear",
     "storybook-generate": "sb-rn-get-stories --config-path .rnstorybook",
     "typecheck": "tsc --noEmit",
     "lint": "biome lint .",
