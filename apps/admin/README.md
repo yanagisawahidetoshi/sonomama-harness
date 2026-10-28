@@ -1,4 +1,5 @@
 # React admin placeholder
-React本体は未生成。package.jsonがない間、Verifierはmissing appとしてSKIPする。
-生成後はadmin.commandsにTypeScript / ESLint / Vitest / RTL / Storybook /
-Playwright / VRTを登録する。
+
+React本体はまだ生成していない。package.jsonがない間は、Verifierがmissing appとしてSKIPする。
+
+生成したら、.harness/config/harness.jsonのadminのcommandsにTypeScript / ESLint / Vitest / RTL / Storybook / Playwright / VRTを登録する。

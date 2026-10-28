@@ -4,28 +4,30 @@
 [対象機能と境界]
 
 ## 構成
-Rails API / Expo / React admin。契約はpackages/api-schemaのOpenAPI。
-アプリ内はappがfeaturesを合成し、featuresはsharedだけに依存する。
+Rails API / Expo / React adminで構成する。契約はpackages/api-schemaのOpenAPIで定義する。
+アプリ内では、appがfeaturesを組み合わせ、featuresはsharedだけに依存する。
 
 ## データと信頼境界
 [認証・権限・個人情報・外部接続]
 
 ## Harness v1
-State → Agent → Verifier → Reviewer → Completion Judge。
-失敗時は証跡を次iterationに渡す。各runは新しい作業領域を持つ。
-実装箇所はtools/harness、設定は.harness/config、判断規則は.harness/rules。
-Reviewerは決定的なポリシーチェックで、設計・セキュリティの専門レビューは含まない。
+State → Agent → Verifier → Reviewer → Completion Judgeの順に進む。
+失敗したときは、証跡を次のiterationに渡す。runごとに新しい作業領域を用意する。
+実装はtools/harness、設定は.harness/config、判断規則は.harness/rulesにある。
+Reviewerは決定的なポリシーチェックであり、設計やセキュリティの専門レビューは行わない。
 
 ## 未決事項 / 関連ADR
 [人間が判断する項目とリンク]
 
 ## Security Requirementsとの境界
 
-docs/security・docs/product・ADRが、人間の決めるSecurity RequirementsのSSOT。
-Harnessは権限表、PII定義、retention期間、匿名化の要件を決定しない。
-Security rule IDを文書とsecurity.jsonで共有し、human-gates.jsonは同じIDを参照する。
+人間が決めるSecurity RequirementsのSSOTは、docs/security・docs/product・ADRである。
+Harnessは、権限表、PII定義、retention期間、匿名化の要件を決めない。
+Security rule IDは文書とsecurity.jsonで共有し、human-gates.jsonも同じIDを参照する。
 
-HarnessはSecurity impact検知、必須Verifier選択、事前Gate、最低Risk、検証、完了・merge禁止、
-伏せ字化されたEvidenceの保存を担当する。Semantic Reviewや人間の人数だけで検証失敗を上書きしない。
-workspace・prompt・ログ・レビューZIPの秘密情報保護はevidence-protection.mjsを経由する。
-NOT_CONFIGUREDはFAIL/SKIPと区別し、必須なら処理を停止する。実際のmergeは対象外。PBI → SBI PlannerはSBI Issueの作成までで、実行・判定・mergeに関与しない。
+Harnessが担当するのは、Security impactの検知、必須Verifierの選択、事前Gate、最低Riskの適用、検証、完了・mergeの禁止、伏せ字にしたEvidenceの保存である。
+Semantic Reviewの結果や承認者の人数だけで、検証の失敗を覆さない。
+workspace・prompt・ログ・レビューZIPから秘密情報を守る処理は、evidence-protection.mjsを通す。
+NOT_CONFIGUREDはFAILやSKIPとは別の状態として扱い、必須のVerifierがNOT_CONFIGUREDなら処理を止める。
+
+実際のmergeは扱わない。PBI → SBI PlannerはSBI Issueの作成までを担当し、実行・判定・mergeには関わらない。
