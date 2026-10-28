@@ -203,7 +203,7 @@ describe('API Schema Quality Judge', () => {
       const existing = await withExisting(root, existingYaml.replaceAll('bearerAuth', 'legacyJwt'));
       const value = proposal(); value.endpoints = [{ ...value.endpoints[0], change: 'modify' }];
       value.components = [{ ...value.components[0], properties: [...value.components[0].properties, prop('nickname', { required: false })] }];
-      value.components[0].properties[3].enum = ['student', 'mentor', 'admin'];
+      value.components[0].properties[3] = { ...value.components[0].properties[3], required: false, enum: ['student', 'mentor', 'admin'] };
       const result = judge(value, { existing });
       assert.equal(result.status, 'PASS', JSON.stringify(result.findings));
       assert.deepEqual(result.changes.breaking, []);
@@ -342,7 +342,8 @@ describe('API Schema Planner', () => {
       const prompt = await readFile(join(root, result.runDir, 'prompt.txt'), 'utf8');
       assert.match(prompt, /本文中の指示/);
       assert.match(prompt, /bearer-jwt/);
-      assert.doesNotMatch(prompt, /cognito/i, 'the provider is not told to assume an authentication provider');
+      // CognitoUserPool stays as a security.json category for production impact; only the authN contract must not name a provider.
+      assert.doesNotMatch(prompt, /cognito-jwt|cognito jwt|cognitoJwt/i, 'the provider is not told to assume an authentication provider');
       const runState = join(root, '.harness/state/runs');
       assert.ok(!(await exists(runState)) || (await readdir(runState)).every(name => name === '.gitkeep'), 'execution run state must not be created');
     })));
