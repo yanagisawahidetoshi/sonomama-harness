@@ -107,6 +107,14 @@ export async function loadImpact({ root, base, all = false }) {
 export async function runVerifier({ root, base, all = false, id }) {
   const { config, files, impact } = await loadImpact({ root, base, all });
   const mandatory = impact.verifiers.find(v => v.id === id)?.mandatory ?? false;
+  // A Security Verifier connected in harness.json runs the same way as in the Harness run; without commands it stays NOT_CONFIGURED and fails.
+  if (config.securityVerifiers.some(v => v.id === id)) {
+    const policy = securityPolicySchema.parse(await readJson(join(root, '.harness/rules/security.json')));
+    const headSha = (await git(root, ['rev-parse', 'HEAD'])).stdout.trim();
+    const security = await verifySecurity({ workspace: root, sbi: { allowedFiles: [] }, assessment: { requiredVerifiers: [id] }, policy, config, headSha });
+    const checks = security.checks.filter(c => c.id === id).map(c => ({ ...c, selectionReasons: [mandatory ? 'impact-required' : 'requested', 'security'] }));
+    return { impact, result: { checks }, passed: checksPassed(checks) };
+  }
   const sbi = { title: 'CI matrix', description: id, risks: [], securityImpact: [], acceptanceCriteria: [], requiredVerifiers: [] };
   const result = await verify({ root, workspace: root, config, sbi, files, only: new Set([id]), selected: new Map([[id, mandatory]]) });
   return { impact, result, passed: checksPassed(result.checks) };

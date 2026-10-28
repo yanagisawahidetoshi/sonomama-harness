@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { hasCommand } from './lib/commands.mjs';
 // Trusted acceptance for SBI-ADMIN-ENV (#20). Reads the worktree only; the admin application verifier runs the commands.
 const root = process.argv[2];
 const app = join(root, 'apps/admin');
@@ -75,8 +76,7 @@ try {
     }],
     ['ADMIN-AC-13', 'Given the Harness, When verifying admin, Then typecheck, Biome check, test and build are registered', () => {
       const admin = JSON.parse(read('.harness/config/harness.json')).verifiers.find(v => v.id === 'admin');
-      const commands = admin.commands.map(c => c.join(' '));
-      for (const script of ['typecheck', 'check', 'test', 'build']) assert.ok(commands.some(c => c.includes(`run ${script}`)), script);
+      for (const script of ['typecheck', 'check', 'test', 'build']) assert.ok(hasCommand(admin.commands, ['pnpm', 'run', script]), script);
     }],
     ['ADMIN-AC-14', 'Given the app, When listing dependencies, Then no auth provider SDK is installed', () => {
       forbids(/amplify|cognito|firebase|google-auth|@react-oauth|oidc|auth0|@clerk|supabase/i, 'Auth provider SDK must not be installed');
