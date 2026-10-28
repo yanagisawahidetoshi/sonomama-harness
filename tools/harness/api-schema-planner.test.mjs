@@ -14,6 +14,7 @@ import { readExistingSchema } from './api-schema-reader.mjs';
 import { diffContract } from './api-schema-diff.mjs';
 import { recordApiSchemaDecision, apiSchemaApprovalStatus } from './api-schema-approval.mjs';
 import { renderOpenApi, renderSummary } from './api-schema-render.mjs';
+import { deriveSecurityImpact, requiredApprovals } from './api-schema-security.mjs';
 import { apiSchemaResponseSchema, apiSchemaJsonSchema } from './schemas.mjs';
 
 const issueUrl = 'https://github.com/acme/app/issues/12';
@@ -212,6 +213,81 @@ describe('API Schema Quality Judge', () => {
       const result = judge(proposal());
       assert.deepEqual(result.changes.breaking, []);
       assert.equal(result.changes.nonBreaking.length, 4);
+    });
+  });
+});
+
+describe('API Schema Security Impact', () => {
+  // The existing contract: the profile needs a Bearer JWT and a Rails rule, the admin list also needs the admin role.
+  const adminList = endpoint({ path: '/api/v1/admin/profiles', operationId: 'listProfiles', summary: '管理者がプロフィール一覧を取得する', authZ: { roles: ['admin'], rule: null }, responses: [response(200, 'Profile', true), ...errors([401, 403, 500])] });
+  const existingContract = root => withExisting(root, toYaml(renderOpenApi(proposal({ endpoints: [...proposal().endpoints, adminList] }), null)));
+  const publicGet = overrides => endpoint({ change: 'modify', authN: 'public', authZ: { roles: [], rule: null }, pii: false, logCaution: [], responses: [response(204)], ...overrides });
+  const categories = derived => derived.map(item => item.categories[0]).sort();
+  const securityFindings = result => result.findings.filter(f => f.rule === 'security-impact');
+
+  describe('given an existing contract with authenticated and authorized endpoints', () => {
+    it('when an authenticated endpoint becomes public then the Harness derives an AuthN impact', () => fixture(async root => {
+      const existing = await existingContract(root);
+      const value = proposal({ securityImpact: [], endpoints: [publicGet()], components: [] });
+      assert.deepEqual(categories(deriveSecurityImpact(value, existing)), ['APIAuthentication', 'APIAuthorization']);
+      assert.match(deriveSecurityImpact(value, existing).map(item => item.reason).join('\n'), /認証必須のendpointを公開へ変更: GET \/api\/v1\/me\/profile/);
+    }));
+    it('when the Rails authorization rule is removed then the Harness derives an AuthZ impact', () => fixture(async root => {
+      const existing = await existingContract(root);
+      const value = proposal({ securityImpact: ['APIAuthentication', 'PII'], endpoints: [endpoint({ change: 'modify', authZ: { roles: [], rule: null } })] });
+      assert.ok(categories(deriveSecurityImpact(value, existing)).includes('APIAuthorization'));
+      assert.match(deriveSecurityImpact(value, existing).map(item => item.reason).join('\n'), /認可条件を削除・緩和: GET \/api\/v1\/me\/profile/);
+    }));
+    it('when a required role is removed then the Harness derives an AuthZ impact', () => fixture(async root => {
+      const existing = await existingContract(root);
+      const value = proposal({ securityImpact: ['APIAuthentication', 'PII'], endpoints: [{ ...adminList, change: 'modify', authZ: { roles: [], rule: null }, responses: [response(200, 'Profile', true), ...errors([401, 500])] }] });
+      assert.match(deriveSecurityImpact(value, existing).map(item => item.reason).join('\n'), /認可条件を削除・緩和: GET \/api\/v1\/admin\/profiles/);
+    }));
+    it('when an authenticated and authorized endpoint is removed then the Harness derives AuthN and AuthZ impacts', () => fixture(async root => {
+      const existing = await existingContract(root);
+      const value = proposal({ securityImpact: [], endpoints: [endpoint({ change: 'remove' })], components: [] });
+      assert.deepEqual(categories(deriveSecurityImpact(value, existing)), ['APIAuthentication', 'APIAuthorization']);
+      assert.match(deriveSecurityImpact(value, existing).map(item => item.reason).join('\n'), /認証・認可付きのendpointを削除: GET \/api\/v1\/me\/profile/);
+    }));
+    it('when the provider declares no Security Impact for a downgrade then the Quality Judge fails', () => fixture(async root => {
+      const existing = await existingContract(root);
+      for (const value of [
+        proposal({ securityImpact: [], endpoints: [publicGet()], components: [] }),
+        proposal({ securityImpact: ['APIAuthentication', 'PII'], endpoints: [endpoint({ change: 'modify', authZ: { roles: [], rule: null } })] }),
+        proposal({ securityImpact: [], endpoints: [endpoint({ change: 'remove' })], components: [] }),
+      ]) {
+        const result = judge(value, { existing });
+        assert.equal(result.status, 'FAIL');
+        assert.ok(securityFindings(result).length, JSON.stringify(result.findings));
+      }
+    }));
+    it('when the provider declares the derived Security Impact for a downgrade then the Quality Judge passes', () => fixture(async root => {
+      const existing = await existingContract(root);
+      const result = judge(proposal({ securityImpact: ['APIAuthentication', 'APIAuthorization'], endpoints: [publicGet()], components: [] }), { existing });
+      assert.deepEqual(result.findings, []);
+    }));
+    it('when a downgrade declares no Security Impact then two approvers are still required', () => fixture(async root => {
+      const existing = await existingContract(root);
+      assert.equal(requiredApprovals(proposal({ securityImpact: [], endpoints: [publicGet()], components: [] }), existing), 2);
+    }));
+    it('when a public endpoint becomes authenticated then the Harness derives an AuthN impact', () => fixture(async root => {
+      const existing = await withExisting(root);
+      const value = proposal({ securityImpact: [], components: [], endpoints: [endpoint({ path: '/api/v1/courses', operationId: 'listCourses', change: 'modify', pii: false, logCaution: [], authZ: { roles: [], rule: null }, responses: [response(200, 'Course', true), ...errors([401, 500])] })] });
+      assert.deepEqual(categories(deriveSecurityImpact(value, existing)), ['APIAuthentication']);
+    }));
+  });
+
+  describe('given a change without any security impact', () => {
+    it('when only a public endpoint is added then nothing is derived and one approver is enough', () => fixture(async root => {
+      const existing = await withExisting(root);
+      const value = proposal({ securityImpact: [], components: [], endpoints: [endpoint({ path: '/api/v1/news', operationId: 'listNews', authN: 'public', authZ: { roles: [], rule: null }, pii: false, logCaution: [], responses: [response(200, 'Course', true), ...errors([500])] })] });
+      assert.deepEqual(deriveSecurityImpact(value, existing), []);
+      assert.equal(requiredApprovals(value, existing), 1);
+      assert.deepEqual(judge(value, { existing }).findings, []);
+    }));
+    it('when the provider declares a Security Impact the Harness does not derive then two approvers are required', () => {
+      const value = proposal({ securityImpact: ['Secret'], components: [{ name: 'Course', description: '講座', pii: false, properties: [prop('id')] }], endpoints: [endpoint({ path: '/api/v1/news', operationId: 'listNews', authN: 'public', authZ: { roles: [], rule: null }, pii: false, logCaution: [], responses: [response(200, 'Course', true), ...errors([500])] })] });
+      assert.equal(requiredApprovals(value, null), 2);
     });
   });
 });
@@ -571,6 +647,16 @@ describe('API Schema Approval', () => {
       await generated(root, { agent: agentWith(value) });
       const result = await approve(root, 'alice');
       assert.deepEqual([result.status, result.required], ['APPROVED', 1]);
+    })));
+    it('when an authenticated endpoint becomes public then the generation record requires two approvers and the summary shows the derived impact', () => fixture(root => mockGitHub({}, async () => {
+      await writeFile(join(root, 'packages/api-schema/openapi.yaml'), existingYaml);
+      await commitFixture(root);
+      const value = proposal({ securityImpact: ['APIAuthentication'], components: [], endpoints: [endpoint({ change: 'modify', authN: 'public', authZ: { roles: [], rule: null }, pii: false, logCaution: [], responses: [response(204)] })] });
+      await generated(root, { agent: agentWith(value) });
+      const summary = await readFile(join(proposalDir(root), 'summary.md'), 'utf8');
+      assert.match(summary, /Harnessが導出したSecurity Impact[^\n]*\n[\s\S]*認証必須のendpointを公開へ変更: GET \/api\/v1\/me\/profile/);
+      const first = await approve(root, 'alice');
+      assert.deepEqual([first.status, first.required], ['NOT_APPROVED', 2]);
     })));
     it('when an approver revokes then the proposal is no longer approved and the label projection follows', () => fixture(root => mockGitHub({}, async github => {
       await generated(root);
