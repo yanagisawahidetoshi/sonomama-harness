@@ -84,7 +84,7 @@ export function sbiFromIssue({ ref, issue, config }) {
     gherkin: [`Feature: ${issue.title}`, ...gherkin.map(line => line.trim() ? `  ${line}` : '')].join('\n'),
     acceptanceCriteria, allowedFiles: [], allowedDirs, risks: securityImpact, ambiguous: false, requiresDesignDecision: false,
     securityImpact, requiredSecurityRules: [], requiredVerifiers: [], affectedAreas: [], preImplementationGate: false,
-    minimumRiskLevel: candidate === 'L3' || securityImpact.length ? 3 : 2, issueUrl: ref.url,
+    minimumRiskLevel: candidate === 'L3' || securityImpact.length ? 3 : 2, issueUrl: ref.url, pbiUrl: markerPattern.exec(issue.body ?? '')?.[1],
   };
 }
 
