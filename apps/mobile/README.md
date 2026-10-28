@@ -76,7 +76,7 @@ pnpm --filter mobile start                     # 別ターミナルでMetroを�
 maestro test apps/mobile/.maestro/smoke.yaml   # repo rootから
 ```
 
-`smoke.yaml` はアプリを起動し、初期画面の `testID="home-screen"` と `SONOMAMA` が表示されることだけを確認する。
+`smoke.yaml` はアプリを起動し、初期画面の `testID="home-title"` と `SONOMAMA` が表示されることだけを確認する。
 Harness / CIのrequired checkには含めない。
 
 ## API接続
