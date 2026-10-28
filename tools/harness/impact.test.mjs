@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { fixture, update } from './test-fixture.mjs';
 import { readJson } from './io.mjs';
 import { analyzeImpact, describeImpact, describeJudge, judgeCi, runCompletionJudge } from './impact.mjs';
+import { renderSbiBody } from './planner.mjs';
+import { sbiFromIssue } from './sbi-issue.mjs';
 import { snapshotFromIssue, snapshotPath } from './sbi-source.mjs';
 import { git } from './workspace.mjs';
 import { verify } from './verifier.mjs';
@@ -293,14 +295,27 @@ describe('CI Completion Judge for Trusted Acceptance and Security', () => {
 
   describe('given a Production change with a ready SBI Issue snapshot on a branch', () => {
     const ref = { owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' };
-    const readyIssue = { number: 7, title: 'SBI-CI-JUDGE', body: 'CI judge', html_url: ref.url, state: 'open', labels: [{ name: 'sbi' }, { name: 'ready' }] };
+    const pbi = { owner: 'acme', repo: 'app', number: 3, url: 'https://github.com/acme/app/issues/3', title: 'CI judge' };
+    const planned = {
+      id: 'SBI-001', title: 'CI judge', purpose: '名前に応じてあいさつする。',
+      scope: { included: ['apps/admin'], excluded: [] },
+      acceptanceCriteria: ['AC-1', 'AC-2', 'AC-3'].map(id => ({ id, description: `${id} のあいさつ` })),
+      scenarios: [{ name: 'あいさつ', given: ['名前がある'], when: ['greetを呼ぶ'], then: ['あいさつを返す'], acceptanceIds: ['AC-1', 'AC-2', 'AC-3'] }],
+      dependsOn: [], changeAreas: ['apps/admin'], riskCandidate: 'L2', securityImpact: [],
+      verification: { applicationTest: 'Vitest', acceptance: 'Trusted Acceptance', e2e: '不要' },
+    };
+    const readyIssue = { number: 7, title: 'SBI-001 CI judge', body: renderSbiBody(planned, pbi), html_url: ref.url, state: 'open', labels: [{ name: 'sbi' }, { name: 'ready' }] };
+    // The sample acceptance script registered on main as the Trusted Acceptance of SBI Issue #7.
+    const issueAcceptance = { id: 'issue-7-acceptance', trust: 'acceptance', trustedScript: 'tools/harness/sample-bdd.mjs', directory: '.', planned: ['Trusted Acceptance'], commands: [], acceptanceIds: ['AC-1', 'AC-2', 'AC-3'], sbiIssue: 7, appliesTo: ['^never/'] };
     const runId = '2026-10-28T00-00-00-000Z-1a2b3c4d';
     const branch = async (root, change) => {
+      await update(root, '.harness/config/harness.json', c => { c.verifiers.push(issueAcceptance); });
+      await git(root, ['commit', '-am', 'register the Trusted Acceptance of SBI Issue #7']);
       await git(root, ['switch', '-c', 'feature']);
       await mkdir(join(root, 'apps/admin/src'), { recursive: true });
       await writeFile(join(root, 'greeting.mjs'), "export const greet = name => `こんにちは、${name?.trim() || 'ゲスト'}さん`;\n");
-      const state = await readJson(join(root, '.harness/state/sample-sbi.json'));
-      const snapshot = snapshotFromIssue({ ref, issue: readyIssue, runId, sbi: { ...state, id: 'SBI-CI-JUDGE', affectedAreas: ['admin'] } });
+      const sbi = sbiFromIssue({ ref, issue: readyIssue, config: await readJson(join(root, '.harness/config/harness.json')) });
+      const snapshot = snapshotFromIssue({ ref, issue: readyIssue, runId, sbi });
       await writeFile(join(root, snapshotPath(snapshot)), JSON.stringify(snapshot));
       await change(root);
       await git(root, ['add', '--all']);
@@ -312,7 +327,7 @@ describe('CI Completion Judge for Trusted Acceptance and Security', () => {
     it('when the Completion Judge runs then executes the Trusted Acceptance of the SBI', () => fixture(async root => {
       await branch(root, root => writeFile(join(root, 'apps/admin/src/main.ts'), 'export const ready = true;\n'));
       const judged = await judgeBranch(root);
-      assert.deepEqual(judged.checks.filter(c => c.trust === 'acceptance').map(c => [c.id, c.status]), [['sample-bdd', 'PASS']]);
+      assert.deepEqual(judged.checks.filter(c => c.trust === 'acceptance').map(c => [c.id, c.status]), [['issue-7-acceptance', 'PASS']]);
       assert.equal(judged.acceptance.status, 'PASS');
       assert.equal(judged.status, 'PASS');
     }));
@@ -353,8 +368,10 @@ describe('CI Completion Judge for Trusted Acceptance and Security', () => {
     }));
 
     it('when the SBI requires an application verifier then takes its result from the verifier matrix', () => fixture(async root => {
+      // An SBI built from an Issue requires no application verifier, so a hand-written SBI JSON on the same branch asks for it.
       await branch(root, async root => {
-        await update(root, '.harness/state/sbi-7.json', s => { s.sbi.requiredVerifiers = ['admin']; });
+        const sample = await readJson(join(root, '.harness/state/sample-sbi.json'));
+        await writeFile(join(root, '.harness/state/sbi-requires-admin.json'), JSON.stringify({ ...sample, id: 'SBI-REQUIRES-ADMIN', requiredVerifiers: ['admin'] }));
         await writeFile(join(root, 'apps/admin/src/main.ts'), 'export const ready = true;\n');
       });
       assert.equal(status(await judgeBranch(root), 'admin'), 'PASS');
