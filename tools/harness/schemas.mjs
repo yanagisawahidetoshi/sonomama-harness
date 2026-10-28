@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { posix } from 'node:path';
 const text = z.string().min(1);
 export const relativePath = text.refine(p => !p.startsWith('/') && !p.includes('\\') && p.split('/').every(s => s !== '..' && s !== '.' && s !== ''), 'unsafe relative path');
 export const sbiSchema = z.strictObject({
@@ -17,7 +18,9 @@ export const configSchema = z.strictObject({
   version: z.literal(1), provider: z.enum(['fake', 'codex', 'claude']), sbi: relativePath,
   maxConsecutiveFailures: z.number().int().min(1).max(3), maxIterations: z.number().int().min(1).max(20),
   timeoutMs: z.number().int().min(100).max(600000),
-  securityVerifiers: z.array(z.strictObject({ id: text, directory: z.union([z.literal('.'), relativePath]), commands: z.array(z.array(text).min(1)) })).default([]),
+  securityVerifiers: z.array(z.strictObject({ id: text, directory: z.union([z.literal('.'), relativePath]), commands: z.array(z.array(text).min(1)), network: z.boolean().default(false) })).default([]),
+  // Untrusted verifier commands run in a Docker container; docker names the trusted CLI that starts it.
+  isolation: z.strictObject({ docker: text }).default({ docker: 'docker' }),
   semanticReview: z.strictObject({ enabled: z.boolean() }).default({ enabled: false }),
   // GitHub PR mode. requiredChecks are combined with the ruleset's required status checks of the base branch.
   github: z.strictObject({ remote: text, base: text, requiredChecks: z.array(text) }).default({ remote: 'origin', base: 'main', requiredChecks: ['harness'] }),
@@ -29,7 +32,12 @@ export const configSchema = z.strictObject({
     trust: z.enum(['application', 'acceptance']).default('application'),
     trustedScript: relativePath.optional(),
     areas: z.array(text).default([]),
-  })).min(1),
+    // container: workspace-only Docker container. compose: Harness-started Compose after the file is checked.
+    // harness: a Harness-owned script that only parses workspace files. network grants egress to this verifier only.
+    isolation: z.enum(['container', 'compose', 'harness']).default('container'),
+    network: z.boolean().default(false),
+  }).refine(v => v.isolation !== 'harness' || v.commands.every(([command, script]) => command === 'node' && /^tools\/harness\/[^/]+\.mjs$/.test(posix.normalize(posix.join(v.directory, script || '')))), 'harness isolation only runs tools/harness scripts')
+    .refine(v => v.isolation !== 'compose' || (v.network && v.commands.every(([docker, compose, flag, file]) => docker === 'docker' && compose === 'compose' && flag === '-f' && file)), 'compose isolation only runs docker compose -f FILE and requires network')).min(1),
   // SBI Impact Analysis: cross-layer contracts added when areas meet, and paths whose change runs the Full Gate.
   impact: z.strictObject({
     crossLayer: z.array(z.strictObject({ all: z.array(text).min(1), any: z.array(text).min(1), add: z.array(text).min(1) })).default([]),

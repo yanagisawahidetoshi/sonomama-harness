@@ -37,7 +37,8 @@ if (args[0] === 'run') console.log('container-id');
     return await test({ docker, calls });
   } finally { await rm(dir, { recursive: true, force: true }); }
 }
-const admin = (config, patch = {}) => Object.assign(config.verifiers.find(v => v.id === 'admin'), { commands: [['node', '-e', 'process.exit(0)']] }, patch);
+// An admin verifier without a network declaration; tests that need egress declare it explicitly.
+const admin = (config, patch = {}) => Object.assign(config.verifiers.find(v => v.id === 'admin'), { commands: [['node', '-e', 'process.exit(0)']], network: false }, patch);
 const run = calls => calls.find(c => c.args[0] === 'run');
 const mounts = call => call.args.flatMap((a, i) => call.args[i - 1] === '--mount' ? [Object.fromEntries(a.split(',').map(kv => kv.split('=')))] : []);
 const envNames = call => call.args.flatMap((a, i) => call.args[i - 1] === '-e' || call.args[i - 1] === '--env' ? [a.split('=')[0]] : []);

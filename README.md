@@ -8,7 +8,7 @@ Rails API + Expo + React adminの将来構成に向けた、ローカルLoop Eng
 
 ## 実行
 
-Node.js 22以上、pnpm 8以上、Git 2.28以上が必要。レビューZIPの作成にはzip、テストにはunzipも使用する。
+Node.js 22以上、pnpm 8以上、Git 2.28以上、Docker（verifierの実行に使う）が必要。レビューZIPの作成にはzip、テストにはunzipも使用する。
 
 ```sh
 pnpm install --frozen-lockfile
@@ -102,6 +102,8 @@ markerあり・commands未設定もFAIL。**対象となる必須チェックは
 
 commandsは引数配列で指定する。例は`[["bundle", "exec", "rspec"]]`。
 cwdは常に`<run>/workspace/<directory>`。将来のアプリを生成したら必要な全検証を登録する。
+commandsはworkspaceだけを見せるDockerコンテナで、network無効・非rootで実行する。外部接続が必要なverifierだけ`network: true`を宣言する。
+Dockerが使えなければ`FAIL`（isolation unavailable）。信頼境界は[docs/security/threat-model.md](docs/security/threat-model.md)。
 SBI固有のテストは任意のverifier IDとacceptanceIdsで追加できる。
 
 ## ReviewerとSecurity Check
@@ -154,7 +156,7 @@ Security Verifierは次の状態を区別する。
 | PASS | 対象の検証を実行して成功 |
 | FAIL | 対象の検証を実行して失敗 |
 | SKIP | この変更では対象外 |
-| NOT_CONFIGURED | 必須だがコマンド・必要なツールが未設定／未導入 |
+| NOT_CONFIGURED | 必須だがコマンドが未設定 |
 
 requiredな検証はすべてPASSが必要。FAIL・SKIP・NOT_CONFIGURED、未承認Gate、rule violationがあれば
 Completion JudgeもMerge Policy Judgeも拒否する。未設定の必須検証は修正ループで解決できないため即Escalation。

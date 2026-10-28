@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { execute } from './io.mjs';
+import { runIsolated } from './isolation.mjs';
 import { hasSecret, isSecretPath } from './evidence-protection.mjs';
 import { classifyLane } from './lanes.mjs';
 import { securityPolicySchema } from './schemas.mjs';
@@ -67,10 +67,8 @@ export async function verifySecurity({ workspace, sbi, assessment, policy, confi
     }
     if (adapter.kind === 'command') {
       const cwd = join(workspace, adapter.directory || '.');
-      const processes = [];
-      for (const [command,...args] of adapter.commands) processes.push(await execute(command,args,{cwd,timeoutMs:config.timeoutMs}));
-      const unavailable=processes.some(p=>p.error?.includes('ENOENT'));
-      checks.push({id,verifier:id,required:true,status:unavailable?'NOT_CONFIGURED':processes.every(p=>p.ok)?'PASS':'FAIL',cwd,processes});
+      const {status,reason,processes}=await runIsolated({workspace,adapter,config,cwd});
+      checks.push({id,verifier:id,required:true,status,...(reason&&{reason}),cwd,isolation:'container',processes});
     } else {
       const patterns = adapter.kind === 'secret' ? policy.secretPatterns : adapter.kind === 'pii-log' ? policy.piiLogPatterns : policy.forbiddenPatterns;
       const findings = [];

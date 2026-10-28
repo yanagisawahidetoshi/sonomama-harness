@@ -71,7 +71,7 @@ describe('Approval and resume states', () => {
       assert.equal((await resumeRun({ root, runId: run.id, quiet: true })).iterations.length, 0);
     }));
     it('when the gate is approved then executes but still requires two separate merge approvals', () => fixture(async root => {
-      await update(root, '.harness/config/harness.json', c => c.securityVerifiers = [{ id: 'rails-rls-test', directory: 'apps/api', commands: [[process.execPath, '-e', 'require("node:assert/strict").ok(true)']] }]);
+      await update(root, '.harness/config/harness.json', c => c.securityVerifiers = [{ id: 'rails-rls-test', directory: 'apps/api', commands: [['node', '-e', 'require("node:assert/strict").ok(true)']] }]);
       await update(root, sbiPath, s => s.risks = ['RLS']);
       const run = await runHarness({ root, quiet: true });
       await recordDecision({ root, runId: run.id, purpose: 'implementation-gate', identityProvider: human('Designer') });
@@ -105,7 +105,7 @@ describe('Workspace and verifier registry', () => {
       await writeFile(join(root, 'apps/admin/package.json'), '{"private":true}');
       await writeFile(join(root, 'apps/admin/message.txt'), 'root');
       await update(root, sbiPath, s => s.allowedFiles.push('apps/admin/message.txt'));
-      await update(root, '.harness/config/harness.json', c => c.verifiers.find(v => v.id === 'admin').commands = [[process.execPath, '-e', 'require("node:assert/strict").equal(require("node:fs").readFileSync("message.txt", "utf8"), "workspace")']]);
+      await update(root, '.harness/config/harness.json', c => c.verifiers.find(v => v.id === 'admin').commands = [['node', '-e', 'require("node:assert/strict").equal(require("node:fs").readFileSync("message.txt", "utf8"), "workspace")']]);
       const run = await runHarness({ root, quiet: true, agent: async () => ({ files: [{ path: 'greeting.mjs', content: good }, { path: 'apps/admin/message.txt', content: 'workspace' }] }) });
       assert.equal(run.executionStatus, 'DONE');
       assert.equal(run.iterations[0].verification.checks.find(c => c.id === 'admin').status, 'PASS');
@@ -119,7 +119,7 @@ describe('Workspace and verifier registry', () => {
       });
       await mkdir(join(root, '.harness/verification'), { recursive: true });
       await writeFile(join(root, '.harness/verification/docs.mjs'), 'import { readFileSync } from "node:fs"; import { join } from "node:path"; import assert from "node:assert/strict"; assert.equal(readFileSync(join(process.argv[2], "docs/product/intro.md"), "utf8"), "Welcome."); console.log(JSON.stringify({acceptance:["DOC-1"]}));');
-      await update(root, '.harness/config/harness.json', c => c.verifiers.push({ trust: 'acceptance', trustedScript: '.harness/verification/docs.mjs', id: 'docs-bdd', directory: 'docs/product', planned: ['BDD'], acceptanceIds: ['DOC-1'], commands: [[process.execPath, '-e', 'require("node:assert/strict").equal(require("node:fs").readFileSync("intro.md","utf8"),"Welcome.")']] }));
+      await update(root, '.harness/config/harness.json', c => c.verifiers.push({ trust: 'acceptance', trustedScript: '.harness/verification/docs.mjs', id: 'docs-bdd', directory: 'docs/product', planned: ['BDD'], acceptanceIds: ['DOC-1'], commands: [['node', '-e', 'require("node:assert/strict").equal(require("node:fs").readFileSync("intro.md","utf8"),"Welcome.")']] }));
       const run = await runHarness({ root, quiet: true, agent: async () => ({ files: [{ path: 'docs/product/intro.md', content: 'Welcome.' }] }) });
       assert.equal(run.status, 'MERGE_ALLOWED');
       assert.equal(run.risk.level, 1);

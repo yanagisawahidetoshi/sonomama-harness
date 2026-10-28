@@ -138,7 +138,9 @@
       ],
       "areas": [
         "api"
-      ]
+      ],
+      "isolation": "compose",
+      "network": true
     },
     {
       "id": "api-acceptance",
@@ -201,7 +203,8 @@
       ],
       "areas": [
         "api-contract"
-      ]
+      ],
+      "isolation": "harness"
     },
     {
       "id": "expo",
@@ -264,7 +267,8 @@
       ],
       "areas": [
         "mobile"
-      ]
+      ],
+      "network": true
     },
     {
       "id": "mobile-acceptance",
@@ -403,7 +407,8 @@
       ],
       "areas": [
         "admin"
-      ]
+      ],
+      "network": true
     },
     {
       "id": "admin-acceptance",
@@ -532,7 +537,8 @@
       ],
       "areas": [
         "prototype-web"
-      ]
+      ],
+      "network": true
     },
     {
       "id": "prototype-web-acceptance",
@@ -609,7 +615,8 @@
       ],
       "areas": [
         "prototype-mobile"
-      ]
+      ],
+      "network": true
     },
     {
       "id": "prototype-mobile-acceptance",

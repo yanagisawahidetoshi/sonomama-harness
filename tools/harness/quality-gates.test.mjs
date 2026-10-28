@@ -26,7 +26,7 @@ describe('Application and trusted acceptance boundary', () => {
     it('when an allowed application test is repaired then trusted verification still decides completion', () => fixture(async root => {
       await update(root,sbiPath,s=>s.allowedFiles.push('apps/admin/widget.test.mjs'));
       await writeFile(join(root,'apps/admin/package.json'),'{"private":true}');
-      await update(root,'.harness/config/harness.json',c=>c.verifiers.find(v=>v.id==='admin').commands=[[process.execPath,'-e','process.exit(0)']]);
+      await update(root,'.harness/config/harness.json',c=>c.verifiers.find(v=>v.id==='admin').commands=[['node','-e','process.exit(0)']]);
       const run=await runFixture({root,quiet:true,agent:async()=>({files:[{path:'greeting.mjs',content:good},{path:'apps/admin/widget.test.mjs',content:'// Given widget; When render; Then visible'}]})});
       assert.equal(run.executionStatus,'DONE');
       assert.equal(run.iterations[0].verification.checks.find(c=>c.id==='sample-bdd').trust,'acceptance');
@@ -87,7 +87,7 @@ describe('Verifier applicability', () => {
     it('when full verification runs then executes existing configured apps regardless of path', () => fixture(async root => {
       const {config,sbi}=await check(root);
       await writeFile(join(root,'apps/admin/package.json'),'{}');
-      config.verifiers.find(v=>v.id==='admin').commands=[[process.execPath,'-e','process.exit(0)']];
+      config.verifiers.find(v=>v.id==='admin').commands=[['node','-e','process.exit(0)']];
       const result=await verify({root,workspace:root,config,sbi:{...sbi,acceptanceCriteria:[]},files:[],full:true});
       assert.equal(result.checks.find(c=>c.id==='admin').status,'PASS');
     }));

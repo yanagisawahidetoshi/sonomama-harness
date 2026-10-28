@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { exists, execute } from './io.mjs';
 import { classifyLane } from './lanes.mjs';
+import { runIsolated } from './isolation.mjs';
 export function checksPassed(checks) {
   return Array.isArray(checks) && checks.length > 0 && checks.every(c => c.status === 'PASS'
     || (c.status === 'SKIP' && c.required === false && ['missing app (placeholder)', 'not applicable to this change'].includes(c.reason)));
@@ -39,7 +40,7 @@ export async function verify({ root, workspace, config, sbi, files = sbi.allowed
     if (adapter.kind === 'sample-bdd' || adapter.trust === 'acceptance') {
       const script = join(root, adapter.kind === 'sample-bdd' ? 'tools/harness/sample-bdd.mjs' : adapter.trustedScript || '.harness/verification/NOT_CONFIGURED');
       if (!await exists(script)) { checks.push({...base,required:true,status:'NOT_CONFIGURED',reason:'trusted acceptance script missing'}); continue; }
-      const process = await execute(globalThis.process.execPath, ['--experimental-permission', `--allow-fs-read=${workspace}`, `--allow-fs-read=${script}`, script, workspace], { cwd: workspace, timeoutMs: config.timeoutMs });
+      const process = await execute(globalThis.process.execPath, ['--experimental-permission', `--allow-fs-read=${workspace}`, `--allow-fs-read=${script}`, script, workspace], { cwd: workspace, timeoutMs: config.timeoutMs, env: {} });
       const check = { ...base, required:true, status:process.ok?'PASS':'FAIL', cwd:workspace, process };
       if (process.ok) {
         try {
@@ -58,9 +59,8 @@ export async function verify({ root, workspace, config, sbi, files = sbi.allowed
     else if (missing) checks.push({...base,status:'FAIL',cwd,reason:'required app is missing',planned:adapter.planned});
     else if (!adapter.commands.length) checks.push({...base,required:true,status:'NOT_CONFIGURED',cwd,reason:'app exists but verifier commands are not configured'});
     else {
-      const processes=[];
-      for (const [command,...args] of adapter.commands) processes.push(await execute(command,args,{cwd,timeoutMs:config.timeoutMs}));
-      checks.push({...base,required:true,status:processes.every(p=>p.ok)?'PASS':'FAIL',cwd,processes});
+      const {status,reason,processes}=await runIsolated({workspace,adapter,config,cwd});
+      checks.push({...base,required:true,status,...(reason&&{reason}),cwd,isolation:adapter.isolation||'container',processes});
     }
   }
   return {status:checksPassed(checks)?'PASS':'FAIL',acceptance:[...new Set(acceptance)],lane:lane.name,checks};
