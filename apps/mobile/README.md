@@ -20,7 +20,7 @@ React / React Nativeのversionは`npx expo install`が解決したものを使�
 - Node 22 (`.node-version`)、pnpm 8 (root `package.json` の `packageManager`)
 - iOS: Xcode と iOS Simulator
 - Android: Android Studio と Android Emulator
-- Maestro CLI 2.x (E2Eを実行する場合。iOS 26系のSimulatorでは1.x系だとアプリの画面要素を取得できない。2.12.0で確認済み)
+- Maestro CLI 2.x (E2Eを実行する場合)。iOS 26系のSimulatorでは、1.x系だとアプリの画面要素を取得できない。2.12.0で確認済み。
 
 ## セットアップ
 
@@ -81,7 +81,7 @@ Harness / CIのrequired checkには含めない。
 
 ## API接続
 
-接続先は `EXPO_PUBLIC_API_BASE_URL` で切り替える。`src/shared/api` の初回importでZod検証する。
+接続先は `EXPO_PUBLIC_API_BASE_URL` で切り替える。値は `src/shared/api` を初めてimportしたときにZodで検証する。
 
 ```text
 EXPO_PUBLIC_API_BASE_URL=http://127.0.0.1:4010

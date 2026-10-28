@@ -43,7 +43,7 @@ docker compose exec api bash                     # 起動中のコンテナへ�
 ```
 
 gemはimageに入る。Gemfileを変えたら `docker compose run --rm --no-deps api bundle lock` でlockを更新し、`docker compose build api` する。
-未変更ならDockerのlayer cacheでbundle installは再実行されない。
+Gemfileを変えていなければ、Dockerのlayer cacheを使うのでbundle installは再実行されない。
 
 ## リセット
 
@@ -59,7 +59,7 @@ Composeの既定値は管理画面のdev server (`http://localhost:5173`)。Prod
 ## OpenAPI
 
 API契約のSSOTは `packages/api-schema/openapi.yaml` (OpenAPI 3.1)。apps/apiには複製しない。
-`committee-rails` は採用していない。依存するCommittee本体がOpenAPI 3.1以上を未対応として拒否するため。
+`committee-rails` は採用していない。依存先のCommittee本体が、OpenAPI 3.1以上を未対応として受け付けないため。
 OpenAPI 3.1のrequest / response contract validationは別Issueでライブラリを選ぶ。
 
 ## 認証

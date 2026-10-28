@@ -1,0 +1,125 @@
+{
+  "id": "SBI-CI-MATRIX",
+  "title": "SBIの影響範囲に応じてVerifierを動的選択・並列実行しCIを高速化する",
+  "description": "Issue #34。SBIのaffectedAreas・requiredVerifiersとGit diffからrequired verifierを決め、GitHub Actionsのdynamic matrixで並列実行し、Completion Judge（harness job）で集約する。Harness本体の変更時だけFull Gate（harness:test / harness:demo --full）を並列で実行する。api-contract verifierはOpenAPI 3.1の検証とbaseとの破壊的変更検出を行い、OpenAPIが未作成の間はplaceholderとしてSKIPする。",
+  "gherkin": "Feature: SBIに応じたVerifierの選択と並列実行\n  Scenario: 複数領域のSBI\n    Given affectedAreasがapiとmobileのSBIがある\n    When Impact Analysisを実行する\n    Then rails / expo / api-contractがrequiredになり、理由がCIログに出る\n  Scenario: SBIとdiffの矛盾\n    Given adminのSBIでapps/mobileも変更されている\n    When Impact Analysisを実行する\n    Then expoが安全側に追加される\n  Scenario: Completion Judge\n    Given required verifierのmatrixで1つがFAILした\n    When harness jobが集約する\n    Then FAILになる\n  Scenario: Full Gate\n    Given tools/harnessが変更されている\n    When CIを実行する\n    Then harness:testとharness:demo --fullが並列に実行される",
+  "acceptanceCriteria": [
+    {
+      "id": "CI-AC-1",
+      "description": "SBIから複数の影響領域を表現できる",
+      "verifier": "ci-matrix-acceptance"
+    },
+    {
+      "id": "CI-AC-2",
+      "description": "SBI + Git diffからrequired verifierを決定できる",
+      "verifier": "ci-matrix-acceptance"
+    },
+    {
+      "id": "CI-AC-3",
+      "description": "SBIとGit diffが矛盾した場合、安全側にVerifierを追加する",
+      "verifier": "ci-matrix-acceptance"
+    },
+    {
+      "id": "CI-AC-4",
+      "description": "Verifierを1つずつ単独実行できるCLIまたは同等のI/Fがある",
+      "verifier": "ci-matrix-acceptance"
+    },
+    {
+      "id": "CI-AC-5",
+      "description": "GitHub Actionsでrequired verifierをdynamic matrixとして並列実行する",
+      "verifier": "ci-matrix-acceptance"
+    },
+    {
+      "id": "CI-AC-6",
+      "description": "adminのみのSBIではAdmin系Verifierのみがrequiredになる",
+      "verifier": "ci-matrix-acceptance"
+    },
+    {
+      "id": "CI-AC-7",
+      "description": "mobileのみのSBIではMobile系Verifierのみがrequiredになる",
+      "verifier": "ci-matrix-acceptance"
+    },
+    {
+      "id": "CI-AC-8",
+      "description": "apiのみのSBIではRails系Verifierがrequiredになる",
+      "verifier": "ci-matrix-acceptance"
+    },
+    {
+      "id": "CI-AC-9",
+      "description": "api + mobileのSBIではRails / Mobile / API Contractがrequiredになる",
+      "verifier": "ci-matrix-acceptance"
+    },
+    {
+      "id": "CI-AC-10",
+      "description": "api + adminのSBIではRails / Admin / API Contractがrequiredになる",
+      "verifier": "ci-matrix-acceptance"
+    },
+    {
+      "id": "CI-AC-11",
+      "description": "api + mobile + adminのSBIではRails / Mobile / Admin / API Contractがrequiredになる",
+      "verifier": "ci-matrix-acceptance"
+    },
+    {
+      "id": "CI-AC-12",
+      "description": "Prototype Web / Prototype Mobileも同じ仕組みで選択可能",
+      "verifier": "ci-matrix-acceptance"
+    },
+    {
+      "id": "CI-AC-13",
+      "description": "required verifierのうち1つでもFAILした場合、Completion JudgeはFAILする",
+      "verifier": "ci-matrix-acceptance"
+    },
+    {
+      "id": "CI-AC-14",
+      "description": "required verifierがSKIP / NOT_CONFIGUREDになった場合、既存ポリシーに従って安全側に判定する",
+      "verifier": "ci-matrix-acceptance"
+    },
+    {
+      "id": "CI-AC-15",
+      "description": "Harness本体を変更したPRではFull Gateが発動する",
+      "verifier": "ci-matrix-acceptance"
+    },
+    {
+      "id": "CI-AC-16",
+      "description": "通常SBIで不要なHarness全体E2Eを毎回直列実行しない",
+      "verifier": "ci-matrix-acceptance"
+    },
+    {
+      "id": "CI-AC-17",
+      "description": "Verifier定義のSSOTは既存Harness configを維持し、CI側に重複定義しない",
+      "verifier": "ci-matrix-acceptance"
+    },
+    {
+      "id": "CI-AC-18",
+      "description": "CIログから「なぜこのVerifierが選択されたか」を確認できる",
+      "verifier": "ci-matrix-acceptance"
+    }
+  ],
+  "allowedFiles": [
+    ".github/workflows/harness.yml",
+    ".harness/config/harness.json",
+    "package.json",
+    "tools/harness/impact.mjs",
+    "tools/harness/impact.test.mjs",
+    "tools/harness/api-contract.mjs",
+    "tools/harness/api-contract.test.mjs",
+    "tools/harness/verifier.mjs",
+    "tools/harness/schemas.mjs",
+    "tools/harness/check.mjs",
+    "tools/harness/cli.mjs",
+    "tools/harness/harness.test.mjs",
+    "tools/harness/health-metrics.test.mjs",
+    "docs/workflows/ci.md"
+  ],
+  "risks": [
+    "CIのrequired check名（harness）を変えるとmergeがブロックされる",
+    "Full Gateのパターンが漏れるとHarness本体の回帰を見逃す"
+  ],
+  "ambiguous": false,
+  "requiresDesignDecision": false,
+  "securityImpact": [],
+  "requiredSecurityRules": [],
+  "requiredVerifiers": [],
+  "preImplementationGate": false,
+  "minimumRiskLevel": 3
+}

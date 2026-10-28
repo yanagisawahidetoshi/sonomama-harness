@@ -9,16 +9,18 @@ import { recordApiSchemaDecision, apiSchemaApprovalStatus } from './api-schema-a
 import { startApiMock } from './api-mock.mjs';
 import { startApiDocs } from './api-docs.mjs';
 import { relativePath } from './schemas.mjs';
+import { describeImpact, loadImpact, runCompletionJudge, runVerifier } from './impact.mjs';
+import { appendFile } from 'node:fs/promises';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 await withEvidenceProtection(root, async () => {
 try {
   const [command, ...args] = process.argv.slice(2);
-  const allowed = { check: ['--sbi'], demo: ['--sbi', '--full'], run: ['--provider', '--sbi', '--full'], plan: ['--provider'], 'api-schema': ['--provider'], 'api-schema-approve': ['--decision'], 'api-schema-status': [], 'api-mock': ['--dynamic'], 'api-docs': ['--port'], cleanup:['--run'], resume: ['--run'], pr: ['--run'], approve: ['--run', '--phase', '--decision'], export: ['--run','--out'] };
-  if (!allowed[command]) throw new Error('Usage: check | demo [--full] | run [--full] | plan ISSUE_URL [--provider codex|claude] | api-schema ISSUE_URL [--provider codex|claude] | api-schema-approve ISSUE_URL [--decision approve|revoke|request-changes] | api-schema-status ISSUE_URL | api-mock ISSUE_URL [--dynamic] | api-docs [--port PORT] | cleanup --run ID | resume --run ID | pr --run ID | approve --run ID --phase gate|design|merge [--decision approve|revoke|request-changes]');
+  const allowed = { check: ['--sbi'], demo: ['--sbi', '--full'], run: ['--provider', '--sbi', '--full'], plan: ['--provider'], 'api-schema': ['--provider'], 'api-schema-approve': ['--decision'], 'api-schema-status': [], 'api-mock': ['--dynamic'], 'api-docs': ['--port'], cleanup:['--run'], impact: ['--base', '--all'], verify: ['--base', '--all', '--verifier'], judge: ['--base', '--all'], resume: ['--run'], pr: ['--run'], approve: ['--run', '--phase', '--decision'], export: ['--run','--out'] };
+  if (!allowed[command]) throw new Error('Usage: check | demo [--full] | run [--full] | plan ISSUE_URL [--provider codex|claude] | api-schema ISSUE_URL [--provider codex|claude] | api-schema-approve ISSUE_URL [--decision approve|revoke|request-changes] | api-schema-status ISSUE_URL | api-mock ISSUE_URL [--dynamic] | api-docs [--port PORT] | impact --base REF|--all | verify --verifier ID --base REF|--all | judge --base REF|--all | cleanup --run ID | resume --run ID | pr --run ID | approve --run ID --phase gate|design|merge [--decision approve|revoke|request-changes]');
   const options = {};
   const positional = ['plan', 'api-schema', 'api-schema-approve', 'api-schema-status', 'api-mock'].includes(command) && args.length && !args[0].startsWith('--') ? args.shift() : null;
   for (let i = 0; i < args.length; i += 2) {
-    if (['--full', '--dynamic'].includes(args[i]) && allowed[command].includes(args[i]) && !options[args[i]]) { options[args[i]]=true; i--; continue; }
+    if (['--full', '--dynamic', '--all'].includes(args[i]) && allowed[command].includes(args[i]) && !options[args[i]]) { options[args[i]]=true; i--; continue; }
     if (!allowed[command].includes(args[i]) || !args[i + 1] || args[i + 1].startsWith('--') || options[args[i]]) throw new Error(`Invalid arguments for ${command}`);
     options[args[i]] = args[i + 1];
   }
@@ -60,6 +62,35 @@ try {
       docs.server.on('close', resolve);
       process.once('SIGINT', () => { docs.server.close(); docs.server.closeAllConnections(); });
     });
+  } else if (['impact', 'verify', 'judge'].includes(command)) {
+    const all = options['--all'] === true, base = options['--base'];
+    if (all === Boolean(base)) throw new Error(`${command} requires exactly one of --base REF or --all`);
+    // Verifier commands such as api-contract compare against the same base the impact was computed from.
+    process.env.HARNESS_BASE_REF = base || 'HEAD';
+    const output = async lines => { if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT, lines.map(l => `${l}\n`).join('')); };
+    if (command === 'impact') {
+      const { impact } = await loadImpact({ root, base, all });
+      for (const line of describeImpact(impact)) console.log(redactText(line));
+      await output([`required_verifiers=${JSON.stringify(impact.requiredVerifiers)}`, `full_gate=${impact.fullGate}`]);
+    } else if (command === 'verify') {
+      if (!options['--verifier']) throw new Error('verify requires --verifier ID');
+      const { impact, result, passed } = await runVerifier({ root, base, all, id: options['--verifier'] });
+      const selection = impact.verifiers.find(v => v.id === options['--verifier']);
+      console.log(redactText(`Selected by: ${selection ? selection.reasons.join(', ') : '(not selected by impact)'}`));
+      for (const c of result.checks) {
+        for (const p of c.processes || (c.process ? [c.process] : [])) if (!p.ok) console.error(redactText((p.stderr || p.stdout || p.error || '').slice(-4000)));
+        console.log(redactText(`${c.id}: ${c.status}${c.reason ? ` (${c.reason})` : ''} [${c.selectionReasons.join(', ')}]`));
+      }
+      process.exitCode = passed ? 0 : 1;
+    } else {
+      const needs = JSON.parse(process.env.HARNESS_NEEDS || '{}');
+      const judged = await runCompletionJudge({ root, base, all, needs });
+      for (const line of describeImpact(judged.impact)) console.log(redactText(line));
+      for (const c of judged.checks) console.log(redactText(`${c.id}: ${c.status}${c.reason ? ` (${c.reason})` : ''}`));
+      for (const [job, value] of Object.entries(needs)) console.log(`job ${job}: ${value.result}`);
+      console.log(`Completion Judge: ${judged.status}${judged.reasons.length ? ` (${judged.reasons.join('; ')})` : ''}`);
+      process.exitCode = judged.status === 'PASS' ? 0 : 1;
+    }
   } else if (command === 'pr') {
     if (!options['--run']) throw new Error('pr requires --run ID');
     const run = await openPullRequest({ root, runId: options['--run'] });

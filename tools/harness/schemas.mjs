@@ -8,7 +8,7 @@ export const sbiSchema = z.strictObject({
   allowedFiles: z.array(relativePath).min(1), risks: z.array(text),
   ambiguous: z.boolean(), requiresDesignDecision: z.boolean(),
   securityImpact: z.array(text).default([]), requiredSecurityRules: z.array(text).default([]),
-  requiredVerifiers: z.array(text).default([]), preImplementationGate: z.boolean().default(false),
+  requiredVerifiers: z.array(text).default([]), affectedAreas: z.array(text).default([]), preImplementationGate: z.boolean().default(false),
   promotion: z.strictObject({ source: relativePath.refine(p => /^prototypes\/(web|mobile)(\/|$)/.test(p)), designApproval: z.null().optional() }).optional(),
   minimumRiskLevel: z.union([z.literal(2), z.literal(3)]).default(2),
   issueUrl: z.url().optional(),
@@ -28,7 +28,13 @@ export const configSchema = z.strictObject({
     lanes: z.array(z.enum(['prototype', 'production'])).default(['prototype', 'production']),
     trust: z.enum(['application', 'acceptance']).default('application'),
     trustedScript: relativePath.optional(),
+    areas: z.array(text).default([]),
   })).min(1),
+  // SBI Impact Analysis: cross-layer contracts added when areas meet, and paths whose change runs the Full Gate.
+  impact: z.strictObject({
+    crossLayer: z.array(z.strictObject({ all: z.array(text).min(1), any: z.array(text).min(1), add: z.array(text).min(1) })).default([]),
+    fullGate: z.array(text).default([]),
+  }).default({ crossLayer: [], fullGate: [] }),
 }).refine(c => new Set(c.verifiers.map(v => v.id)).size === c.verifiers.length && !c.verifiers.some(v => v.id === 'sample-bdd'), 'duplicate or reserved verifier');
 export const rulesSchema = z.strictObject({
   humanGate: z.array(z.enum(['AuthN', 'AuthZ', 'RLS', 'PII', 'Migration', 'ADR'])).length(6),

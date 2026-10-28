@@ -11,23 +11,26 @@ export function verifierRegistry(config) {
     ...config.verifiers.map(v => [v.id, { ...v, kind: 'command', trust:v.trust || 'application' }]),
   ]);
 }
-export async function verify({ root, workspace, config, sbi, files = sbi.allowedFiles.map(path=>({path})), requiredVerifiers = [], full = false, lane = classifyLane(files,sbi) }) {
-  const registry = verifierRegistry(config);
+// only limits the run to the named verifiers; selected maps an Impact Analysis selection to whether it is mandatory.
+export async function verify({ root, workspace, config, sbi, files = sbi.allowedFiles?.map(path=>({path})) ?? [], requiredVerifiers = [], full = false, lane = classifyLane(files,sbi), only = null, selected = new Map() }) {
+  const registry = new Map([...verifierRegistry(config)].filter(([id]) => !only || only.has(id)));
   const needed = new Set(sbi.acceptanceCriteria.map(a => a.verifier));
   const explicit = new Set(sbi.requiredVerifiers || []);
   const security = new Set(requiredVerifiers);
   const checks = [], acceptance = [];
-  for (const id of new Set([...needed,...explicit,...security])) if (!registry.has(id)) checks.push({id,required:true,status:'NOT_CONFIGURED',selectionReasons:['required'],reason:'required verifier is not configured'});
+  for (const id of new Set([...needed,...explicit,...security].filter(id => !only || only.has(id)))) if (!registry.has(id)) checks.push({id,required:true,status:'NOT_CONFIGURED',selectionReasons:['required'],reason:'required verifier is not configured'});
   for (const adapter of registry.values()) {
     const reasons = [];
     if (needed.has(adapter.id)) reasons.push('acceptance');
     if (explicit.has(adapter.id)) reasons.push('explicit-required');
     if (security.has(adapter.id)) reasons.push('security-required');
     if (adapter.allowMissing === false) reasons.push('configured-required');
+    if (selected.get(adapter.id) === true) reasons.push('impact-required');
     const mandatory = reasons.length > 0;
     const matchesLane = !adapter.lanes || adapter.lanes.includes(lane.name);
     const pathMatch = adapter.kind !== 'sample-bdd' && matchesLane && (!adapter.appliesTo || files.some(f=>adapter.appliesTo.some(p=>new RegExp(p).test(f.path))));
     if (pathMatch) reasons.push('changed-path');
+    if (selected.get(adapter.id) === false) reasons.push('impact-selected');
     if (full && matchesLane && adapter.kind !== 'sample-bdd') reasons.push('full');
     const base = { id:adapter.id, required:mandatory || pathMatch, trust:adapter.trust, selectionReasons:reasons };
     if (!reasons.length) {

@@ -69,7 +69,7 @@ Agentの変更、Verifierのcwd、Policy Review、Security Check、差分取得�
 信頼するテストと検証スクリプトはagentの書き込み領域の外で管理する。
 
 agentは許可されたファイルのJSONを返し、Harnessが検査して適用する。
-`.git`、`.harness`、`tools`、`sources`、`.github`、`.githooks`、AGENTS.mdは書き込み不可。
+`.git`、`.harness`、`.ai`、`tools`、`sources`、`.github`、`.githooks`、AGENTS.mdは書き込み不可。
 apps / packages / prototypesのApplication TestはSBI.allowedFilesに明記すればTDDで変更できる。
 CLIが直接ファイルを変更した場合も停止する。差分をローカルcommitしてから検証する。
 

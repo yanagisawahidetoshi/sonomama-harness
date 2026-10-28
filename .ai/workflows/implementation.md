@@ -29,7 +29,7 @@ PBI → SBI Plannerは[pbi-sbi-planner.md](pbi-sbi-planner.md)。API変更を伴
 2. pnpm install --frozen-lockfileで依存とpre-push hookを準備する。再設定はpnpm hooks:install。
 3. BDDテストを先に書き、失敗確認・テストcommit後に実装する。
 4. harness:checkとharness:testの成功後、cleanなcommitからharness:demo --fullを実行する。
-5. push時にもcheck/testが自動実行される。PRとmainのCIでinstall/check/test/demoを再確認する。
+5. push時にもcheck/testが自動実行される。CIはSBIと差分から必要なVerifierだけを並列実行する（[ci.md](ci.md)）。
 6. 元リポジトリのHEADを変える前にrunをレビューする。変更後は承認を再利用せず、新規runで再検証する。
 7. 人間が最終mergeする。現在はMERGE_ALLOWED判定まで。Rulesetの必須チェック指定は別途設定する。
 
