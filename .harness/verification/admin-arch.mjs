@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
+import { hasCommand } from './lib/commands.mjs';
 // Trusted acceptance for SBI-ADMIN-ARCH (#32). Reads the worktree only; the admin verifier runs the architecture check and its tests.
 const root = process.argv[2];
 const app = join(root, 'apps/admin');
@@ -19,7 +20,7 @@ const files = (dir, out = []) => {
 const code = dir => files(dir).filter(p => /\.(ts|tsx)$/.test(p));
 const pkg = () => JSON.parse(read('apps/admin/package.json'));
 const deps = () => ({ ...pkg().dependencies, ...pkg().devDependencies });
-const commands = () => JSON.parse(read('.harness/config/harness.json')).verifiers.find(v => v.id === 'admin').commands.map(c => c.join(' '));
+const commands = () => JSON.parse(read('.harness/config/harness.json')).verifiers.find(v => v.id === 'admin').commands;
 const docText = () => read(doc);
 const mentions = terms => { const text = docText(); for (const term of terms) assert.ok(text.includes(term), `${doc}: ${term}`); };
 // Independent of the app's checker: every import must follow app → features → shared.
@@ -28,13 +29,15 @@ const target = (from, spec) => spec.startsWith('@/') ? join(src, spec.slice(2)) 
 const layer = path => {
   const [first, second] = relative(src, path).split('/');
   if (first === 'features') return { name: 'features', feature: second };
-  return { name: ['app', 'shared', 'providers'].includes(first) ? first : first === 'main.tsx' ? 'app' : 'other' };
+  // Only the four layers, main.tsx and explicit non-layer files are known; any other top-level path is an unknown layer.
+  return { name: ['app', 'shared', 'providers'].includes(first) ? first : first === 'main.tsx' ? 'app' : first === 'test' || /\.d(\.ts)?$/.test(first) ? 'non-layer' : 'unknown' };
 };
 const violations = () => code(src).flatMap(from => imports(from).flatMap(spec => {
   const to = target(from, spec);
   if (!to) return [];
   const a = layer(from), b = layer(to);
-  const bad = (a.name === 'features' && b.name === 'features' && a.feature !== b.feature)
+  const bad = (a.name !== 'non-layer' && (a.name === 'unknown' || ['unknown', 'non-layer'].includes(b.name)))
+    || (a.name === 'features' && b.name === 'features' && a.feature !== b.feature)
     || (a.name === 'features' && ['app', 'providers'].includes(b.name))
     || (a.name === 'shared' && ['features', 'app', 'providers'].includes(b.name))
     || (a.name === 'providers' && ['features', 'app'].includes(b.name));
@@ -115,18 +118,18 @@ try {
     }],
     ['ADMIN-ARCH-AC-18', 'Given the Harness, When verifying admin, Then the architecture check and its tests are verifier commands', () => {
       assert.match(pkg().scripts['test:architecture'], /node --test/);
-      for (const script of ['check:architecture', 'test:architecture']) assert.ok(commands().some(c => c.includes(`run ${script}`)), script);
+      for (const script of ['check:architecture', 'test:architecture']) assert.ok(hasCommand(commands(), ['pnpm', 'run', script]), script);
     }],
     ['ADMIN-ARCH-AC-19', 'Given valid dependencies, When the checker runs on src, Then it passes', () => {
-      assert.ok(commands().some(c => c.includes('run check:architecture')));
+      assert.ok(hasCommand(commands(), ['pnpm', 'run', 'check:architecture']));
       assert.deepEqual(violations(), []);
     }],
     ['ADMIN-ARCH-AC-20', 'Given forbidden dependencies in fixtures, When the checker runs, Then its tests expect a failure for each kind', () => {
       const test = read('apps/admin/scripts/check-architecture.test.mjs');
-      for (const kind of ['features/A → features/B', 'shared → features', 'shared → app']) assert.ok(test.includes(kind), kind);
+      for (const kind of ['features/A → features/B', 'shared → features', 'shared → app', 'unknown top-level layer', 'layered → non-layer file']) assert.ok(test.includes(kind), kind);
     }],
     ['ADMIN-ARCH-AC-21', 'Given the Harness, When verifying admin, Then typecheck / Biome / Vitest / build stay registered', () => {
-      for (const script of ['typecheck', 'check', 'test', 'build']) assert.ok(commands().some(c => c.includes(`run ${script}`)), script);
+      for (const script of ['typecheck', 'check', 'test', 'build']) assert.ok(hasCommand(commands(), ['pnpm', 'run', script]), script);
     }],
   ];
   const acceptance = [];

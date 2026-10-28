@@ -1,26 +1,16 @@
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
-import { randomBytes, createHmac, timingSafeEqual, randomUUID } from 'node:crypto';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { userInfo } from 'node:os';
 import { json, exists, readJson } from './io.mjs';
 import { approvalRecordSchema } from './schemas.mjs';
 import { loadRun, runPaths, withRunLock } from './run-store.mjs';
+import { signingKey, sign, equal } from './signing.mjs';
+export { signingKey, sign, equal };
 
 export function localHumanIdentity() {
   const user = userInfo();
   return { id: `os:${user.uid}:${user.username}`, kind: 'human', source: 'local-os-user' };
 }
-export async function signingKey(root, create = false) {
-  const path = join(root, '.harness/state/human/.key');
-  if (create) {
-    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-    try { await writeFile(path, randomBytes(32), { flag: 'wx', mode: 0o600 }); }
-    catch (e) { if (e.code !== 'EEXIST') throw e; }
-  }
-  return readFile(path);
-}
-export const sign = (key, value) => createHmac('sha256', key).update(JSON.stringify(value)).digest('hex');
-export const equal = (a, b) => typeof a === 'string' && typeof b === 'string' && a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 export async function authenticatedRecords(root, runId) {
   const path = runPaths(root, runId).ledger;
   if (!await exists(path)) return [];
