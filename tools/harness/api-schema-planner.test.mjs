@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, writeFile, readFile, readdir } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { parse as parseYaml, stringify as toYaml } from 'yaml';
@@ -12,7 +12,7 @@ import { planApiSchema, proposalMarker, approvedLabel } from './api-schema-plann
 import { judgeApiSchema } from './api-schema-judge.mjs';
 import { readExistingSchema } from './api-schema-reader.mjs';
 import { diffContract } from './api-schema-diff.mjs';
-import { recordApiSchemaDecision, apiSchemaApprovalStatus } from './api-schema-approval.mjs';
+import { recordApiSchemaDecision, apiSchemaApprovalStatus, unrevokedApiSchemaApprovals } from './api-schema-approval.mjs';
 import { renderOpenApi } from './api-schema-render.mjs';
 
 const issueUrl = 'https://github.com/acme/app/issues/12';
@@ -579,6 +579,48 @@ describe('API Schema Approval', () => {
       const file = join(github.dir, 'state.json'), state = JSON.parse(await readFile(file, 'utf8'));
       state.issue.labels = state.issue.labels.filter(l => l.name !== approvedLabel); await writeFile(file, JSON.stringify(state));
       await assert.rejects(plan(root), /承認/);
+    })));
+  });
+
+  describe('given an approved proposal and a working tree that no longer matches the approval', () => {
+    const approvedTwice = async root => { await generated(root); await approve(root, 'alice'); await approve(root, 'bob'); };
+    const unchanged = async (root, action) => {
+      const before = await readFile(join(proposalDir(root), 'openapi.yaml'), 'utf8');
+      await action();
+      assert.equal(await readFile(join(proposalDir(root), 'openapi.yaml'), 'utf8'), before, 'the approved proposal is kept');
+    };
+    it('when an untracked file is added to the approved proposal directory then the planner still refuses to regenerate until a REVOKE', () => fixture(root => mockGitHub({}, async () => {
+      await approvedTwice(root);
+      await writeFile(join(proposalDir(root), 'notes.md'), 'reviewer memo\n');
+      assert.equal((await status(root)).approvals, 0, 'the dirty directory lowers the approval status');
+      await unchanged(root, () => assert.rejects(plan(root), /REVOKE/));
+    })));
+    it('when the approved proposal has an uncommitted edit then the planner refuses to regenerate because of the unrevoked approval', () => fixture(root => mockGitHub({}, async () => {
+      await approvedTwice(root);
+      await writeFile(join(proposalDir(root), 'summary.md'), '# edited\n');
+      await assert.rejects(plan(root), /REVOKE/);
+    })));
+    it('when the approved proposal directory is gone then the planner still refuses to regenerate', () => fixture(root => mockGitHub({}, async () => {
+      await approvedTwice(root);
+      await rm(proposalDir(root), { recursive: true });
+      await assert.rejects(plan(root), /REVOKE/);
+      assert.equal(await exists(proposalDir(root)), false);
+    })));
+    it('when only one of the approvers revokes then the planner still refuses to regenerate', () => fixture(root => mockGitHub({}, async () => {
+      await approvedTwice(root);
+      await approve(root, 'alice', 'REVOKE');
+      await assert.rejects(plan(root), /REVOKE/);
+    })));
+    it('when every approver revokes then the planner regenerates the proposal as before', () => fixture(root => mockGitHub({}, async () => {
+      await approvedTwice(root);
+      await approve(root, 'alice', 'REVOKE'); await approve(root, 'bob', 'REVOKE');
+      assert.equal((await plan(root)).status, 'REVIEW_READY');
+    })));
+    it('when the working tree is dirty then the approval status counts no valid approval while the ledger still lists the unrevoked approvers', () => fixture(root => mockGitHub({}, async () => {
+      await approvedTwice(root);
+      await writeFile(join(proposalDir(root), 'notes.md'), 'reviewer memo\n');
+      assert.deepEqual([(await status(root)).status, (await status(root)).approvals], ['NOT_APPROVED', 0]);
+      assert.deepEqual((await unrevokedApiSchemaApprovals({ root, issueUrl })).map(record => record.reviewer).sort(), ['alice', 'bob']);
     })));
   });
 
