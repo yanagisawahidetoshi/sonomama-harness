@@ -12,7 +12,7 @@ export async function git(workspace, args, optional = false) {
 }
 export function assertWritablePath(path, { allowSensitiveDeclaration = false } = {}) {
   if (!allowSensitiveDeclaration && isSecretPath(path)) throw new Error('scope/path is a prohibited secret file');
-  if (/(^|\/)(\.git|\.harness|\.github|\.githooks|node_modules|sources|tools)(\/|$)|(^|\/)AGENTS\.md$/.test(path)) throw new Error(`scope/path is reserved: ${path}`);
+  if (/(^|\/)(\.git|\.harness|\.github|\.githooks|\.ai|node_modules|sources|tools)(\/|$)|(^|\/)AGENTS\.md$/.test(path)) throw new Error(`scope/path is reserved: ${path}`);
   if (/\.(test|spec)\.[^/]+$/.test(path) && !/^(apps|packages|prototypes)\//.test(path)) throw new Error(`trusted test path is reserved: ${path}`);
 }
 export async function sourceIntegrity(root, baselineSha) {
