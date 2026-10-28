@@ -3,7 +3,7 @@ import { join, dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { check } from './check.mjs';
 import { json, readJson, exists, evidenceText } from './io.mjs';
-import { responseSchema } from './schemas.mjs';
+import { responseSchema, runIdSchema } from './schemas.mjs';
 import { runAgent, makePrompt, providerCommand } from './agents/index.mjs';
 import { verify, checksPassed } from './verifier.mjs';
 import { review } from './reviewer.mjs';
@@ -11,7 +11,7 @@ import { judge } from './completion-judge.mjs';
 import { humanGate, classifyEscalation } from './escalation.mjs';
 import { assessRisk } from './risk-classifier.mjs';
 import { mergeDecision, validHumanApprovals } from './merge-policy.mjs';
-import { authenticatedRecords, recordDecision } from './human-approvals.mjs';
+import { authenticatedRecords, recordDecision, waitsForIssue } from './human-approvals.mjs';
 import { classifySecurity, verifySecurity, combineSecurity, securityPassed } from './security-enforcement.mjs';
 import { withEvidenceProtection, redact, redactText, hasSecret, assertSafeInput, isSecretPath } from './evidence-protection.mjs';
 import { githubPrCli, githubState, pullRequestBody } from './github-pr.mjs';
@@ -380,21 +380,26 @@ export function runExitCode(run) {
   return run.status === 'WAITING_FOR_HUMAN_REVIEW' || waitingForCi ? 0 : 2;
 }
 // An SBI Issue URL names the run that waits for this decision. More than one candidate is never guessed.
-async function waitingRun(root, issueUrl, purpose) {
-  const { url } = parseIssueUrl(issueUrl);
-  const directory = join(root, '.harness/state/runs');
-  const summaries = await Promise.all((await readdir(directory)).filter(name => name.endsWith('.json')).map(name => readJson(join(directory, name))));
-  const waiting = summaries.filter(s => s.sbiIssue?.url === url && !s.cleanedAt && (purpose === 'implementation-gate' ? s.gate?.state === 'WAITING_FOR_HUMAN_GATE'
-    : purpose === 'design-approval' ? s.designApproval?.state === 'WAITING_FOR_DESIGN_APPROVAL' : s.executionStatus === 'DONE' && !s.pullRequest));
-  if (waiting.length !== 1) throw new Error(`${url} を待っているrunが${waiting.length}件あります${waiting.length ? `（${waiting.map(s => s.id).join(', ')}）。--run RUN_ID で指定してください` : ''}`);
-  return waiting[0].id;
+// Candidates come from .harness/runs/<id>/summary.json, the run state loadRun verifies; .harness/state/runs is a projection and is never read here.
+async function waitingRun(root, url, purpose) {
+  const waiting = [];
+  for (const name of await readdir(join(root, '.harness/runs'))) {
+    if (!runIdSchema.safeParse(name).success) continue;
+    // Planner and API Schema directories have their own summary.json; only a run summary for this Issue matches.
+    let summary;
+    try { summary = await readJson(runPaths(root, name).summary); } catch { continue; }
+    if (summary?.id === name && waitsForIssue(summary, url, purpose)) waiting.push(name);
+  }
+  if (waiting.length !== 1) throw new Error(`${url} を待っているrunが${waiting.length}件あります${waiting.length ? `（${waiting.join(', ')}）。--run RUN_ID で指定してください` : ''}`);
+  return waiting[0];
 }
 // harness:approve records the decision through the trusted identity adapter, then continues the run as harness:resume and harness:pr would.
 export async function approveRun(options) {
   const root = await realpath(options.root);
   return withEvidenceProtection(root, async () => {
-    const runId = options.runId ?? await waitingRun(root, options.issueUrl, options.purpose);
-    await recordDecision({ root, runId, purpose: options.purpose, decision: options.decision, identityProvider: options.identityProvider });
+    const issueUrl = options.runId ? null : parseIssueUrl(options.issueUrl).url;
+    const runId = options.runId ?? await waitingRun(root, issueUrl, options.purpose);
+    await recordDecision({ root, runId, purpose: options.purpose, decision: options.decision, identityProvider: options.identityProvider, issueUrl });
     return continueToPullRequest({...options,root,runId}, await resumeProtected({...options,root,runId}));
   }, { extensions: options.redactionExtensions || [] });
 }
