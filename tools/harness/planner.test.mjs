@@ -13,7 +13,7 @@ const pbi = { number: 8, title: '受講生プロフィールを表示する', bo
 
 function sbi(id, overrides = {}) {
   return {
-    id, title: `${id}の機能`, purpose: `${id}を実現する。`,
+    id, kind: 'implementation', title: `${id}の機能`, purpose: `${id}を実現する。`,
     scope: { included: ['apps/mobile プロフィール画面'], excluded: [] },
     acceptanceCriteria: [{ id: 'AC-1', description: '登録済みの氏名が画面に表示される' }, { id: 'AC-2', description: '未登録なら未設定と表示される' }],
     scenarios: [
@@ -25,7 +25,11 @@ function sbi(id, overrides = {}) {
     ...overrides,
   };
 }
-const validPlan = () => [sbi('SBI-001'), sbi('SBI-002', { dependsOn: ['SBI-001'] }), sbi('SBI-003', { dependsOn: ['SBI-001', 'SBI-002'] })];
+// Every PBI ends with one validation SBI (real API + Maestro) and one acceptance SBI (human confirmation).
+const validation = (id, dependsOn) => sbi(id, { kind: 'validation', dependsOn, changeAreas: ['apps/mobile', 'apps/api'], verification: { applicationTest: '不要', acceptance: 'Trusted Acceptance', e2e: 'Maestro（実API + Rails + DB）' } });
+const acceptance = (id, dependsOn) => sbi(id, { kind: 'acceptance', dependsOn, changeAreas: [], verification: { applicationTest: '不要', acceptance: '人間確認', e2e: '不要' } });
+const validPlan = () => [sbi('SBI-001'), validation('SBI-002', ['SBI-001']), acceptance('SBI-003', ['SBI-002'])];
+const withChecks = (...implementations) => [...implementations, validation('SBI-901', implementations.map(s => s.id)), acceptance('SBI-902', ['SBI-901'])];
 const agentWith = sbis => async () => ({ sbis, escalation: null });
 const fakeToken = 'ghp_' + 'k'.repeat(36);
 
@@ -64,14 +68,18 @@ describe('PBI → SBI Planner', () => {
         assert.match(issue.body, /#8/);
         const sbiId = issue.title.split(' ')[0];
         assert.ok(issue.body.includes(`<!-- sonomama-sbi pbi=${pbiUrl} id=${sbiId} digest=${sbiDigest(validPlan().find(s => s.id === sbiId))} -->`), 'deterministic marker with content digest');
-        for (const heading of ['## 目的', '## 対象範囲', '## 受け入れ要件', '## Gherkin', '## 依存SBI', '## 想定変更範囲', '## Risk / Security Impact', '## 検証方法', '## 元PBI']) assert.ok(issue.body.includes(heading), `${issue.title} lacks ${heading}`);
+        for (const heading of ['## 種類', '## 目的', '## 対象範囲', '## 受け入れ要件', '## Gherkin', '## 依存SBI', '## 想定変更範囲', '## Risk / Security Impact', '## 検証方法', '## 元PBI']) assert.ok(issue.body.includes(heading), `${issue.title} lacks ${heading}`);
         assert.match(issue.body, /Scenario: 登録済みプロフィールを表示する\n\s+Given ログイン済みの受講生がいる\n\s+And プロフィールが登録されている\n\s+When プロフィール画面を開く\n\s+Then 登録済みの氏名が表示される/);
         assert.match(issue.body, /- \[ \] AC-1: 登録済みの氏名が画面に表示される/);
         assert.match(issue.body, /Risk: L2 candidate\nSecurity: None/);
         assert.match(issue.body, /Application Test: RNTL\n受け入れ要件: Trusted Acceptance\nE2E: 不要/);
       }
       assert.match(state.created[0].body, /## 依存SBI\n\nなし/);
-      assert.match(state.created[2].body, /- SBI-001 \(#101\)\n- SBI-002 \(#102\)/);
+      assert.match(state.created[1].body, /## 依存SBI\n\n- SBI-001 \(#101\)\n\n/);
+      assert.match(state.created[2].body, /## 依存SBI\n\n- SBI-002 \(#102\)\n\n/);
+      assert.match(state.created[0].body, /## 種類\n\n実装SBI（implementation）/);
+      assert.match(state.created[1].body, /## 種類\n\n最終確認SBI（validation）/);
+      assert.match(state.created[2].body, /## 種類\n\n人間確認SBI（acceptance）/);
       assert.deepEqual(result.created.map(c => [c.sbiId, c.number, c.url]), [['SBI-001', 101, 'https://github.com/acme/app/issues/101'], ['SBI-002', 102, 'https://github.com/acme/app/issues/102'], ['SBI-003', 103, 'https://github.com/acme/app/issues/103']]);
       assert.deepEqual(state.labels.sort(), ['needs-review', 'sbi']);
     })));
@@ -120,7 +128,7 @@ describe('PBI → SBI Planner', () => {
       assert.deepEqual(await github.calls(), []);
     })));
     it('when the quality judge fails then creates no Issue and reports every reason', () => fixture(root => mockGitHub({}, async github => {
-      const broken = [sbi('SBI-001', { scenarios: [], dependsOn: ['SBI-002'] }), sbi('SBI-002', { dependsOn: ['SBI-001'], changeAreas: [] })];
+      const broken = withChecks(sbi('SBI-001', { scenarios: [], dependsOn: ['SBI-002'] }), sbi('SBI-002', { dependsOn: ['SBI-001'], changeAreas: [] }));
       await assert.rejects(plan(root, { agent: agentWith(broken) }), error => /SBI Quality Judge/.test(error.message) && /Gherkin/.test(error.message) && /循環/.test(error.message) && /変更範囲/.test(error.message));
       assert.equal((await github.state()).created.length, 0);
       assert.ok(!(await github.calls()).some(call => call.args.includes('-X')));
@@ -139,7 +147,7 @@ describe('PBI → SBI Planner', () => {
       const state = await github.state();
       assert.deepEqual(state.created.map(i => i.title), ['SBI-001 SBI-001の機能', 'SBI-002 SBI-002の機能', 'SBI-003 SBI-003の機能']);
       assert.deepEqual(result.created.map(c => [c.sbiId, c.number, c.reused]), [['SBI-001', 101, true], ['SBI-002', 102, false], ['SBI-003', 103, false]]);
-      assert.match(state.created[2].body, /- SBI-001 \(#101\)\n- SBI-002 \(#102\)/);
+      assert.match(state.created[2].body, /- SBI-002 \(#102\)/);
       assert.equal(state.comments.length, 1);
       assert.match(state.comments[0].body, /- #101 SBI-001 SBI-001の機能\n- #102 SBI-002 SBI-002の機能\n- #103 SBI-003 SBI-003の機能/);
     })));
@@ -209,7 +217,7 @@ describe('PBI → SBI Planner', () => {
       assert.ok(!(await readFile(join(root, '.harness/runs', plans[0], 'summary.json'), 'utf8')).includes(fakeToken));
     })));
     it('when a candidate declares a security category outside the Harness policy then the quality judge fails', () => fixture(root => mockGitHub({}, async github => {
-      await assert.rejects(plan(root, { agent: agentWith([sbi('SBI-001', { securityImpact: ['Telemetry'], riskCandidate: 'L3' })]) }), /SBI Quality Judge[\s\S]*Telemetry/);
+      await assert.rejects(plan(root, { agent: agentWith(withChecks(sbi('SBI-001', { securityImpact: ['Telemetry'], riskCandidate: 'L3' }))) }), /SBI Quality Judge[\s\S]*Telemetry/);
       assert.equal((await github.state()).created.length, 0);
     })));
   });
@@ -252,10 +260,10 @@ describe('SBI Quality Judge', () => {
       });
     }
     it('when an acceptance criterion contains a word like fetch then does not treat it as the vague term etc', () => {
-      assert.equal(judgePlan([sbi('SBI-001', { acceptanceCriteria: [{ id: 'AC-1', description: 'プロフィールをfetchして氏名を表示する' }, { id: 'AC-2', description: '未登録なら未設定と表示される' }] })]).status, 'PASS');
+      assert.equal(judgePlan(withChecks(sbi('SBI-001', { acceptanceCriteria: [{ id: 'AC-1', description: 'プロフィールをfetchして氏名を表示する' }, { id: 'AC-2', description: '未登録なら未設定と表示される' }] }))).status, 'PASS');
     });
     it('when the purpose mentions a host name or version then does not count the dots as sentences', () => {
-      assert.equal(judgePlan([sbi('SBI-001', { purpose: 'api.example.com のv1.2を使ってプロフィールを取得する。表示までを対象にする。' })]).status, 'PASS');
+      assert.equal(judgePlan(withChecks(sbi('SBI-001', { purpose: 'api.example.com のv1.2を使ってプロフィールを取得する。表示までを対象にする。' }))).status, 'PASS');
     });
     it('when a security category is outside the known list then fails naming it', () => {
       const result = judgePlan([sbi('SBI-001', { securityImpact: ['Telemetry'], riskCandidate: 'L3' })], { securityCategories: ['AuthZ', 'PII'] });
@@ -263,13 +271,39 @@ describe('SBI Quality Judge', () => {
       assert.ok(result.findings.some(f => /Security/.test(f.reason) && /Telemetry/.test(f.reason)));
     });
     it('when every security category is in the known list then passes', () => {
-      assert.equal(judgePlan([sbi('SBI-001', { securityImpact: ['AuthZ'], riskCandidate: 'L3' })], { securityCategories: ['AuthZ', 'PII'] }).status, 'PASS');
+      assert.equal(judgePlan(withChecks(sbi('SBI-001', { securityImpact: ['AuthZ'], riskCandidate: 'L3' })), { securityCategories: ['AuthZ', 'PII'] }).status, 'PASS');
     });
     it('when two SBIs share an ID then fails with the duplicate', () => {
       const result = judgePlan([sbi('SBI-001'), sbi('SBI-001')]);
       assert.equal(result.status, 'FAIL');
       assert.ok(result.findings.some(f => /重複/.test(f.reason)));
     });
+    it('when a PBI has several implementation SBIs followed by one validation and one acceptance SBI then passes', () => {
+      assert.deepEqual(judgePlan(withChecks(sbi('SBI-001'), sbi('SBI-002', { dependsOn: ['SBI-001'] }), sbi('SBI-003'))), { status: 'PASS', findings: [] });
+    });
+    it('when the validation SBI spans more change areas than an implementation SBI may then still passes because the E2E covers the whole PBI', () => {
+      const plan = withChecks(sbi('SBI-001'));
+      plan[1].changeAreas = ['apps/mobile', 'apps/api', 'apps/admin', 'packages/api-schema', 'packages/ui'];
+      assert.equal(judgePlan(plan).status, 'PASS');
+    });
+    const kindFailures = [
+      ['the plan has no implementation SBI', () => [validation('SBI-901', []), acceptance('SBI-902', ['SBI-901'])], '*', /実装SBI/],
+      ['the plan has no validation SBI', () => [sbi('SBI-001'), acceptance('SBI-902', ['SBI-001'])], '*', /最終確認SBI/],
+      ['the plan has no acceptance SBI', () => [sbi('SBI-001'), validation('SBI-901', ['SBI-001'])], '*', /人間確認SBI/],
+      ['the plan has two validation SBIs', () => [...withChecks(sbi('SBI-001')), validation('SBI-903', ['SBI-001'])], '*', /最終確認SBI.*1件/],
+      ['the plan has two acceptance SBIs', () => [...withChecks(sbi('SBI-001')), acceptance('SBI-903', ['SBI-901'])], '*', /人間確認SBI.*1件/],
+      ['the validation SBI does not depend on every implementation SBI', () => [sbi('SBI-001'), sbi('SBI-002'), validation('SBI-901', ['SBI-001']), acceptance('SBI-902', ['SBI-901'])], 'SBI-901', /SBI-002/],
+      ['the validation SBI depends on the acceptance SBI', () => [sbi('SBI-001'), validation('SBI-901', ['SBI-001', 'SBI-902']), acceptance('SBI-902', [])], 'SBI-901', /SBI-902/],
+      ['the acceptance SBI does not depend on the validation SBI', () => [sbi('SBI-001'), validation('SBI-901', ['SBI-001']), acceptance('SBI-902', ['SBI-001'])], 'SBI-902', /SBI-901/],
+      ['an implementation SBI depends on the validation SBI', () => [sbi('SBI-001'), sbi('SBI-002', { dependsOn: ['SBI-901'] }), validation('SBI-901', ['SBI-001', 'SBI-002']), acceptance('SBI-902', ['SBI-901'])], 'SBI-002', /実装SBI.*SBI-901/],
+    ];
+    for (const [condition, candidates, target, reason] of kindFailures) {
+      it(`when ${condition} then fails with the reason`, () => {
+        const result = judgePlan(candidates());
+        assert.equal(result.status, 'FAIL');
+        assert.ok(result.findings.some(f => f.sbi === target && reason.test(f.reason)), JSON.stringify(result.findings));
+      });
+    }
     it('when dependencies form a cycle then fails naming the cycle', () => {
       const result = judgePlan([sbi('SBI-001', { dependsOn: ['SBI-002'] }), sbi('SBI-002', { dependsOn: ['SBI-001'] })]);
       assert.equal(result.status, 'FAIL');
