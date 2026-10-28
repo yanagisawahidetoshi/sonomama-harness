@@ -190,6 +190,16 @@ describe('Security rule and evidence boundaries', () => {
         assert.equal(safe.stdout.includes(value),false);
       });
     }));
+    it('when a generated native dependency tree exceeds the discovery limit then skips it and still redacts app secrets', () => fixture(async root => {
+      const pods=join(root,'apps/mobile/ios/Pods/Vendor');
+      await mkdir(pods,{recursive:true});
+      await Promise.all(Array.from({length:30001},(_,i)=>writeFile(join(pods,`f${i}.h`),'')));
+      const value='native-fixture-credential-value';
+      await writeFile(join(root,'apps/mobile/ios/.upload-access-key'),value);
+      await withEvidenceProtection(root,async()=>{
+        assert.equal(redact({text:`key ${value}`}).text.includes(value),false);
+      });
+    }));
     it('when harmless JSON text is used as metadata then preserves it exactly', () => fixture(async root => {
       await withEvidenceProtection(root,async()=>{
         assert.equal(redact({text:'{ "ordinary": true }'}).text,'{ "ordinary": true }');

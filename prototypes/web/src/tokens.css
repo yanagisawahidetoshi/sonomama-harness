@@ -1,0 +1,35 @@
+/* Semantic tokens for prototyping. Values are placeholders until the Design System is decided. */
+:root {
+  --color-surface: #ffffff;
+  --color-surface-muted: #f4f4f5;
+  --color-text: #18181b;
+  --color-text-muted: #52525b;
+  --color-accent: #2563eb;
+  --color-danger: #dc2626;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --radius: 12px;
+  --font-body: system-ui, -apple-system, "Hiragino Sans", sans-serif;
+  --font-size-title: 18px;
+  --font-size-body: 14px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-surface: #18181b;
+    --color-surface-muted: #27272a;
+    --color-text: #f4f4f5;
+    --color-text-muted: #a1a1aa;
+    --color-accent: #60a5fa;
+    --color-danger: #f87171;
+  }
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-body);
+  background: var(--color-surface-muted);
+  color: var(--color-text);
+}

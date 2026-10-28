@@ -1,0 +1,44 @@
+{
+  "name": "mobile",
+  "version": "0.0.0",
+  "private": true,
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start",
+    "ios": "EXPO_USE_PRECOMPILED_MODULES=0 expo run:ios",
+    "android": "expo run:android",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome lint .",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "check": "biome check .",
+    "test": "jest",
+    "doctor": "expo-doctor"
+  },
+  "dependencies": {
+    "@hookform/resolvers": "^6.0.1",
+    "@tanstack/react-query": "^5.105.0",
+    "axios": "^1.21.0",
+    "expo": "~58.0.20",
+    "expo-constants": "~58.0.13",
+    "expo-linking": "~58.0.14",
+    "expo-router": "~58.0.27",
+    "expo-status-bar": "~58.0.4",
+    "react": "19.3.0",
+    "react-hook-form": "^7.91.0",
+    "react-native": "0.88.0",
+    "react-native-safe-area-context": "~5.10.1",
+    "react-native-screens": "~4.30.0",
+    "zod": "4.1.12"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.3",
+    "@testing-library/react-native": "^14.1.0",
+    "@types/jest": "^30.0.0",
+    "@types/react": "~19.3.0",
+    "expo-doctor": "^1.21.5",
+    "jest": "^30.5.2",
+    "jest-expo": "^58.0.12",
+    "typescript": "~6.0.3"
+  }
+}

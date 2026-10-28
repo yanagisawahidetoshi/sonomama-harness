@@ -94,6 +94,8 @@ export async function withEvidenceProtection(root, fn, { extensions = [] } = {})
     async function scan(directory) {
       for (const name of await readdir(directory)) {
         if (['node_modules','.git','.harness','sources','.codex','.agents'].includes(name)) continue;
+        // CocoaPods / Gradle output from `expo run:*` is third-party and generated; it alone exceeds the discovery limit.
+        if (/(^|\/)(ios\/(Pods|build)|android\/(\.gradle|build|app\/build))$/.test(relative(root, join(directory, name)))) continue;
         if (++inspected > 30000) throw new Error('Secret discovery limit exceeded; narrow the Harness source root');
         const path = join(directory, name), info = await lstat(path);
         if (info.isSymbolicLink()) continue;

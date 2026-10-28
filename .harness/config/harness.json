@@ -21,12 +21,116 @@
         "RSpec",
         "RuboCop",
         "Brakeman",
-        "OpenAPI"
+        "Bundler Audit",
+        "Zeitwerk"
       ],
-      "commands": [],
+      "commands": [
+        [
+          "docker",
+          "compose",
+          "-f",
+          "../../compose.yaml",
+          "build",
+          "api"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "../../compose.yaml",
+          "run",
+          "--rm",
+          "-e",
+          "RAILS_ENV=test",
+          "api",
+          "bin/rails",
+          "db:prepare"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "../../compose.yaml",
+          "run",
+          "--rm",
+          "-e",
+          "RAILS_ENV=test",
+          "api",
+          "bundle",
+          "exec",
+          "rspec"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "../../compose.yaml",
+          "run",
+          "--rm",
+          "-e",
+          "RAILS_ENV=test",
+          "api",
+          "bundle",
+          "exec",
+          "rubocop"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "../../compose.yaml",
+          "run",
+          "--rm",
+          "-e",
+          "RAILS_ENV=test",
+          "api",
+          "bundle",
+          "exec",
+          "brakeman",
+          "--no-pager",
+          "--quiet"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "../../compose.yaml",
+          "run",
+          "--rm",
+          "-e",
+          "RAILS_ENV=test",
+          "api",
+          "bundle",
+          "exec",
+          "bundler-audit",
+          "check",
+          "--update"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "../../compose.yaml",
+          "run",
+          "--rm",
+          "-e",
+          "RAILS_ENV=test",
+          "api",
+          "bin/rails",
+          "zeitwerk:check"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "../../compose.yaml",
+          "down"
+        ]
+      ],
       "appliesTo": [
         "^apps/api/",
         "^packages/",
+        "^compose\\.yaml$",
         "^(package\\.json|pnpm-lock\\.yaml|pnpm-workspace\\.yaml|\\.npmrc|\\.ruby-version|\\.tool-versions|tsconfig[^/]*)$"
       ],
       "lanes": [
@@ -34,17 +138,85 @@
       ]
     },
     {
+      "id": "api-acceptance",
+      "directory": "apps/api",
+      "marker": "Gemfile",
+      "planned": [
+        "Trusted Acceptance"
+      ],
+      "commands": [],
+      "acceptanceIds": [
+        "API-AC-1",
+        "API-AC-2",
+        "API-AC-3",
+        "API-AC-4",
+        "API-AC-5",
+        "API-AC-6",
+        "API-AC-7",
+        "API-AC-8",
+        "API-AC-9",
+        "API-AC-10",
+        "API-AC-11",
+        "API-AC-12",
+        "API-AC-13",
+        "API-AC-14",
+        "API-AC-15",
+        "API-AC-16",
+        "API-AC-17",
+        "API-AC-18",
+        "API-AC-19",
+        "API-AC-20",
+        "API-AC-21",
+        "API-AC-22"
+      ],
+      "appliesTo": [],
+      "lanes": [
+        "production"
+      ],
+      "trust": "acceptance",
+      "trustedScript": ".harness/verification/api-env.mjs"
+    },
+    {
       "id": "expo",
       "directory": "apps/mobile",
       "marker": "package.json",
       "planned": [
         "TypeScript",
-        "ESLint",
+        "Biome",
+        "Jest",
         "RNTL",
-        "Storybook",
-        "Maestro"
+        "Expo Doctor"
       ],
-      "commands": [],
+      "commands": [
+        [
+          "pnpm",
+          "install",
+          "--frozen-lockfile",
+          "--prefer-offline",
+          "--filter",
+          "mobile"
+        ],
+        [
+          "pnpm",
+          "run",
+          "typecheck"
+        ],
+        [
+          "pnpm",
+          "run",
+          "check"
+        ],
+        [
+          "pnpm",
+          "run",
+          "test"
+        ],
+        [
+          "pnpm",
+          "run",
+          "doctor"
+        ]
+      ],
       "appliesTo": [
         "^apps/mobile/",
         "^packages/",
@@ -53,6 +225,43 @@
       "lanes": [
         "production"
       ]
+    },
+    {
+      "id": "mobile-acceptance",
+      "directory": "apps/mobile",
+      "marker": "package.json",
+      "planned": [
+        "Trusted Acceptance"
+      ],
+      "commands": [],
+      "acceptanceIds": [
+        "MOBILE-AC-1",
+        "MOBILE-AC-2",
+        "MOBILE-AC-3",
+        "MOBILE-AC-4",
+        "MOBILE-AC-5",
+        "MOBILE-AC-6",
+        "MOBILE-AC-7",
+        "MOBILE-AC-8",
+        "MOBILE-AC-9",
+        "MOBILE-AC-10",
+        "MOBILE-AC-11",
+        "MOBILE-AC-12",
+        "MOBILE-AC-13",
+        "MOBILE-AC-14",
+        "MOBILE-AC-15",
+        "MOBILE-AC-16",
+        "MOBILE-AC-17",
+        "MOBILE-AC-18",
+        "MOBILE-AC-19",
+        "MOBILE-AC-20"
+      ],
+      "appliesTo": [],
+      "lanes": [
+        "production"
+      ],
+      "trust": "acceptance",
+      "trustedScript": ".harness/verification/mobile-env.mjs"
     },
     {
       "id": "admin",
@@ -154,11 +363,19 @@
       ],
       "planned": [
         "TypeScript",
-        "ESLint",
-        "Prettier",
-        "build/export"
+        "Biome",
+        "Vite build",
+        "Storybook build"
       ],
       "commands": [
+        [
+          "pnpm",
+          "install",
+          "--frozen-lockfile",
+          "--prefer-offline",
+          "--filter",
+          "prototype-web"
+        ],
         [
           "pnpm",
           "run",
@@ -167,19 +384,56 @@
         [
           "pnpm",
           "run",
-          "lint"
+          "check"
         ],
         [
           "pnpm",
           "run",
-          "format:check"
+          "build",
+          "--outDir",
+          "node_modules/.harness/dist",
+          "--emptyOutDir"
         ],
         [
           "pnpm",
           "run",
-          "build"
+          "build-storybook",
+          "--output-dir",
+          "node_modules/.harness/storybook-static",
+          "--quiet"
         ]
       ]
+    },
+    {
+      "id": "prototype-web-acceptance",
+      "directory": "prototypes/web",
+      "marker": "package.json",
+      "planned": [
+        "Trusted Acceptance"
+      ],
+      "commands": [],
+      "acceptanceIds": [
+        "PWEB-AC-1",
+        "PWEB-AC-2",
+        "PWEB-AC-3",
+        "PWEB-AC-4",
+        "PWEB-AC-5",
+        "PWEB-AC-6",
+        "PWEB-AC-7",
+        "PWEB-AC-8",
+        "PWEB-AC-9",
+        "PWEB-AC-10",
+        "PWEB-AC-11",
+        "PWEB-AC-12",
+        "PWEB-AC-13"
+      ],
+      "appliesTo": [],
+      "lanes": [
+        "prototype",
+        "production"
+      ],
+      "trust": "acceptance",
+      "trustedScript": ".harness/verification/prototype-web-env.mjs"
     },
     {
       "id": "prototype-mobile",
@@ -195,11 +449,18 @@
       ],
       "planned": [
         "TypeScript",
-        "ESLint",
-        "Prettier",
-        "build/export"
+        "Biome",
+        "Expo Doctor"
       ],
       "commands": [
+        [
+          "pnpm",
+          "install",
+          "--frozen-lockfile",
+          "--prefer-offline",
+          "--filter",
+          "prototype-mobile"
+        ],
         [
           "pnpm",
           "run",
@@ -208,19 +469,48 @@
         [
           "pnpm",
           "run",
-          "lint"
+          "check"
         ],
         [
           "pnpm",
           "run",
-          "format:check"
-        ],
-        [
-          "pnpm",
-          "run",
-          "build"
+          "doctor"
         ]
       ]
+    },
+    {
+      "id": "prototype-mobile-acceptance",
+      "directory": "prototypes/mobile",
+      "marker": "package.json",
+      "planned": [
+        "Trusted Acceptance"
+      ],
+      "commands": [],
+      "acceptanceIds": [
+        "PMOB-AC-1",
+        "PMOB-AC-2",
+        "PMOB-AC-3",
+        "PMOB-AC-4",
+        "PMOB-AC-5",
+        "PMOB-AC-6",
+        "PMOB-AC-7",
+        "PMOB-AC-8",
+        "PMOB-AC-9",
+        "PMOB-AC-10",
+        "PMOB-AC-11",
+        "PMOB-AC-12",
+        "PMOB-AC-13",
+        "PMOB-AC-14",
+        "PMOB-AC-15",
+        "PMOB-AC-16"
+      ],
+      "appliesTo": [],
+      "lanes": [
+        "prototype",
+        "production"
+      ],
+      "trust": "acceptance",
+      "trustedScript": ".harness/verification/prototype-mobile-env.mjs"
     }
   ],
   "semanticReview": {

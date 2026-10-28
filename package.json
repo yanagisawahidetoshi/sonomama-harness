@@ -33,6 +33,7 @@
   },
   "devDependencies": {
     "@stoplight/prism-cli": "5.14.2",
+    "storybook": "10.6.4",
     "swagger-ui-dist": "5.33.2"
   },
   "pnpm": {

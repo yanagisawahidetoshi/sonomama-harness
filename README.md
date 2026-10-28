@@ -90,8 +90,8 @@ ACは組み込みsample-bddまたは`trust: "acceptance"`と`trustedScript`で�
 
 | adapter | 未生成判定marker | 接続予定 |
 | --- | --- | --- |
-| rails | apps/api/Gemfile | RSpec / RuboCop / Brakeman / OpenAPI |
-| expo | apps/mobile/package.json | TypeScript / ESLint / RNTL / Storybook / Maestro |
+| rails | apps/api/Gemfile | 接続済み: Docker Compose経由でbuild / db:prepare / RSpec / RuboCop / Brakeman / Bundler Audit / Zeitwerk。ACは`api-acceptance`。OpenAPI contractは未接続 |
+| expo | apps/mobile/package.json | 接続済み: install / TypeScript / Biome / Jest + RNTL / expo-doctor。ACは`mobile-acceptance`。Maestroはローカルのみ |
 | admin | apps/admin/package.json | 接続済み: install / TypeScript / Biome / Vitest + RTL / build。ACは`admin-acceptance` |
 
 markerなしでallowMissing=trueかつそのACを要求しないアプリだけ、対象外としてSKIPできる。
