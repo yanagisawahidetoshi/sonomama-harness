@@ -621,6 +621,24 @@ describe('API Schema Approval', () => {
       await approve(root, 'alice', 'REVOKE'); await approve(root, 'bob', 'REVOKE');
       assert.equal((await plan(root)).status, 'REVIEW_READY');
     })));
+    it('when an approver later requests changes then the approval status drops but the planner still refuses to regenerate until a REVOKE', () => fixture(root => mockGitHub({}, async github => {
+      await approvedTwice(root, github);
+      await approve(root, 'alice', 'REQUEST_CHANGES');
+      assert.equal((await status(root)).status, 'NOT_APPROVED', 'the request for changes lowers the approval status');
+      await unchanged(root, () => assert.rejects(plan(root), /REVOKE/));
+    })));
+    it('when every approver requests changes instead of revoking then the planner still refuses to regenerate', () => fixture(root => mockGitHub({}, async github => {
+      await approvedTwice(root, github);
+      await approve(root, 'alice', 'REQUEST_CHANGES'); await approve(root, 'bob', 'REQUEST_CHANGES');
+      assert.deepEqual([(await status(root)).status, (await status(root)).approvals], ['NOT_APPROVED', 0]);
+      await unchanged(root, () => assert.rejects(plan(root), /REVOKE/));
+    })));
+    it('when every approver requests changes and then revokes then the planner regenerates the proposal', () => fixture(root => mockGitHub({}, async github => {
+      await approvedTwice(root, github);
+      await approve(root, 'alice', 'REQUEST_CHANGES'); await approve(root, 'bob', 'REQUEST_CHANGES');
+      await approve(root, 'alice', 'REVOKE'); await approve(root, 'bob', 'REVOKE');
+      assert.equal((await plan(root)).status, 'REVIEW_READY');
+    })));
     it('when the working tree is dirty then the approval status counts no valid approval while the ledger still lists the unrevoked approvers', () => fixture(root => mockGitHub({}, async github => {
       await approvedTwice(root, github);
       await writeFile(join(proposalDir(root), 'notes.md'), 'reviewer memo\n');
