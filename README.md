@@ -419,7 +419,7 @@ GitHub Issue → 既存OpenAPI（packages/api-schema）→ API Schema Planner（
 ```
 
 providerはOpenAPIそのものではなく、閉じたJSON（endpoint・component・propertyの配列）を返す。
-OpenAPIへの変換、Cognito JWTのsecurityScheme、共通Error schemaはHarnessが持つ。
+OpenAPIへの変換、Bearer JWTのsecurityScheme（認証Provider非依存）、共通Error schemaはHarnessが持つ。
 Quality Judgeは決定的なルールで構造・認証認可・Security Impact・秘密値・既存endpointとの衝突を検査し、破壊的変更の候補を列挙する。
 
 `modify`で既存の内容が消える場合は、既存OpenAPIとの構造差分から破壊的変更の候補として必ず表示する。

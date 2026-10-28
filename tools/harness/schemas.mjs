@@ -91,7 +91,7 @@ export const apiPropertySchema = z.strictObject({
 });
 export const apiEndpointSchema = z.strictObject({
   method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']), path: z.string().max(200), operationId: word, summary: sentence, tags: z.array(word).max(10),
-  change: z.enum(['add', 'modify', 'remove']), authN: z.enum(['cognito-jwt', 'public']), authZ: z.strictObject({ roles: z.array(word).max(10), rule: maybe(sentence) }),
+  change: z.enum(['add', 'modify', 'remove']), authN: z.enum(['bearer-jwt', 'public']), authZ: z.strictObject({ roles: z.array(word).max(10), rule: maybe(sentence) }),
   pii: z.boolean(), logCaution: z.array(sentence).max(10),
   parameters: z.array(z.strictObject({ name: z.string().max(64), in: z.enum(['path', 'query', 'header']), required: z.boolean(), description: sentence, type: z.enum(scalarTypes), format: maybe(z.string().max(40)), enum: enumValues, example: maybe(z.string().max(200)) })).max(20),
   requestBody: maybe(z.strictObject({ ...bodyRef, required: z.boolean() })),
@@ -115,7 +115,7 @@ const propertyJson = object({
 });
 const endpointJson = object({
   method: { type: 'string', enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] }, path: { type: 'string' }, operationId: { type: 'string' }, summary: { type: 'string' }, tags: strings,
-  change: { type: 'string', enum: ['add', 'modify', 'remove'] }, authN: { type: 'string', enum: ['cognito-jwt', 'public'] }, authZ: object({ roles: strings, rule: nullableString }),
+  change: { type: 'string', enum: ['add', 'modify', 'remove'] }, authN: { type: 'string', enum: ['bearer-jwt', 'public'] }, authZ: object({ roles: strings, rule: nullableString }),
   pii: { type: 'boolean' }, logCaution: strings,
   parameters: { type: 'array', items: object({ name: { type: 'string' }, in: { type: 'string', enum: ['path', 'query', 'header'] }, required: { type: 'boolean' }, description: { type: 'string' }, type: { type: 'string', enum: scalarTypes }, format: nullableString, enum: enumJson, example: nullableString }) },
   requestBody: nullable(object({ ...bodyRefJson, required: { type: 'boolean' } })),
