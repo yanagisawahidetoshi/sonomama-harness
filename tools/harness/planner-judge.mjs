@@ -19,7 +19,8 @@ export function judgePlan(sbis, { securityCategories = null } = {}) {
     if (!sbi.scope.included.length || sbi.scope.included.some(blank)) add(sbi.id, 'scope-blank', '対象範囲が空です');
     if (sbi.scope.excluded.some(blank)) add(sbi.id, 'scope-blank', '対象範囲（対象外）に空の項目があります');
     if (sbi.acceptanceCriteria.length > limits.acceptanceCriteria) add(sbi.id, 'granularity', `粒度が過大です: 受け入れ要件が${sbi.acceptanceCriteria.length}件（上限${limits.acceptanceCriteria}）`);
-    if (sbi.changeAreas.length > limits.changeAreas) add(sbi.id, 'granularity', `粒度が過大です: 想定変更範囲が${sbi.changeAreas.length}領域（上限${limits.changeAreas}）`);
+    // Validation runs one E2E across the whole PBI, so only implementation SBIs are bounded by change areas.
+    if (sbi.kind === 'implementation' && sbi.changeAreas.length > limits.changeAreas) add(sbi.id, 'granularity', `粒度が過大です: 想定変更範囲が${sbi.changeAreas.length}領域（上限${limits.changeAreas}）`);
     if (sbi.scenarios.length > limits.scenarios) add(sbi.id, 'granularity', `粒度が過大です: Scenarioが${sbi.scenarios.length}件（上限${limits.scenarios}）`);
     const sentences = sbi.purpose.split(sentenceEnd).filter(part => part.trim()).length;
     if (sentences > limits.purposeSentences) add(sbi.id, 'single-purpose', `目的が1つに絞られていません（${sentences}文。${limits.purposeSentences}文以内）`);
@@ -48,7 +49,8 @@ export function judgePlan(sbis, { securityCategories = null } = {}) {
       if (dependency === sbi.id) add(sbi.id, 'dependency-self', '依存SBIが自分自身を指しています');
       else if (!ids.includes(dependency)) add(sbi.id, 'dependency-unknown', `依存SBI ${dependency} が存在しません`);
     }
-    if (!sbi.changeAreas.length || sbi.changeAreas.some(blank)) add(sbi.id, 'change-areas', '想定変更範囲が空です');
+    // An acceptance SBI is a human check and changes no code.
+    if ((sbi.kind !== 'acceptance' && !sbi.changeAreas.length) || sbi.changeAreas.some(blank)) add(sbi.id, 'change-areas', '想定変更範囲が空です');
     const categories = sbi.securityImpact.filter(category => category !== 'None');
     if (sbi.securityImpact.some(blank)) add(sbi.id, 'security-blank', 'Security Impactに空の項目があります');
     if (categories.length && sbi.securityImpact.includes('None')) add(sbi.id, 'security-mixed', 'Security ImpactにNoneと分類が混在しています');
@@ -58,8 +60,33 @@ export function judgePlan(sbis, { securityCategories = null } = {}) {
       if (blank(sbi.verification[key])) add(sbi.id, 'verification', `検証方法（${label}）が未記載です`);
     }
   }
+  judgeKinds(sbis, add);
   for (const cycle of dependencyCycles(sbis)) add(cycle[0], 'dependency-cycle', `依存SBIが循環しています: ${cycle.join(' → ')}`);
   return { status: findings.length ? 'FAIL' : 'PASS', findings };
+}
+
+// A PBI completes only through: every implementation SBI → one validation SBI → one acceptance SBI.
+function judgeKinds(sbis, add) {
+  const of = kind => sbis.filter(s => s.kind === kind);
+  const implementations = of('implementation').map(s => s.id), validations = of('validation'), acceptances = of('acceptance');
+  if (!implementations.length) add('*', 'kind-implementation', '実装SBI（implementation）がありません');
+  for (const [list, label, kind] of [[validations, '最終確認SBI', 'validation'], [acceptances, '人間確認SBI', 'acceptance']]) {
+    if (list.length !== 1) add('*', `kind-${kind}`, `${label}（${kind}）が${list.length}件です。PBIごとに1件必要です`);
+  }
+  for (const sbi of of('implementation')) {
+    const later = sbi.dependsOn.filter(id => sbis.some(s => s.id === id && s.kind !== 'implementation'));
+    if (later.length) add(sbi.id, 'kind-dependency', `実装SBIが最終確認・人間確認SBI（${later.join(', ')}）に依存しています`);
+  }
+  for (const sbi of validations) {
+    const missing = implementations.filter(id => !sbi.dependsOn.includes(id));
+    const extra = sbi.dependsOn.filter(id => !implementations.includes(id));
+    if (missing.length) add(sbi.id, 'kind-dependency', `最終確認SBIはすべての実装SBIに依存してください（不足: ${missing.join(', ')}）`);
+    if (extra.length) add(sbi.id, 'kind-dependency', `最終確認SBIは実装SBIだけに依存してください（${extra.join(', ')}）`);
+  }
+  for (const sbi of acceptances) {
+    const expected = validations.map(s => s.id);
+    if (sbi.dependsOn.length !== expected.length || !expected.every(id => sbi.dependsOn.includes(id))) add(sbi.id, 'kind-dependency', `人間確認SBIは最終確認SBI（${expected.join(', ') || 'なし'}）だけに依存してください`);
+  }
 }
 
 function dependencyCycles(sbis) {

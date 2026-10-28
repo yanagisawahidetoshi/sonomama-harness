@@ -2,7 +2,8 @@ import { securityPassed } from './security-enforcement.mjs';
 import { checksPassed } from './verifier.mjs';
 export function judge(result, sbi) {
   const { verification, review, security, semanticReview, securityVerification, gateApproved } = result;
-  return Boolean(verification?.status === 'PASS' && review?.status === 'PASS'
+  // An acceptance SBI is completed only by a human record; passing checks never complete it.
+  return Boolean(sbi.kind !== 'acceptance' && verification?.status === 'PASS' && review?.status === 'PASS'
     && security?.status === 'PASS' && securityPassed(securityVerification) && gateApproved === true
     && (!result.headSha || securityVerification.headSha === result.headSha)
     && (!semanticReview?.enabled || semanticReview.status === 'PASS')

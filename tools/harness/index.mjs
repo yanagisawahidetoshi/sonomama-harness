@@ -244,6 +244,7 @@ async function runProtected({ root, provider, sbiPath, quiet = false, agent = ru
   root = await realpath(root);
   const { config, rules, sbi, riskPolicy, securityPolicy, humanGates, securityDocuments, lanePolicy } = await check(root, sbiPath);
   assertSafeInput({config,rules,sbi,riskPolicy,securityPolicy,humanGates,securityDocuments,lanePolicy});
+  if (sbi.kind === 'acceptance') throw new Error(`${sbi.id} は人間確認SBI（acceptance）です。Execution Harnessでは実行せず、人間の承認だけで完了します`);
   provider ??= config.provider;
   if (!['fake', 'codex', 'claude'].includes(provider)) throw new Error(`Unknown provider: ${provider}`);
   const id = `${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`;
