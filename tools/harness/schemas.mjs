@@ -1,18 +1,21 @@
 import { z } from 'zod';
 const text = z.string().min(1);
 export const relativePath = text.refine(p => !p.startsWith('/') && !p.includes('\\') && p.split('/').every(s => s !== '..' && s !== '.' && s !== ''), 'unsafe relative path');
+// A directory scope ends with '/' so it can never be read as a file name, and allowedFiles keeps meaning exactly those files.
+export const directoryPath = text.refine(p => p.endsWith('/') && relativePath.safeParse(p.slice(0, -1)).success, 'directory scope must be a safe relative path ending with /');
 export const sbiSchema = z.strictObject({
   id: text.regex(/^[A-Za-z0-9_-]+$/), title: text, description: text,
   gherkin: text.refine(s => ['Feature:', 'Scenario:', 'Given ', 'When ', 'Then '].every(k => s.includes(k)), 'BDD/Gherkin required'),
   acceptanceCriteria: z.array(z.strictObject({ id: text, description: text, verifier: text })).min(1),
-  allowedFiles: z.array(relativePath).min(1), risks: z.array(text),
+  allowedFiles: z.array(relativePath).default([]), allowedDirs: z.array(directoryPath).default([]), risks: z.array(text),
   ambiguous: z.boolean(), requiresDesignDecision: z.boolean(),
   securityImpact: z.array(text).default([]), requiredSecurityRules: z.array(text).default([]),
   requiredVerifiers: z.array(text).default([]), affectedAreas: z.array(text).default([]), preImplementationGate: z.boolean().default(false),
   promotion: z.strictObject({ source: relativePath.refine(p => /^prototypes\/(web|mobile)(\/|$)/.test(p)), designApproval: z.null().optional() }).optional(),
   minimumRiskLevel: z.union([z.literal(2), z.literal(3)]).default(2),
   issueUrl: z.url().optional(),
-}).refine(s => new Set(s.acceptanceCriteria.map(a => a.id)).size === s.acceptanceCriteria.length, 'duplicate acceptance criteria');
+}).refine(s => new Set(s.acceptanceCriteria.map(a => a.id)).size === s.acceptanceCriteria.length, 'duplicate acceptance criteria')
+  .refine(s => s.allowedFiles.length + s.allowedDirs.length > 0, 'allowedFiles or allowedDirs required');
 // Run IDs name directories and refs; the same pattern guards run-store paths.
 export const runIdSchema = text.regex(/^[A-Za-z0-9][A-Za-z0-9_-]{1,150}$/);
 const sha256 = z.string().regex(/^[0-9a-f]{64}$/);
@@ -38,6 +41,8 @@ export const configSchema = z.strictObject({
     lanes: z.array(z.enum(['prototype', 'production'])).default(['prototype', 'production']),
     trust: z.enum(['application', 'acceptance']).default('application'),
     trustedScript: relativePath.optional(),
+    // Trusted Acceptance a human registered for one SBI Issue; its acceptanceIds are that Issue's acceptance criteria.
+    sbiIssue: z.number().int().positive().optional(),
     areas: z.array(text).default([]),
   })).min(1),
   // SBI Impact Analysis: cross-layer contracts added when areas meet, and paths whose change runs the Full Gate.
