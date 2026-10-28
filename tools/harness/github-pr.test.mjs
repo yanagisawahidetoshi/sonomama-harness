@@ -523,6 +523,12 @@ describe('GitHub PR Adapter', () => {
       await github.update(s => { s.issue.number = 99; });
       assert.equal((await resumeRun({ root, runId: run.id, quiet: true })).risk.level, 3);
     })));
+    it('when another SBI runs with --full after Issue #7 registered its Trusted Acceptance then that acceptance is not run for it', () => fixture(root => withIssue(root, sbiIssue(), async () => {
+      const run = await startRun({ root, quiet: true, provider: 'fake', full: true });
+      const check = run.iterations.at(-1).verification.checks.find(c => c.id === 'issue-7-acceptance');
+      assert.deepEqual([check.status, check.required], ['SKIP', false]);
+      assert.equal(run.executionStatus, 'DONE');
+    })));
     for (const labels of [['sbi', 'needs-review'], ['ready']]) {
       it(`when the Issue is labelled ${labels.join(' + ')} then no run, workspace or PR is created`, () => fixture(root => withIssue(root, sbiIssue(labels), async ({ github }) => {
         await assert.rejects(start(root), /ready|sbi label|needs-review/);
