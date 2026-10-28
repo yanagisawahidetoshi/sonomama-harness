@@ -2,10 +2,11 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { fixture, update, human, runFixture as runHarness } from './test-fixture.mjs';
+import { fixture, update, human, commitFixture, runFixture as runHarness } from './test-fixture.mjs';
 import { inspectMigration, checkMigrations } from './migration-safety.mjs';
 import { classifySecurity } from './security-enforcement.mjs';
 import { resumeRun } from './index.mjs';
+import { runVerifier } from './impact.mjs';
 import { recordDecision } from './human-approvals.mjs';
 import { execute, readJson } from './io.mjs';
 
@@ -182,6 +183,45 @@ describe('migration-safety in the execution loop', () => {
       assert.notEqual(resumed.executionStatus, 'DONE');
       const evidence = await readJson(join(root, run.runDir, 'security-verification.json'));
       assert.equal(evidence.checks.find(c => c.id === 'migration-safety').status, 'FAIL');
+    }));
+  });
+});
+
+describe('migration-safety in the CI verifier matrix', () => {
+  // The CI matrix job runs `harness:verify --verifier migration-safety`; the database commands are replaced with the static step to stay hermetic.
+  const pullRequest = async (root, content, commands = [[process.execPath, script]]) => {
+    await update(root, '.harness/config/harness.json', c => { c.securityVerifiers.find(v => v.id === 'migration-safety').commands = commands; });
+    await commitFixture(root);
+    await mkdir(join(root, 'apps/api/db/migrate'), { recursive: true });
+    await writeFile(join(root, migrationPath), content);
+    const sample = await readJson(join(root, '.harness/state/sample-sbi.json'));
+    await writeFile(join(root, '.harness/state/sbi-migration.json'), JSON.stringify({ ...sample, id: 'SBI-MIGRATION', allowedFiles: [migrationPath], securityImpact: ['Migration'], requiredVerifiers: ['migration-safety'] }));
+    await commitFixture(root);
+  };
+  const matrix = (root, args = []) => execute(process.execPath, ['tools/harness/cli.mjs', 'verify', '--verifier', 'migration-safety', '--base', 'HEAD~1', ...args], { cwd: root });
+  describe('given a Production pull request whose SBI makes Impact Analysis require migration-safety', () => {
+    it('when the migration is safe then the matrix job runs migration-safety and PASSes instead of reporting NOT_CONFIGURED', () => fixture(async root => {
+      await pullRequest(root, safe);
+      const { impact, result, passed } = await runVerifier({ root, base: 'HEAD~1', id: 'migration-safety' });
+      assert.ok(impact.requiredVerifiers.includes('migration-safety'));
+      assert.deepEqual(result.checks.map(c => [c.id, c.status]), [['migration-safety', 'PASS']]);
+      assert.equal(passed, true);
+      assert.equal((await matrix(root)).code, 0);
+    }));
+    it('when the migration drops a table then the matrix job FAILs with the dangerous operation', () => fixture(async root => {
+      await pullRequest(root, migration('    drop_table :probes'));
+      const { result, passed } = await runVerifier({ root, base: 'HEAD~1', id: 'migration-safety' });
+      assert.deepEqual(result.checks.map(c => [c.id, c.status]), [['migration-safety', 'FAIL']]);
+      assert.equal(passed, false);
+      const cli = await matrix(root);
+      assert.equal(cli.code, 1);
+      assert.match(cli.stdout + cli.stderr, /drop_table/);
+    }));
+    it('when migration-safety has no commands then the matrix job reports NOT_CONFIGURED and fails instead of passing', () => fixture(async root => {
+      await pullRequest(root, safe, []);
+      const { result, passed } = await runVerifier({ root, base: 'HEAD~1', id: 'migration-safety' });
+      assert.deepEqual(result.checks.map(c => [c.id, c.status]), [['migration-safety', 'NOT_CONFIGURED']]);
+      assert.equal(passed, false);
     }));
   });
 });
