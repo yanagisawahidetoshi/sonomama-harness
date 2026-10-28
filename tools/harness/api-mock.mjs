@@ -17,7 +17,7 @@ export const mockPort = 4010;
 const prismBin = fileURLToPath(new URL('../../node_modules/.bin/prism', import.meta.url));
 
 // Prism resolves every $ref; anything but a local pointer could fetch a remote document.
-function externalRefs(value, found = []) {
+export function externalRefs(value, found = []) {
   if (Array.isArray(value)) value.forEach(entry => externalRefs(entry, found));
   else if (value && typeof value === 'object') for (const [key, entry] of Object.entries(value)) {
     if (key === '$ref' && typeof entry === 'string' && !entry.startsWith('#')) found.push(entry);

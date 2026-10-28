@@ -7,13 +7,14 @@ import { planIssue } from './planner.mjs';
 import { planApiSchema } from './api-schema-planner.mjs';
 import { recordApiSchemaDecision, apiSchemaApprovalStatus } from './api-schema-approval.mjs';
 import { startApiMock } from './api-mock.mjs';
+import { startApiDocs } from './api-docs.mjs';
 import { relativePath } from './schemas.mjs';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 await withEvidenceProtection(root, async () => {
 try {
   const [command, ...args] = process.argv.slice(2);
-  const allowed = { check: ['--sbi'], demo: ['--sbi', '--full'], run: ['--provider', '--sbi', '--full'], plan: ['--provider'], 'api-schema': ['--provider'], 'api-schema-approve': ['--decision'], 'api-schema-status': [], 'api-mock': ['--dynamic'], cleanup:['--run'], resume: ['--run'], pr: ['--run'], approve: ['--run', '--phase', '--decision'], export: ['--run','--out'] };
-  if (!allowed[command]) throw new Error('Usage: check | demo [--full] | run [--full] | plan ISSUE_URL [--provider codex|claude] | api-schema ISSUE_URL [--provider codex|claude] | api-schema-approve ISSUE_URL [--decision approve|revoke|request-changes] | api-schema-status ISSUE_URL | api-mock ISSUE_URL [--dynamic] | cleanup --run ID | resume --run ID | pr --run ID | approve --run ID --phase gate|design|merge [--decision approve|revoke|request-changes]');
+  const allowed = { check: ['--sbi'], demo: ['--sbi', '--full'], run: ['--provider', '--sbi', '--full'], plan: ['--provider'], 'api-schema': ['--provider'], 'api-schema-approve': ['--decision'], 'api-schema-status': [], 'api-mock': ['--dynamic'], 'api-docs': ['--port'], cleanup:['--run'], resume: ['--run'], pr: ['--run'], approve: ['--run', '--phase', '--decision'], export: ['--run','--out'] };
+  if (!allowed[command]) throw new Error('Usage: check | demo [--full] | run [--full] | plan ISSUE_URL [--provider codex|claude] | api-schema ISSUE_URL [--provider codex|claude] | api-schema-approve ISSUE_URL [--decision approve|revoke|request-changes] | api-schema-status ISSUE_URL | api-mock ISSUE_URL [--dynamic] | api-docs [--port PORT] | cleanup --run ID | resume --run ID | pr --run ID | approve --run ID --phase gate|design|merge [--decision approve|revoke|request-changes]');
   const options = {};
   const positional = ['plan', 'api-schema', 'api-schema-approve', 'api-schema-status', 'api-mock'].includes(command) && args.length && !args[0].startsWith('--') ? args.shift() : null;
   for (let i = 0; i < args.length; i += 2) {
@@ -49,6 +50,16 @@ try {
     const mock = await startApiMock({ root, issueUrl: positional, dynamic: options['--dynamic'] === true });
     console.log(`API Mock: ${mock.url} (${mock.schemaPath} digest=${mock.digest})`);
     process.exitCode = await new Promise(resolve => mock.child.on('exit', code => resolve(code ?? 0)).on('error', () => resolve(1)));
+  } else if (command === 'api-docs') {
+    if (options['--port'] && !/^\d+$/.test(options['--port'])) throw new Error('api-docs --port requires a port number');
+    const port = options['--port'] ? Number(options['--port']) : undefined;
+    if (port !== undefined && (port < 1 || port > 65535)) throw new Error('api-docs --port requires a port number');
+    const docs = await startApiDocs({ root, port });
+    console.log(`API Docs: ${docs.url} (${docs.schemaPath}; Try it outは無効。Ctrl+Cで停止)`);
+    await new Promise(resolve => {
+      docs.server.on('close', resolve);
+      process.once('SIGINT', () => { docs.server.close(); docs.server.closeAllConnections(); });
+    });
   } else if (command === 'pr') {
     if (!options['--run']) throw new Error('pr requires --run ID');
     const run = await openPullRequest({ root, runId: options['--run'] });
