@@ -4,6 +4,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SOURCE = /\.(ts|tsx|js|jsx|mjs)$/;
+const DECLARATION = /\.d(\.ts)?$/;
 const IMPORT = /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)['"]([^'"]+)['"]/g;
 
 const sourceFiles = (dir, out = []) => {
@@ -15,7 +16,8 @@ const sourceFiles = (dir, out = []) => {
   return out;
 };
 
-// main.tsx boots the app, so it belongs to the app layer. Other top-level files (test setup, d.ts) are not layered.
+// main.tsx boots the app, so it belongs to the app layer. The test setup and d.ts files are explicitly not layered.
+// Any other top-level path is an unknown layer, so it cannot be used to bypass the rules below.
 const layerOf = (src, path) => {
   const [first, second, ...rest] = relative(src, path).split('/');
   if (first === 'features')
@@ -25,7 +27,8 @@ const layerOf = (src, path) => {
       internal: rest.length > 0 && !/^index(\.tsx?)?$/.test(rest.join('/')),
     };
   if (['app', 'shared', 'providers'].includes(first)) return { layer: first };
-  return { layer: /^main\.(t|j)sx?$/.test(first) ? 'app' : 'other' };
+  if (/^main\.(t|j)sx?$/.test(first)) return { layer: 'app' };
+  return { layer: first === 'test' || DECLARATION.test(first) ? 'non-layer' : 'unknown' };
 };
 
 const resolveImport = (src, from, specifier) => {
@@ -35,10 +38,13 @@ const resolveImport = (src, from, specifier) => {
 };
 
 const ruleFor = (from, to) => {
+  if (from.layer === 'non-layer') return null;
+  if (from.layer === 'unknown' || to.layer === 'unknown') return 'unknown top-level layer';
+  if (to.layer === 'non-layer') return 'layered → non-layer file';
   if (from.layer === 'features' && to.layer === 'features')
     return from.feature === to.feature ? null : 'features/A → features/B';
   if (from.layer === 'features' && (to.layer === 'app' || to.layer === 'providers')) return `features → ${to.layer}`;
-  if (from.layer === 'shared' && to.layer !== 'shared' && to.layer !== 'other') return `shared → ${to.layer}`;
+  if (from.layer === 'shared' && to.layer !== 'shared') return `shared → ${to.layer}`;
   if (from.layer === 'providers' && (to.layer === 'app' || to.layer === 'features')) return `providers → ${to.layer}`;
   if (from.layer === 'app' && to.layer === 'features' && to.internal) return 'app → features/<feature>/index.ts only';
   return null;
