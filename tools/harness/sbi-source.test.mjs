@@ -26,6 +26,7 @@ const snapshot = (overrides = {}) => ({ ...snapshotFromIssue({ ref, issue: ready
 const trailers = (s = snapshot()) => `\n\nHarness-Run: ${s.runId}\nSBI-Issue: ${s.source.url}`;
 const admin = 'apps/admin/src/features/home/index.ts';
 const passingSecurity = { status: 'PASS', requiredVerifiers: [], checks: [], violations: [] };
+const mockGitHub = githubMock({ issue: readyIssue });
 const needs = { impact: { result: 'success' }, verifiers: { result: 'success' }, 'harness-test': { result: 'skipped' }, 'harness-demo': { result: 'skipped' } };
 
 // A bare Git repository with one base commit; the PR commits are added on top of it.
@@ -127,8 +128,6 @@ describe('Source SBI Issue judgement', () => {
 });
 
 describe('Source SBI verification in the PR', () => {
-  const mockGitHub = githubMock({ issue: readyIssue });
-
   describe('given a Production change with the snapshot and the Run trailers', () => {
     it('when the source Issue is ready then passes and records the source and Run for the CI log', () => mockGitHub({}, () => repository(async root => {
       const files = await commit(root, { [admin]: 'export {};', [snapshotPath(snapshot())]: snapshot() }, `feat: home${trailers()}`);
