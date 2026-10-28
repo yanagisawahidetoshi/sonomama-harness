@@ -56,3 +56,14 @@ Production（`apps/`・`packages/`と`.harness/config/lanes.json`の`productionP
 pnpm harness:impact --base origin/main
 pnpm harness:verify --verifier admin --base origin/main
 ```
+
+## pre-pushとの分担
+
+`.githooks/pre-push`は`harness:check`と`harness:push-gate`を呼ぶだけで、Verifierの一覧を持たない。`harness:push-gate`がgitから渡されたpush先のcommitをbaseに`harness:impact`と同じ判定を行い、required verifierを順に実行する。新しいbranchは`origin/main`と比べる。
+
+次の場合はFull Gateとして`harness:test`全件を実行する。
+
+- `impact.fullGate`のパスが変わった
+- 複数のrefを同時にpushした、pushするcommitがHEADではない、push先のcommitが手元に無い、比較するbaseが無い、refを読めない
+
+hookはローカルの早期検出用で、回避できる。SBI必須・Trusted Acceptance・Security・`harness:demo --full`はCIのCompletion Judgeが最終判定する。
