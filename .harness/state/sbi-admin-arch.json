@@ -1,0 +1,146 @@
+{
+  "id": "SBI-ADMIN-ARCH",
+  "title": "管理画面ReactのFEアーキテクチャ雛形（app → features → shared）を apps/admin に構築する",
+  "description": "Issue #32。apps/adminをapp / features / shared / providersに分け、app → features → sharedの依存方向とfeature間直接依存の禁止をdocs/architecture/admin-frontend.mdに定義し、決定的なarchitecture checkをadmin verifierから実行する。業務画面・認証・認可・OpenAPI code generationは実装しない。",
+  "gherkin": "Feature: 管理画面のFEアーキテクチャ\n  Scenario: 依存方向を守ったコードはPASSする\n    Given apps/admin/srcがapp → features → sharedの依存だけを持つ\n    When pnpm --filter admin run check:architecture を実行する\n    Then PASSする\n  Scenario: 禁止依存はFAILする\n    Given features/A → features/B、shared → features、shared → appのimportを含むfixtureがある\n    When architecture checkを実行する\n    Then 違反したファイルとimportを示してFAILする\n  Scenario: Harnessから検証できる\n    Given harness.jsonのadmin verifierにarchitecture checkが登録されている\n    When Harnessがapps/adminの変更を検証する\n    Then typecheck / Biome / Vitest / build / architecture checkが実行される",
+  "acceptanceCriteria": [
+    {
+      "id": "ADMIN-ARCH-AC-1",
+      "description": "#20のReact環境を前提としてapps/adminにFEアーキテクチャ雛形が存在する",
+      "verifier": "admin-arch-acceptance"
+    },
+    {
+      "id": "ADMIN-ARCH-AC-2",
+      "description": "app / features / shared / providersの責務が明確になっている",
+      "verifier": "admin-arch-acceptance"
+    },
+    {
+      "id": "ADMIN-ARCH-AC-3",
+      "description": "apps/adminとapps/mobileの責務が分離されている",
+      "verifier": "admin-arch-acceptance"
+    },
+    {
+      "id": "ADMIN-ARCH-AC-4",
+      "description": "app → features → sharedの依存方向が定義されている",
+      "verifier": "admin-arch-acceptance"
+    },
+    {
+      "id": "ADMIN-ARCH-AC-5",
+      "description": "feature間の直接依存が禁止されている",
+      "verifier": "admin-arch-acceptance"
+    },
+    {
+      "id": "ADMIN-ARCH-AC-6",
+      "description": "Route componentが薄い構造になっている",
+      "verifier": "admin-arch-acceptance"
+    },
+    {
+      "id": "ADMIN-ARCH-AC-7",
+      "description": "Feature標準構成が定義されている",
+      "verifier": "admin-arch-acceptance"
+    },
+    {
+      "id": "ADMIN-ARCH-AC-8",
+      "description": "sharedへの昇格ルールが定義されている",
+      "verifier": "admin-arch-acceptance"
+    },
+    {
+      "id": "ADMIN-ARCH-AC-9",
+      "description": "Server StateはTanStack Query、FormはReact Hook Form、ValidationはZod、Local UIはReact標準stateを基本とする",
+      "verifier": "admin-arch-acceptance"
+    },
+    {
+      "id": "ADMIN-ARCH-AC-10",
+      "description": "Redux / Zustand等を理由なく導入していない",
+      "verifier": "admin-arch-acceptance"
+    },
+    {
+      "id": "ADMIN-ARCH-AC-11",
+      "description": "Componentからraw Axios / fetchを直接呼ばない境界が定義されている",
+      "verifier": "admin-arch-acceptance"
+    },
+    {
+      "id": "ADMIN-ARCH-AC-12",
+      "description": "roleごとに同一業務Featureを不用意に複製しない方針が明記されている",
+      "verifier": "admin-arch-acceptance"
+    },
+    {
+      "id": "ADMIN-ARCH-AC-13",
+      "description": "Frontendの表示制御をBackend認可の代替にしないことが明記されている",
+      "verifier": "admin-arch-acceptance"
+    },
+    {
+      "id": "ADMIN-ARCH-AC-14",
+      "description": "TypeScript path aliasが利用できる",
+      "verifier": "admin-arch-acceptance"
+    },
+    {
+      "id": "ADMIN-ARCH-AC-15",
+      "description": "docs/architecture/admin-frontend.mdが存在する",
+      "verifier": "admin-arch-acceptance"
+    },
+    {
+      "id": "ADMIN-ARCH-AC-16",
+      "description": "AGENTS.mdとArchitecture Contractに矛盾がない",
+      "verifier": "admin-arch-acceptance"
+    },
+    {
+      "id": "ADMIN-ARCH-AC-17",
+      "description": "feature間直接依存等を機械的に検出するarchitecture checkが存在する",
+      "verifier": "admin-arch-acceptance"
+    },
+    {
+      "id": "ADMIN-ARCH-AC-18",
+      "description": "architecture checkをHarness admin verifierから実行できる",
+      "verifier": "admin-arch-acceptance"
+    },
+    {
+      "id": "ADMIN-ARCH-AC-19",
+      "description": "正常な依存でarchitecture checkがPASSする",
+      "verifier": "admin-arch-acceptance"
+    },
+    {
+      "id": "ADMIN-ARCH-AC-20",
+      "description": "禁止依存をfixture / test等で与えた場合にarchitecture checkがFAILすることを確認できる",
+      "verifier": "admin-arch-acceptance"
+    },
+    {
+      "id": "ADMIN-ARCH-AC-21",
+      "description": "typecheck / Biome / Vitest / buildがPASSする",
+      "verifier": "admin-arch-acceptance"
+    }
+  ],
+  "allowedFiles": [
+    "apps/admin/package.json",
+    "apps/admin/tsconfig.app.json",
+    "apps/admin/vite.config.ts",
+    "apps/admin/src/main.tsx",
+    "apps/admin/src/app/App.tsx",
+    "apps/admin/src/app/router.tsx",
+    "apps/admin/src/app/providers.tsx",
+    "apps/admin/src/app/HomePage/index.tsx",
+    "apps/admin/src/app/HomePage/index.test.tsx",
+    "apps/admin/src/features/home/index.ts",
+    "apps/admin/src/features/home/pages/HomePage/index.tsx",
+    "apps/admin/src/features/home/pages/HomePage/HomePage.test.tsx",
+    "apps/admin/src/shared/components/PageHeading/index.tsx",
+    "apps/admin/src/shared/components/PageHeading/PageHeading.test.tsx",
+    "apps/admin/src/providers/QueryProvider/index.tsx",
+    "apps/admin/src/providers/QueryProvider/QueryProvider.test.tsx",
+    "apps/admin/scripts/check-architecture.mjs",
+    "apps/admin/scripts/check-architecture.test.mjs",
+    "docs/architecture/admin-frontend.md"
+  ],
+  "risks": [
+    "既存のsrc/app/HomePageをfeatures配下へ移すため、#20のテストの置き場所が変わる"
+  ],
+  "ambiguous": false,
+  "requiresDesignDecision": false,
+  "securityImpact": [],
+  "requiredSecurityRules": [],
+  "requiredVerifiers": [
+    "admin"
+  ],
+  "preImplementationGate": false,
+  "minimumRiskLevel": 2
+}
