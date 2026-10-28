@@ -11,6 +11,7 @@ import { parse } from 'yaml';
 
 const config = await readJson(new URL('../../.harness/config/harness.json', import.meta.url));
 const workflow = parse(await readFile(new URL('../../.github/workflows/harness.yml', import.meta.url), 'utf8'));
+const compose = parse(await readFile(new URL('../../compose.yaml', import.meta.url), 'utf8'));
 const sbi = (affectedAreas, extra = {}) => ({ id: 'SBI-X', acceptanceCriteria: [{ id: 'X-AC-1', verifier: 'admin-acceptance' }], requiredVerifiers: [], affectedAreas, ...extra });
 const files = (...paths) => paths.map(path => ({ path }));
 const touched = { api: 'apps/api/app/models/lesson.rb', mobile: 'apps/mobile/src/features/home/index.ts', admin: 'apps/admin/src/features/home/index.ts' };
@@ -228,6 +229,39 @@ describe('CI workflow setup', () => {
         assert.equal(nodeCache(job), 'pnpm');
       });
     }
+  });
+
+  describe('given jobs that build the API image', () => {
+    const cacheDir = '/tmp/harness-build-cache';
+    const stepIndex = (job, prefix) => workflow.jobs[job].steps.findIndex(s => s.uses?.startsWith(prefix));
+    for (const job of ['verifiers', 'harness-demo']) {
+      it(`when ${job} sets up then restores the BuildKit layer cache keyed on every Dockerfile and Gemfile.lock before installing`, () => {
+        const cache = workflow.jobs[job].steps[stepIndex(job, 'actions/cache@')];
+        assert.ok(cache, 'actions/cache step');
+        assert.ok(stepIndex(job, 'actions/cache@') < stepIndex(job, 'pnpm/action-setup@'));
+        assert.equal(cache.with.path, cacheDir);
+        assert.match(cache.with.key, /hashFiles\('\*\*\/Dockerfile', '\*\*\/Gemfile\.lock'\)/);
+      });
+
+      it(`when ${job} builds through compose then imports and exports that cache`, () => {
+        assert.equal(workflow.jobs[job].env.HARNESS_BUILD_CACHE_FROM, `type=local,src=${cacheDir}`);
+        assert.equal(workflow.jobs[job].env.HARNESS_BUILD_CACHE_TO, `type=local,dest=${cacheDir},mode=max`);
+      });
+    }
+
+    for (const job of ['impact', 'harness-test', 'harness']) {
+      it(`when ${job} sets up then restores no build cache`, () => {
+        assert.equal(stepIndex(job, 'actions/cache@'), -1);
+        assert.equal(workflow.jobs[job].env?.HARNESS_BUILD_CACHE_FROM, undefined);
+      });
+    }
+
+    it('when compose builds the API image without the CI variables then it reads a missing cache and writes only an inline one', () => {
+      const build = compose.services.api.build;
+      assert.equal(build.context, './apps/api');
+      assert.deepEqual(build.cache_from, ['${HARNESS_BUILD_CACHE_FROM:-type=local,src=.no-build-cache}']);
+      assert.deepEqual(build.cache_to, ['${HARNESS_BUILD_CACHE_TO:-type=inline}']);
+    });
   });
 
   describe('given a faster setup', () => {
