@@ -141,7 +141,7 @@ export async function runCompletionJudge({ root, base, all = false, needs, repos
   const matrix = impact.requiredVerifiers.map(id => ({ id, status: needs.verifiers?.result === 'success' ? 'PASS' : 'FAIL', reason: `verifier matrix: ${needs.verifiers?.result ?? 'missing'}` }));
   const headSha = (await git(root, ['rev-parse', 'HEAD'])).stdout.trim();
   const security = await verifySecurity({ workspace: root, sbi: {}, assessment, policy, config, headSha, verification: { checks: [...checks, ...matrix] }, changed: await changedContent(root, files) });
-  const source = await verifySbiSource({ root, base, files, required: impact.sbiRequiredReasons, repository, github });
+  const source = await verifySbiSource({ root, base, files, required: impact.sbiRequiredReasons, config, repository, github });
   return { impact, acceptance, checks, security, source, ...judgeCi({ impact, needs, acceptance, security, source }) };
 }
 

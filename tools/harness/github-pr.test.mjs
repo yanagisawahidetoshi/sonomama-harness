@@ -535,8 +535,23 @@ describe('GitHub PR Adapter', () => {
       assert.equal(committed.runId, run.id);
       assert.deepEqual(await runLinks(workspace, run.baselineSha), [{ runId: run.id, url: issueUrl }]);
       const files = [{ path: home }, { path: '.harness/state/sbi-7.json' }];
-      const source = await verifySbiSource({ root: workspace, base: run.baselineSha, files, required: [`production:${home}`], repository: 'acme/app' });
+      // CI rebuilds the SBI with the harness.json of the PR head.
+      const source = await verifySbiSource({ root: workspace, base: run.baselineSha, files, required: [`production:${home}`], repository: 'acme/app', config: await readJson(join(workspace, '.harness/config/harness.json')) });
       assert.equal(source.status, 'PASS', source.reasons.join('; '));
+    })));
+    // harness.json holds the Trusted Acceptance of every SBI Issue. CI rebuilds this SBI from the registrations of Issue #7 only,
+    // while a local resume compares the whole harness.json with the one the run started with.
+    it('when another Issue registers its Trusted Acceptance after the run started then CI still rebuilds the same SBI, while a local resume stops because the source moved', () => fixture(root => withIssue(root, sbiIssue(), async () => {
+      const run = await start(root);
+      await update(root, '.harness/config/harness.json', c => { c.verifiers.push({ id: 'issue-8-acceptance', trust: 'acceptance', trustedScript: '.harness/verification/issue-7.mjs', directory: '.', planned: ['別Issue'], commands: [], acceptanceIds: ['AC-1'], sbiIssue: 8 }); });
+      await commitFixture(root);
+      const workspace = join(root, run.runDir, 'workspace');
+      const source = await verifySbiSource({ root: workspace, base: run.baselineSha, files: [{ path: home }, { path: '.harness/state/sbi-7.json' }], required: [`production:${home}`], repository: 'acme/app', config: await readJson(join(root, '.harness/config/harness.json')) });
+      assert.equal(source.status, 'PASS', source.reasons.join('; '));
+      // Locally any new commit on the source checkout stops the run, before harness.json is compared (ADR-0001: the tested SHA is the merge result only on its baseline).
+      const resumed = await resumeRun({ root, runId: run.id, quiet: true });
+      assert.equal(resumed.executionStatus, 'ESCALATED');
+      assert.match(resumed.reason, /source HEAD changed/);
     })));
     it('when the snapshot matches the ready Issue then the run is judged by its app change, not by where the snapshot is stored', () => fixture(root => withIssue(root, sbiIssue(), async () => {
       const run = await start(root);
