@@ -26,7 +26,20 @@ PBIは、すべてのSBIが完了し、PBI Human Acceptance Gateが承認され�
 ## SBI Issueの項目
 
 種類、ID / タイトル、目的、対象範囲（必要なら対象外）、受け入れ要件、Gherkin、依存SBI、想定変更範囲、
-Risk / Security Impact、検証方法、元PBI。詳細設計・関数名・実装手順・見積は含めない。
+レイヤー、想定変更ファイル数（目安超過なら理由）、Risk / Security Impact、検証方法、Gherkinと実テストの対応、元PBI。
+詳細設計・関数名・実装手順・見積は含めない。
+
+## SBIの粒度
+
+SBI Quality Judgeは次を検査し、満たさなければIssueを作成しない。
+
+| kind | レイヤー | 想定変更ファイル数 | 実テスト |
+| --- | --- | --- | --- |
+| implementation | 1つだけ。想定変更範囲が複数の`apps/*`にまたがればFAIL | 1以上。10を超えるなら分割できない理由が必須 | Application TestとScenarioごとのtestが必須。lint / typecheckだけや「不要」はFAIL |
+| validation | 制約なし（PBI全体を通す） | 制約なし | E2EとScenarioごとのtestが必須 |
+
+2時間の目安はPlannerの判断基準で、Judgeは機械判定しない。
+実装後PRの変更ファイル数を想定と比べる`judgeChangedFileCount`（10と想定の両方を超えたらFAIL）はあるが、Completion Judge・CIにはまだ組み込んでいない。
 
 ## 失敗時
 
