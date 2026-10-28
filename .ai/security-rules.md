@@ -18,7 +18,7 @@
 
 ## Verifier isolation
 
-- 実行境界は3つ。trusted Harness（ホスト、Credential・承認鍵・証跡を扱う）、trusted acceptance（ホストのNode permission model、workspace読み取りのみ・環境変数なし）、untrusted application（verifier・security verifierのコマンド。Dockerコンテナ）。詳細はdocs/security/threat-model.md。
+- 実行境界は3つ。trusted Harness（ホスト、Credential・承認鍵・証跡を扱う）、trusted acceptance（ホストのNode permission model、読み取りはworkspaceとHarnessのnode_modulesだけ・環境変数なし）、untrusted application（verifier・security verifierのコマンド。Dockerコンテナ）。詳細はdocs/security/threat-model.md。
 - untrusted applicationをホストで実行しない。Dockerが使えない、image・コンテナを用意できないときはFAIL（isolation unavailable）にし、PASS・SKIP・NOT_CONFIGUREDにしない。
 - コンテナにはworkspaceだけをmountする。HOME・Docker socket・`.harness/state/**`・run証跡・`.git`・秘密ファイルを見せない。環境変数はallowlistだけ。非rootで動かす。CHOWN・DAC_READ_SEARCHはvolume準備のroot execだけが使い、検証コマンドのユーザーはcapabilityを持たない。
 - networkは既定で無効。必要なverifierだけharness.jsonで`network: true`を宣言する。

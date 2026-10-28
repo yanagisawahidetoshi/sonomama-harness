@@ -29,7 +29,7 @@ Agentが書いたコードとapplication testは信頼しない。Harnessは処�
 | 区分 | 何が動くか | 実行場所 | 見えるもの |
 | --- | --- | --- | --- |
 | trusted Harness | tools/harness、git、gh、承認・証跡の記録 | ホスト | Credential、承認鍵`.harness/state/human/.key`、API Schema署名状態`.harness/state/api-schema/**`、run証跡 |
-| trusted acceptance | `.harness/verification/*.mjs` | ホストのNode permission model（workspaceの読み取りのみ、子process禁止、環境変数なし） | workspace |
+| trusted acceptance | `.harness/verification/*.mjs` | ホストのNode permission model（読み取りはworkspaceとHarnessのnode_modulesだけ、子process禁止、環境変数なし） | workspace |
 | untrusted application | verifier・security verifierのコマンド（pnpm、Jest、Vitest、RSpec等） | Dockerコンテナ | workspaceだけ |
 
 untrusted applicationのコンテナは次の条件で起動する。ローカルでもCIでも同じ条件になる。

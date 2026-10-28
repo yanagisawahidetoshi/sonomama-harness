@@ -40,7 +40,8 @@ export async function verify({ root, workspace, config, sbi, files = sbi.allowed
     if (adapter.kind === 'sample-bdd' || adapter.trust === 'acceptance') {
       const script = join(root, adapter.kind === 'sample-bdd' ? 'tools/harness/sample-bdd.mjs' : adapter.trustedScript || '.harness/verification/NOT_CONFIGURED');
       if (!await exists(script)) { checks.push({...base,required:true,status:'NOT_CONFIGURED',reason:'trusted acceptance script missing'}); continue; }
-      const process = await execute(globalThis.process.execPath, ['--experimental-permission', `--allow-fs-read=${workspace}`, `--allow-fs-read=${script}`, script, workspace], { cwd: workspace, timeoutMs: config.timeoutMs, env: {} });
+      // Dependencies come from the trusted Harness installation; the run workspace's node_modules lives only in verifier containers.
+      const process = await execute(globalThis.process.execPath, ['--experimental-permission', `--allow-fs-read=${workspace}`, `--allow-fs-read=${script}`, `--allow-fs-read=${join(root, 'node_modules')}`, script, workspace], { cwd: workspace, timeoutMs: config.timeoutMs, env: {} });
       const check = { ...base, required:true, status:process.ok?'PASS':'FAIL', cwd:workspace, process };
       if (process.ok) {
         try {
