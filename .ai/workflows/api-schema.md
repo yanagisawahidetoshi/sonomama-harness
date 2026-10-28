@@ -38,7 +38,8 @@ API Schemaを利用する後続処理は、必ず`planner:api-schema-status`（`
 - 生成記録は生成したPCにだけある。別のPCやcloneでは生成記録がないため承認を記録しない（承認台帳と同じくローカルの信頼状態）。
 - Security Impactがあれば異なる人間2人、なければ1人が必要。必要人数は署名付きの生成記録から読み、proposal.jsonからは読まない。同じ人の承認は1人と数え、各人の最新の判断だけを使う。
 - 識別は既存の承認台帳と同じくOSユーザー。1台のPCの同じOSユーザーでは2人分にならない。複数人の本運用には認証済み承認adapterを接続する。
-- 有効な承認がある間、Plannerは再生成しない。変更する場合は承認者が`--decision revoke`してから再実行する。
+- 署名付き台帳に未撤回の承認（各承認者の最新の判断がAPPROVE）がある間、Plannerは再生成しない。digest・commit・未commit/未追跡ファイルの有無は問わない。変更する場合は承認者が`--decision revoke`してから再実行する。
+  未commitの変更はstatusのAPPROVEDを下げる（承認件数0）が、再生成の許可には使わない。
 
 この承認はExecution Harnessの実装前Gate・Design Approval・Merge Approvalとは別の記録で、どれの代わりにもならない。
 
@@ -80,7 +81,7 @@ Secret / Credentialらしき値、成功responseでのpassword / secret等の返
 - 生成済みディレクトリは、署名付きの生成記録と3ファイル（openapi.yaml・proposal.json・summary.md）のdigestが一致する場合だけ上書きする。
   人間が編集していた場合や生成記録がない場合は、上書きせずexit 1。
 - 別リポジトリの同じ番号のIssueのProposalがあれば上書きしない。
-- 署名付き台帳に有効な承認があれば再生成しない。Issueに`api-schema-approved`がある場合も再生成しない。
+- 署名付き台帳に未撤回の承認があれば再生成しない。Issueに`api-schema-approved`がある場合も再生成しない。
 - Issueコメントはmarkerで探して同じコメントを更新する。
 
 既存OpenAPIはOpenAPI 3.1.xだけを読む。openapi.yamlとopenapi.jsonが両方あれば停止する。
