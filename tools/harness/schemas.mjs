@@ -26,6 +26,11 @@ export const sbiSnapshotSchema = z.strictObject({
   runId: runIdSchema, titleDigest: sha256, bodyDigest: sha256, sbi: sbiSchema,
 }).refine(s => s.source.url === `https://github.com/${s.source.repo}/issues/${s.source.number}`, 'source url must be the source repo and number')
   .refine(s => s.sbi.issueUrl === s.source.url, 'sbi.issueUrl must be the source Issue');
+// .harness/acceptance/sbi-<N>.json: the Trusted Acceptance a human wrote and registered for one SBI Issue before marking it ready.
+export const acceptanceRegistrationSchema = z.strictObject({
+  version: z.literal(1), sbiIssue: z.number().int().positive(),
+  verifiers: z.array(z.strictObject({ id: text, trustedScript: relativePath, planned: z.array(text).min(1), acceptanceIds: z.array(text).min(1) })).min(1),
+});
 export const configSchema = z.strictObject({
   version: z.literal(1), provider: z.enum(['fake', 'codex', 'claude']), sbi: relativePath,
   maxConsecutiveFailures: z.number().int().min(1).max(3), maxIterations: z.number().int().min(1).max(20),
