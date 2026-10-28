@@ -106,7 +106,7 @@ export function renderSummary({ issue, proposal, quality, contractDiff = { break
     'error responseはHarnessが定義する共通のError schema（code / message / details）を使う。', '',
     '## Security Impact', '',
     `- 分類: ${impact}`,
-    `- Harnessが導出したSecurity Impact（必要承認数はこれと分類から決まる）: ${derivedImpact.length ? '' : 'なし'}`,
+    `- Harnessが導出したSecurity Impact（必要承認数はこれと分類から決まる）:${derivedImpact.length ? '' : ' なし'}`,
     ...derivedImpact.map(item => `  - ${item.categories.join(' / ')}: ${cell(item.reason)}`),
     `- ログ出力注意: ${caution.length ? caution.join(' / ') : 'なし'}`,
     '- Secret / Credentialの実値はschema・exampleに含めない（Quality Judgeで検査済み）', '',
