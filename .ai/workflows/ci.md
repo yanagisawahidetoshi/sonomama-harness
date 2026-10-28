@@ -30,7 +30,7 @@ Production（`apps/`・`packages/`と`.harness/config/lanes.json`の`productionP
 | --- | --- |
 | snapshot | PRで追加・変更された `.harness/state/sbi-<Issue番号>.json` が `sbiSnapshotSchema` を満たす。source Issue（repo / number / url）、Run開始時のtitle / body digest、Run ID、RunのSBIを持つ |
 | source Issue | GitHub APIで読んだ現在のIssueが、このリポジトリのもので、open・`sbi`・`ready`あり・`needs-review`なし。読めなければFAIL |
-| 現在のIssueとの一致 | 現在のIssue本文と `harness.json` のTrusted Acceptance登録（`sbiIssue`）からSBIを組み立て直し、snapshotのSBIと完全に一致する。title / body digestも現在のIssueから計算し直して一致する。組み立てられない・1項目でも違えばFAILし、違う項目名を出す |
+| 現在のIssueとの一致 | 現在のIssue本文と、そのIssueのTrusted Acceptance登録（`.harness/acceptance/sbi-<番号>.json`）からSBIを組み立て直し、snapshotのSBIと完全に一致する。title / body digestも現在のIssueから計算し直して一致する。組み立てられない・1項目でも違えばFAILし、違う項目名を出す |
 | Run の紐付け | PRのcommitのどれかが、snapshotと同じ値の `Harness-Run: <Run ID>` と `SBI-Issue: <Issue URL>` trailerを持つ |
 
 snapshotとtrailerはHarnessがRunとPR作成のときに書く。人間はSBI JSONを書かない。snapshotのSBIは手書きのSBI JSONと同じくImpact AnalysisとTrusted Acceptanceに使う。Issue本文からSBIへの組み立ては `tools/harness/sbi-issue.mjs` の `sbiFromIssue` で、Runの開始とCIで同じ処理を使う。

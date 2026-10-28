@@ -22,8 +22,10 @@ PRのmergeは人間がGitHub Reviewのあとで行う。RUN_IDのコピー、`ha
 `harness:run`はIssueがopen・`sbi`と`ready`付き・`needs-review`なしで、Planner markerがあるときだけ開始する。
 Issue本文から実行SBIを組み立て、Run開始時点の内容を`.harness/runs/<id>/sbi-snapshot.json`に保存し、PRへ`.harness/state/sbi-<Issue番号>.json`としてcommitする。
 想定変更範囲は末尾`/`付きのディレクトリ許可（allowedDirs）になる。`apps/admin/`は`apps/admin-other/`を含まず、予約パスは範囲内でも書けない。
-ACごとのTrusted Acceptanceは、人間が`.harness/verification/`にscriptを書き、`.harness/config/harness.json`のverifiersへ
-`"trust": "acceptance"`、`"sbiIssue": <SBI番号>`、`"acceptanceIds": [IssueのAC ID]`で登録する。未登録・対応漏れ・余分な登録があればRunを開始しない。
+ACごとのTrusted Acceptanceは、人間が`.harness/verification/`にscriptを書き、
+`.harness/acceptance/sbi-<SBI番号>.json`に`{ "version": 1, "sbiIssue": <SBI番号>, "verifiers": [{ "id", "trustedScript", "planned", "acceptanceIds": [IssueのAC ID] }] }`で登録する。
+harness.jsonには共通のVerifier Registryだけを置く（`sbiIssue`付きの登録はcheckがFAILにする）。runとCIは、そのSBI Issueのファイルだけを読む。
+未登録・対応漏れ・余分な登録・ファイル名と中身のIssue番号の不一致があればRunを開始しない。
 内部・保守用コマンドとAPI設計時のコマンドは`node tools/harness/cli.mjs`のhelpに分けて載せている。
 
 ## 実行

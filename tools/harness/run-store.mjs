@@ -35,7 +35,7 @@ export async function loadRun(root, runId) {
   const inputs = await readJson(join(paths.directory, 'inputs.json'));
   if (digest(inputs) !== summary.inputsDigest) throw new Error('input snapshot changed');
   // A run from an SBI Issue keeps its snapshot; later edits of the Issue do not change the run.
-  const current = await check(root, summary.sbiPath, summary.sbiIssue ? inputs.sbi : undefined);
+  const current = await check(root, summary.sbiPath, summary.sbiIssue ? inputs.sbi : undefined, { sbiIssue: summary.sbiIssue?.number ?? null });
   for (const key of ['config', 'rules', 'sbi', 'riskPolicy', 'securityPolicy', 'humanGates', 'securityDocuments', 'lanePolicy']) {
     if (digest(current[key]) !== digest(inputs[key])) throw new Error(`${key} snapshot changed; start a new run`);
   }

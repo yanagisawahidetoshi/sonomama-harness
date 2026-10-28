@@ -4,9 +4,11 @@ import { exists, readJson } from './io.mjs';
 import { classifySecurity } from './security-enforcement.mjs';
 import { verifierRegistry } from './verifier.mjs';
 import { assertWritablePath } from './workspace.mjs';
+import { acceptancePath, withAcceptance } from './acceptance-registry.mjs';
 import { configSchema, rulesSchema, sbiSchema, riskPolicySchema, relativePath, securityPolicySchema, humanGatesSchema, lanePolicySchema } from './schemas.mjs';
 // sbi is the execution SBI built from a ready SBI Issue; without it the SBI JSON at sbiPath (or the configured sample) is read.
-export async function check(root, sbiPath, sbiValue) {
+// sbiIssue adds the Trusted Acceptance registered for that SBI Issue (.harness/acceptance/sbi-<N>.json) and nothing else.
+export async function check(root, sbiPath, sbiValue, { sbiIssue = null } = {}) {
   const directories = ['apps/api', 'apps/mobile', 'apps/admin', 'packages/api-schema', 'docs/architecture', 'docs/product', 'docs/adr', 'docs/workflows', 'docs/security', '.harness/config', '.harness/rules', '.harness/skills', '.harness/state', '.harness/runs', 'tools/harness'];
   for (const path of directories) {
     if (!await exists(join(root, path)) || !(await stat(join(root, path))).isDirectory()) throw new Error(`Missing directory: ${path}`);
@@ -16,7 +18,9 @@ export async function check(root, sbiPath, sbiValue) {
   }
   const lanePolicy = lanePolicySchema.parse(await readJson(join(root, '.harness/config/lanes.json')));
   for (const pattern of [...lanePolicy.prototypePaths, ...lanePolicy.productionPaths, ...lanePolicy.securityPatterns]) new RegExp(pattern);
-  const config = configSchema.parse(await readJson(join(root, '.harness/config/harness.json')));
+  const shared = configSchema.parse(await readJson(join(root, '.harness/config/harness.json')));
+  for (const v of shared.verifiers.filter(v => v.sbiIssue !== undefined)) throw new Error(`harness.json must not register the Trusted Acceptance of an SBI Issue (${v.id}); move it to ${acceptancePath(v.sbiIssue)}`);
+  const config = sbiIssue ? await withAcceptance(root, shared, [sbiIssue]) : shared;
   const rules = rulesSchema.parse(await readJson(join(root, '.harness/rules/policy.json')));
   for (const pattern of rules.protectedPathPatterns) new RegExp(pattern);
   const riskPolicy = riskPolicySchema.parse(await readJson(join(root, '.harness/rules/pr-risk.json')));
