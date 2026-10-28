@@ -91,6 +91,10 @@ jobs:
     needs: [impact, verifiers, harness-test, harness-demo]
     if: always()
     runs-on: ubuntu-latest
+    # The Completion Judge reads the source SBI Issue of a Production change from the GitHub API.
+    permissions:
+      contents: read
+      issues: read
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -107,3 +111,4 @@ jobs:
       - run: pnpm harness:judge $HARNESS_SCOPE
         env:
           HARNESS_NEEDS: ${{ toJson(needs) }}
+          GH_TOKEN: ${{ github.token }}

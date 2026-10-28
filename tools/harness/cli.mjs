@@ -10,6 +10,7 @@ import { startApiMock } from './api-mock.mjs';
 import { startApiDocs } from './api-docs.mjs';
 import { relativePath } from './schemas.mjs';
 import { describeImpact, loadImpact, runCompletionJudge, runVerifier } from './impact.mjs';
+import { describeSbiSource } from './sbi-source.mjs';
 import { appendFile } from 'node:fs/promises';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 await withEvidenceProtection(root, async () => {
@@ -86,6 +87,7 @@ try {
       const needs = JSON.parse(process.env.HARNESS_NEEDS || '{}');
       const judged = await runCompletionJudge({ root, base, all, needs });
       for (const line of describeImpact(judged.impact)) console.log(redactText(line));
+      for (const line of describeSbiSource(judged.source)) console.log(redactText(line));
       for (const c of judged.checks) console.log(redactText(`${c.id}: ${c.status}${c.reason ? ` (${c.reason})` : ''}`));
       for (const [job, value] of Object.entries(needs)) console.log(`job ${job}: ${value.result}`);
       console.log(`Completion Judge: ${judged.status}${judged.reasons.length ? ` (${judged.reasons.join('; ')})` : ''}`);
