@@ -16,7 +16,7 @@ import { classifySecurity, verifySecurity, combineSecurity, securityPassed } fro
 import { withEvidenceProtection, redact, redactText, hasSecret, assertSafeInput, isSecretPath } from './evidence-protection.mjs';
 import { githubPrCli, githubState, pullRequestBody } from './github-pr.mjs';
 import { digest, prepareWorkspace, commitWorkspace, changedFiles, workspaceIntegrity, toolFingerprint, assertWritablePath, workspaceFingerprint, sourceIntegrity, assertWorktreeOwner, git } from './workspace.mjs';
-import { saveRun, loadRun, runPaths, withRunLock } from './run-store.mjs';
+import { saveRun, loadRun, readRunState, runPaths, withRunLock } from './run-store.mjs';
 import { classifyLane } from './lanes.mjs';
 import { assertState } from './state-machine.mjs';
 export { check, judge, providerCommand };
@@ -310,7 +310,7 @@ async function runProtected({ root, provider, sbiPath, quiet = false, agent = ru
 async function resumeProtected({ root, runId, quiet = false, agent = runAgent, reviewer = review, semanticReviewer, github = githubPrCli }) {
   root = await realpath(root);
   return withRunLock(root, runId, async () => {
-    const stored = await readJson(runPaths(root, runId).summary);
+    const stored = await readRunState(root, runId);
     // An escalated merge assessment is final even if its cause disappears; only a new run re-verifies.
     if (stored.executionStatus === 'DONE' && stored.status === 'ESCALATED') return stored;
     let summary;
@@ -375,8 +375,8 @@ export async function cleanupRun({root,runId}) {
   root = await realpath(root);
   return withRunLock(root,runId,async()=>{
     const paths = runPaths(root,runId);
-    const summary = await readJson(paths.summary);
-    if (summary.id !== runId || summary.cleanedAt) throw new Error('Invalid or already cleaned run');
+    const summary = await readRunState(root, runId);
+    if (summary.cleanedAt) throw new Error('Invalid or already cleaned run');
     await assertWorktreeOwner(root,paths.workspace,summary.baselineSha);
     await workspaceIntegrity(paths.workspace,summary.headSha);
     if (await workspaceFingerprint(paths.workspace) !== summary.workspaceDigest) throw new Error('workspace snapshot changed');
