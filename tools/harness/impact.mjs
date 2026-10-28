@@ -32,6 +32,11 @@ export function analyzeImpact({ config, sbis = [], files = [], all = false }) {
     if (sbis.length && !fromSbi.has(v.id)) select(v.id, 'diff-not-in-sbi', false);
   }
   if (all) for (const v of apps) select(v.id, 'all', false);
+  // A gated command (expo-doctor) is named with the path that makes it run, so the log shows why it ran or why it did not.
+  for (const v of apps) for (const gate of v.gatedCommands ?? []) {
+    const path = firstMatch(gate.appliesTo, files);
+    if (path) select(v.id, `gate:${gate.command.join(' ')}:${path}`, false);
+  }
   // Areas come from the SBI and from what the diff touched, so a diff the SBI did not mention still brings its cross-layer contract.
   const areas = new Set([...sbiAreas, ...[...verifiers.keys()].flatMap(areasOf)]);
   for (const rule of config.impact?.crossLayer ?? []) {
@@ -95,8 +100,11 @@ export async function loadImpact({ root, base, all = false }) {
 // The matrix job: one verifier, mandatory only when an SBI asked for it, so a cross-layer contract without a document stays a placeholder SKIP.
 export async function runVerifier({ root, base, all = false, id }) {
   const { config, files, impact } = await loadImpact({ root, base, all });
-  const mandatory = impact.verifiers.find(v => v.id === id)?.mandatory ?? false;
-  const sbi = { title: 'CI matrix', description: id, risks: [], securityImpact: [], acceptanceCriteria: [], requiredVerifiers: [] };
+  const entry = impact.verifiers.find(v => v.id === id);
+  const mandatory = entry?.mandatory ?? false;
+  // An SBI naming the verifier in requiredVerifiers asks for every command, gated ones included.
+  const explicit = entry?.reasons.some(r => r.endsWith(' requiredVerifiers')) ?? false;
+  const sbi = { title: 'CI matrix', description: id, risks: [], securityImpact: [], acceptanceCriteria: [], requiredVerifiers: explicit ? [id] : [] };
   const result = await verify({ root, workspace: root, config, sbi, files, only: new Set([id]), selected: new Map([[id, mandatory]]) });
   return { impact, result, passed: checksPassed(result.checks) };
 }

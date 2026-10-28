@@ -29,7 +29,9 @@ export const configSchema = z.strictObject({
     trust: z.enum(['application', 'acceptance']).default('application'),
     trustedScript: relativePath.optional(),
     areas: z.array(text).default([]),
-  })).min(1),
+    // A command that runs only when the change matches appliesTo, unless the verifier is explicitly required.
+    gatedCommands: z.array(z.strictObject({ command: z.array(text).min(1), appliesTo: z.array(text).min(1) })).default([]),
+  }).refine(v => v.gatedCommands.every(g => v.commands.some(c => c.join('\0') === g.command.join('\0'))), 'gated command must be one of the verifier commands')).min(1),
   // SBI Impact Analysis: cross-layer contracts added when areas meet, and paths whose change runs the Full Gate.
   impact: z.strictObject({
     crossLayer: z.array(z.strictObject({ all: z.array(text).min(1), any: z.array(text).min(1), add: z.array(text).min(1) })).default([]),

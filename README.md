@@ -92,7 +92,7 @@ ACは組み込みsample-bddまたは`trust: "acceptance"`と`trustedScript`で�
 | adapter | 未生成判定marker | 接続予定 |
 | --- | --- | --- |
 | rails | apps/api/Gemfile | 接続済み: Docker Compose経由でbuild / db:prepare / RSpec / RuboCop / Brakeman / Bundler Audit / Zeitwerk。ACは`api-acceptance`。OpenAPI contractは未接続 |
-| expo | apps/mobile/package.json | 接続済み: install / TypeScript / Biome / Jest + RNTL / expo-doctor。ACは`mobile-acceptance`。Maestroはローカルのみ |
+| expo | apps/mobile/package.json | 接続済み: install / TypeScript / Biome / Jest + RNTL / expo-doctor（依存・native設定の変更時だけ）。ACは`mobile-acceptance`。Maestroはローカルのみ |
 | admin | apps/admin/package.json | 接続済み: install / TypeScript / Biome / Vitest + RTL / build。ACは`admin-acceptance` |
 
 markerなしでallowMissing=trueかつそのACを要求しないアプリだけ、対象外としてSKIPできる。
@@ -447,6 +447,7 @@ Security Ruleから一般VerifierのIDを要求する場合も同じworktree上�
 `pnpm harness:demo --full` / `pnpm harness:run --full`はlane内の全アプリVerifierを選択する。
 このモードでも未生成の任意placeholderはSKIPできる。AC・Security必須チェックは引き続き省略不可。
 CIはこのfullモードを使う。アプリ実装・依存環境ができたらcommandsを接続する。
+`gatedCommands`に挙げたcommand（expo-doctor）は、そのappliesToに一致する変更があるときか、SBI.requiredVerifiers・Security・ACで指定されたときだけ実行する。fullモードでも実行しない。詳細は[.ai/workflows/ci.md](.ai/workflows/ci.md)。
 
 ## Prototype Lane / Production Lane
 

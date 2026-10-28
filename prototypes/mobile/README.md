@@ -76,7 +76,7 @@ prototypeのPASSは本番実装の承認にならない。Design Approvalのあ�
 
 ## Harness
 
-prototype laneの `prototype-mobile` verifierが install / typecheck / Biome check / expo-doctor を実行する。secret scanは全runで必須。
+prototype laneの `prototype-mobile` verifierが install / typecheck / Biome check / expo-doctor を実行する。expo-doctorは依存とnative設定（`package.json`・`app.json`・`metro.config.js`・lockfileなど）の変更があるときだけ実行する。secret scanは全runで必須。
 受け入れ条件は `.harness/verification/prototype-mobile-env.mjs` で検証する。
 
 `storybook` の本体はrepo rootのdevDependencyにある。prototypes/mobileに直接入れると、`node_modules/.bin/storybook` と `storybook` scriptが衝突してexpo-doctorが失敗するため。
