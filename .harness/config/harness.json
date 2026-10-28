@@ -135,6 +135,9 @@
       ],
       "lanes": [
         "production"
+      ],
+      "areas": [
+        "api"
       ]
     },
     {
@@ -175,6 +178,30 @@
       ],
       "trust": "acceptance",
       "trustedScript": ".harness/verification/api-env.mjs"
+    },
+    {
+      "id": "api-contract",
+      "directory": "packages/api-schema",
+      "marker": "openapi.yaml",
+      "planned": [
+        "OpenAPI 3.1 validation",
+        "Breaking change detection against the base branch"
+      ],
+      "commands": [
+        [
+          "node",
+          "../../tools/harness/api-contract.mjs"
+        ]
+      ],
+      "appliesTo": [
+        "^packages/api-schema/"
+      ],
+      "lanes": [
+        "production"
+      ],
+      "areas": [
+        "api-contract"
+      ]
     },
     {
       "id": "expo",
@@ -234,6 +261,9 @@
       ],
       "lanes": [
         "production"
+      ],
+      "areas": [
+        "mobile"
       ]
     },
     {
@@ -370,6 +400,9 @@
       ],
       "lanes": [
         "production"
+      ],
+      "areas": [
+        "admin"
       ]
     },
     {
@@ -496,6 +529,9 @@
           "node_modules/.harness/storybook-static",
           "--quiet"
         ]
+      ],
+      "areas": [
+        "prototype-web"
       ]
     },
     {
@@ -570,6 +606,9 @@
           "run",
           "doctor"
         ]
+      ],
+      "areas": [
+        "prototype-mobile"
       ]
     },
     {
@@ -605,9 +644,67 @@
       ],
       "trust": "acceptance",
       "trustedScript": ".harness/verification/prototype-mobile-env.mjs"
+    },
+    {
+      "id": "ci-matrix-acceptance",
+      "directory": ".",
+      "planned": [
+        "Trusted Acceptance"
+      ],
+      "commands": [],
+      "acceptanceIds": [
+        "CI-AC-1",
+        "CI-AC-2",
+        "CI-AC-3",
+        "CI-AC-4",
+        "CI-AC-5",
+        "CI-AC-6",
+        "CI-AC-7",
+        "CI-AC-8",
+        "CI-AC-9",
+        "CI-AC-10",
+        "CI-AC-11",
+        "CI-AC-12",
+        "CI-AC-13",
+        "CI-AC-14",
+        "CI-AC-15",
+        "CI-AC-16",
+        "CI-AC-17",
+        "CI-AC-18"
+      ],
+      "appliesTo": [],
+      "lanes": [
+        "production"
+      ],
+      "trust": "acceptance",
+      "trustedScript": ".harness/verification/ci-matrix.mjs"
     }
   ],
   "semanticReview": {
     "enabled": false
+  },
+  "impact": {
+    "crossLayer": [
+      {
+        "all": [
+          "api"
+        ],
+        "any": [
+          "mobile",
+          "admin"
+        ],
+        "add": [
+          "api-contract"
+        ]
+      }
+    ],
+    "fullGate": [
+      "^tools/harness/",
+      "^\\.harness/(config|verification|rules|skills)/",
+      "^\\.github/",
+      "^\\.githooks/",
+      "^AGENTS\\.md$",
+      "^package\\.json$"
+    ]
   }
 }

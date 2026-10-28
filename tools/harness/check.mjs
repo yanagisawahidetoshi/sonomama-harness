@@ -39,6 +39,11 @@ export async function check(root, sbiPath) {
   const sbi = sbiSchema.parse(await readJson(join(root, sbiPath || config.sbi)));
   classifySecurity({ sbi }, securityPolicy);
   const registry = verifierRegistry(config);
+  const areas = new Set(config.verifiers.flatMap(v => v.areas));
+  for (const rule of config.impact.crossLayer) {
+    if ([...rule.all, ...rule.any].some(area => !areas.has(area)) || rule.add.some(id => !registry.has(id))) throw new Error('Impact rule references an unknown area or verifier');
+  }
+  if (sbi.affectedAreas.some(area => !areas.has(area))) throw new Error('SBI affectedAreas references an unknown area');
   for (const v of config.verifiers) {
     for (const p of v.appliesTo || []) new RegExp(p);
     if (v.trust === 'acceptance') {
