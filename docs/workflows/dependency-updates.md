@@ -45,5 +45,5 @@ RenovateのPRも通常のPRと同じHarnessのCIを通る。変更されたフ�
 設定を変えたときは、次のコマンドで検証する。
 
 ```sh
-npx --yes --package renovate -- renovate-config-validator --strict
+npx --yes --package renovate@latest -- renovate-config-validator --strict
 ```
