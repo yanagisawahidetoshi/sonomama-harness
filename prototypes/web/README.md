@@ -1,7 +1,7 @@
 # SONOMAMA Web Prototype (prototypes/web)
 
 デザイナーがReactとStorybookでUIを直接試作・検証する場所（Executable Design Workspace）。
-**本番コードではない。** 管理画面の本番実装は `apps/admin` にあり、ここからコピーして本番化しない。
+**本番コードではない**。管理画面の本番実装は `apps/admin` にあり、ここからコピーして本番化しない。
 
 React 19 + TypeScript + Vite + Storybook + Biome。UI component libraryはDesign Systemの方針が決まるまで導入しない。
 

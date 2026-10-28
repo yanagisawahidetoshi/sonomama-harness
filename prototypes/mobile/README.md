@@ -1,7 +1,7 @@
 # SONOMAMA Mobile Prototype (prototypes/mobile)
 
 デザイナーがExpoとReact Native StorybookでUIを直接試作・検証する場所（Executable Design Workspace）。
-**本番コードではない。** 受講生アプリの本番実装は `apps/mobile` にあり、ここからコピーして本番化しない。
+**本番コードではない**。受講生アプリの本番実装は `apps/mobile` にあり、ここからコピーして本番化しない。
 
 Expo SDK 58 + React Native 0.88 + TypeScript + Expo Router + React Native Storybook 10 + Biome。UI component libraryはDesign Systemの方針が決まるまで導入しない。
 
@@ -23,7 +23,7 @@ pnpm --filter prototype-mobile check               # Biome (lint + format + impo
 pnpm --filter prototype-mobile doctor              # expo-doctor
 ```
 
-`ios` scriptは `EXPO_USE_PRECOMPILED_MODULES=0` でExpo modulesをsourceからbuildする（SDK 58のprecompiled `ExpoFileSystem` が起動時に落ちるため。apps/mobileと同じ）。
+`ios` scriptは `EXPO_USE_PRECOMPILED_MODULES=0` でExpo modulesをsourceからbuildする。SDK 58のprecompiled `ExpoFileSystem` が起動時に落ちるためで、apps/mobileと同じ対応である。
 
 ## Storybook
 
