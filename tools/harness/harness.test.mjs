@@ -4,6 +4,7 @@ import { mkdtemp, cp, readFile, writeFile, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { check, judge, providerCommand } from './index.mjs';
+import { execute } from './io.mjs';
 
 import { fixture, update, runFixture as runHarness } from './test-fixture.mjs';
 
@@ -120,6 +121,41 @@ describe('CLI provider adapters', () => {
     });
     it('when provider is unknown then fails closed', () => {
       assert.throws(() => providerCommand('unknown'), /provider/);
+    });
+  });
+});
+
+describe('Default provider', () => {
+  describe('given a run started without --provider', () => {
+    it('when harness:run starts then implements with Claude', () => fixture(async root => {
+      const used = [];
+      const run = await runHarness({ root, quiet: true, provider: undefined, agent: async ({ provider }) => { used.push(provider); return { files: [{ path: 'greeting.mjs', content: 'export function greet(name) { return `こんにちは、${name?.trim() || "ゲスト"}さん`; }' }] }; } });
+      assert.equal(run.provider, 'claude');
+      assert.deepEqual(used, ['claude']);
+    }));
+    it('when harness:run starts with --provider codex then implements with Codex instead', () => fixture(async root => {
+      const used = [];
+      const run = await runHarness({ root, quiet: true, provider: 'codex', agent: async ({ provider }) => { used.push(provider); return { files: [{ path: 'greeting.mjs', content: 'export function greet(name) { return `こんにちは、${name?.trim() || "ゲスト"}さん`; }' }] }; } });
+      assert.equal(run.provider, 'codex');
+      assert.deepEqual(used, ['codex']);
+    }));
+  });
+});
+
+describe('CLI help', () => {
+  describe('given an unknown command', () => {
+    it('when the usage is printed then User-facing commands come first and resume / pr are listed only as Internal/Maintenance', async () => {
+      const { stderr } = await execute(process.execPath, [new URL('./cli.mjs', import.meta.url).pathname, 'unknown']);
+      const userFacing = stderr.indexOf('User-facing'), internal = stderr.indexOf('Internal/Maintenance');
+      assert.ok(userFacing >= 0 && internal > userFacing, stderr);
+      for (const command of ['planner:sbi', 'harness:run', 'harness:approve']) {
+        const at = stderr.indexOf(`pnpm ${command}`);
+        assert.ok(at > userFacing && at < internal, `${command} is user-facing`);
+      }
+      for (const command of ['harness:resume', 'harness:pr', 'harness:impact', 'harness:verify', 'harness:judge', 'harness:check', 'harness:export', 'harness:cleanup']) {
+        assert.ok(stderr.indexOf(`pnpm ${command}`) > internal, `${command} is internal`);
+      }
+      assert.match(stderr.slice(userFacing, internal), /--provider codex/);
     });
   });
 });

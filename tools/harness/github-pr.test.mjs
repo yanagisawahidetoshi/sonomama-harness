@@ -5,9 +5,9 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { reviewApprovals, ciStatus } from './github-pr.mjs';
 import { mergeDecision } from './merge-policy.mjs';
-import { fixture, update, human, runFixture as runHarness } from './test-fixture.mjs';
+import { fixture, update, human, commitFixture, runFixture as runHarness } from './test-fixture.mjs';
 import { githubMock } from './test-github.mjs';
-import { openPullRequest, resumeRun } from './index.mjs';
+import { openPullRequest, resumeRun, runHarness as startRun, approveRun } from './index.mjs';
 import { recordDecision } from './human-approvals.mjs';
 import { git } from './workspace.mjs';
 import { readJson } from './io.mjs';
@@ -373,6 +373,82 @@ describe('GitHub PR Adapter', () => {
         const second = await openPullRequest({ root, runId: run.id, quiet: true });
         assert.equal(second.pullRequest.number, first.pullRequest.number);
         assert.equal((await github.state()).pulls.length, 1);
+      });
+    }));
+  });
+
+  // harness:run and harness:approve continue to the PR themselves; the human never runs harness:resume or harness:pr.
+  describe('given harness:run with a real provider and a baseline on origin/main', () => {
+    const good = 'export function greet(name) { return `こんにちは、${name?.trim() || "ゲスト"}さん`; }';
+    const agent = content => async () => ({ files: [{ path: 'greeting.mjs', content }] });
+    // The remote must exist before the run, so the run starts from the published baseline.
+    const start = (root, options = {}) => startRun({ root, quiet: true, provider: 'codex', agent: agent(good), publish: true, ...options });
+    const remoteFirst = (root, test) => commitFixture(root).then(() => withRemote(root, test));
+    it('when local verification passes then pushes the tested SHA and opens the PR without harness:pr', () => fixture(root => remoteFirst(root, async ({ bare, github }) => {
+      const run = await start(root);
+      assert.equal(run.executionStatus, 'DONE');
+      const [pull] = (await github.state()).pulls;
+      assert.equal(pull.head.sha, run.headSha);
+      assert.equal(await remoteSha(bare, `harness/${run.id}`), run.headSha);
+      assert.deepEqual(run.pullRequest, { number: pull.number, url: pull.html_url, branch: `harness/${run.id}`, base: 'main', repository: 'acme/app' });
+      assert.notEqual(run.status, 'MERGE_ALLOWED');
+      assert.equal((await github.calls()).some(c => /merge/.test(c.args.join(' '))), false);
+    })));
+    it('when local verification keeps failing then pushes nothing and opens no PR', () => fixture(root => remoteFirst(root, async ({ bare, github }) => {
+      const run = await start(root, { agent: agent('export const greet = () => "wrong";') });
+      assert.equal(run.status, 'ESCALATED');
+      assert.equal(run.pullRequest, undefined);
+      assert.equal(await remoteSha(bare, `harness/${run.id}`), '');
+      assert.deepEqual((await github.state()).pulls, []);
+    })));
+    it('when the run uses the fake provider then opens no PR, so harness:demo never publishes', () => fixture(root => remoteFirst(root, async ({ github }) => {
+      const run = await start(root, { provider: 'fake', agent: undefined });
+      assert.equal(run.executionStatus, 'DONE');
+      assert.deepEqual((await github.state()).pulls, []);
+    })));
+  });
+
+  describe('given a harness:run stopped at the implementation gate', () => {
+    const good = 'export function greet(name) { return `こんにちは、${name?.trim() || "ゲスト"}さん`; }';
+    const gated = async root => {
+      await update(root, '.harness/config/harness.json', c => c.securityVerifiers = [{ id: 'rails-rls-test', directory: 'apps/api', commands: [[process.execPath, '-e', 'require("node:assert/strict").ok(true)']] }]);
+      await update(root, sbiPath, s => s.risks = ['RLS']);
+      await commitFixture(root);
+    };
+    const agent = async () => ({ files: [{ path: 'greeting.mjs', content: good }] });
+    it('when a human approves the gate then the Harness resumes and opens the PR without harness:resume or harness:pr', () => fixture(async root => {
+      await gated(root);
+      await withRemote(root, async ({ github }) => {
+        const run = await startRun({ root, quiet: true, provider: 'codex', agent, publish: true });
+        assert.equal(run.status, 'WAITING_FOR_HUMAN_GATE');
+        assert.deepEqual((await github.state()).pulls, []);
+        const approved = await approveRun({ root, runId: run.id, purpose: 'implementation-gate', identityProvider: human('Designer'), agent, quiet: true });
+        assert.equal(approved.gate.state, 'APPROVED');
+        assert.equal(approved.executionStatus, 'DONE');
+        const [pull] = (await github.state()).pulls;
+        assert.equal(pull.head.sha, approved.headSha);
+        assert.equal(approved.pullRequest.number, pull.number);
+      });
+    }));
+    it('when the human requests changes instead then the run stays stopped, the agent never runs and no PR is opened', () => fixture(async root => {
+      await gated(root);
+      await withRemote(root, async ({ github }) => {
+        const run = await startRun({ root, quiet: true, provider: 'codex', agent, publish: true });
+        let called = false;
+        const rejected = await approveRun({ root, runId: run.id, purpose: 'implementation-gate', decision: 'REQUEST_CHANGES', identityProvider: human('Designer'), agent: async () => { called = true; return agent(); }, quiet: true });
+        assert.equal(rejected.gate.state, 'REJECTED');
+        assert.equal(rejected.iterations.length, 0);
+        assert.equal(called, false);
+        assert.deepEqual((await github.state()).pulls, []);
+      });
+    }));
+    it('when an AI identity tries to approve then nothing is recorded or resumed', () => fixture(async root => {
+      await gated(root);
+      await withRemote(root, async ({ github }) => {
+        const run = await startRun({ root, quiet: true, provider: 'codex', agent, publish: true });
+        await assert.rejects(approveRun({ root, runId: run.id, purpose: 'implementation-gate', identityProvider: () => ({ id: 'agent', kind: 'ai', source: 'agent-json' }), agent, quiet: true }), /human/i);
+        assert.equal((await resumeRun({ root, runId: run.id, quiet: true, agent })).status, 'WAITING_FOR_HUMAN_GATE');
+        assert.deepEqual((await github.state()).pulls, []);
       });
     }));
   });
