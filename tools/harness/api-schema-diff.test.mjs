@@ -7,7 +7,7 @@ const query = (name, required = false) => ({ name, in: 'query', required, schema
 const document = parameters => ({
   openapi: '3.1.0', info: { title: 'x', version: '1' },
   paths: { '/api/v1/items': { get: { operationId: 'listItems', parameters, responses: { 200: { description: 'OK' } } } } },
-  components: { parameters: { Locale: query('locale'), Page: query('page'), Tenant: { name: 'X-Tenant', in: 'header', required: true, schema: { type: 'string' } } } },
+  components: { parameters: { Locale: query('locale'), Page: query('page'), Tenant: { name: 'X-Tenant', in: 'header', required: true, schema: { type: 'string' } }, Sort: { name: 'sort', in: 'query', schema: { type: 'string' } } } },
 });
 const at = suffix => `paths./api/v1/items.get.parameters${suffix}`;
 const lines = result => [...result.breaking, ...result.nonBreaking];
@@ -34,6 +34,10 @@ describe('Contract diff of $ref parameters', () => {
     it('when a $ref parameter whose referenced parameter is required is added then reports it as breaking', () => {
       const result = diffContract(document([ref('Locale')]), document([ref('Locale'), ref('Tenant')]));
       assert.deepEqual(result.breaking, [`必須parameterを追加: ${at('[$ref:#/components/parameters/Tenant]')}`]);
+    });
+    it('when a $ref parameter whose referenced parameter omits required is added then reports it as non-breaking', () => {
+      const result = diffContract(document([ref('Locale')]), document([ref('Locale'), ref('Sort')]));
+      assert.deepEqual(result, { breaking: [], nonBreaking: [`追加: ${at('[$ref:#/components/parameters/Sort]')}`] });
     });
     it('when a $ref parameter that cannot be resolved in the document is added then reports it as breaking', () => {
       const missing = { $ref: './shared.yaml#/components/parameters/Region' };
