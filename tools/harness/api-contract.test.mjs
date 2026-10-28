@@ -4,7 +4,8 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { git } from './workspace.mjs';
-import { checkApiContract } from './api-contract.mjs';
+import { readFile } from 'node:fs/promises';
+import { checkApiContract, checkRailsRoutes } from './api-contract.mjs';
 
 const schema = (paths, openapi = '3.1.0') => JSON.stringify({ openapi, info: { title: 'SONOMAMA', version: '0.1.0' }, paths });
 const lessons = { '/lessons': { get: { operationId: 'listLessons', responses: { 200: { description: 'OK' } } } } };
@@ -160,5 +161,32 @@ describe('API contract verifier', () => {
       assert.equal(result.status, 'PASS');
       assert.deepEqual(result.mismatches, []);
     }));
+  });
+
+  describe('given a Rails-only change checked by the rails verifier', () => {
+    it('when there is no OpenAPI document and Rails only serves framework routes then passes', () => repo(async root => {
+      await routes(root, [route('GET', '/up(.:format)', 'rails/health', 'show')]);
+      const result = await checkRailsRoutes({ root });
+      assert.equal(result.status, 'PASS');
+    }));
+
+    it('when there is no OpenAPI document and Rails adds a business endpoint then fails because the contract must come first', () => repo(async root => {
+      await routes(root, [route('GET', '/api/v1/lessons(.:format)')]);
+      const result = await checkRailsRoutes({ root });
+      assert.equal(result.status, 'FAIL');
+      assert.match(result.mismatches.join('\n'), /GET \/api\/v1\/lessons/);
+    }));
+
+    it('when the OpenAPI document defines the Rails route then passes', () => repo(async root => {
+      await write(root, schema(lesson));
+      await routes(root, [route('GET', '/api/v1/lessons/:id(.:format)', 'api/v1/lessons', 'show')]);
+      assert.equal((await checkRailsRoutes({ root })).status, 'PASS');
+    }));
+
+    it('when the rails verifier runs then it compares the Rails routes with the contract before booting Rails', async () => {
+      const config = JSON.parse(await readFile(new URL('../../.harness/config/harness.json', import.meta.url), 'utf8'));
+      const [first] = config.verifiers.find(v => v.id === 'rails').commands;
+      assert.deepEqual(first, ['node', '../../tools/harness/api-contract.mjs', '--routes']);
+    });
   });
 });
