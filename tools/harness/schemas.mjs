@@ -152,6 +152,11 @@ export const githubIssueSchema = z.object({
   state: z.string().optional(), state_reason: z.string().nullable().optional(), labels: z.array(z.object({ name: z.string() })).default([]), pull_request: z.unknown().optional(),
 });
 export const githubIssueListSchema = z.array(githubIssueSchema);
+// Only the fields that decide whether a dependency SBI was merged through its Harness PR.
+export const githubTimelineSchema = z.array(z.object({ event: z.string().nullable().optional(),
+  source: z.object({ issue: z.object({ number: z.number().int().positive(), html_url: z.url(), pull_request: z.unknown().optional() }).optional() }).nullable().optional() }));
+export const githubPullSchema = z.object({ number: z.number().int().positive(), merged_at: z.string().nullable(), base: z.object({ ref: z.string() }), body: z.string().nullable().default(null) });
+export const githubPullCommitsSchema = z.array(z.object({ commit: z.object({ message: z.string() }) }));
 export const githubCommentSchema = z.object({ id: z.number().int().positive(), body: z.string().nullable().default(null), html_url: z.url() });
 export const githubCommentListSchema = z.array(githubCommentSchema);
 export const githubLabelListSchema = z.array(z.object({ name: z.string() }));
