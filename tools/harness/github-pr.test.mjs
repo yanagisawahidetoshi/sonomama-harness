@@ -530,7 +530,7 @@ describe('GitHub PR Adapter', () => {
       assert.deepEqual(pulls.map(p => p.head.ref).sort(), [`harness/${first.id}`, `harness/${second.id}`].sort());
       assert.notEqual((await readJson(join(root, first.runDir, 'sbi-snapshot.json'))).runId, (await readJson(join(root, second.runDir, 'sbi-snapshot.json'))).runId);
     })));
-    it('when the Issue run stops at the gate then a human approves it by the Issue URL, without a RUN_ID, and the Harness opens the PR', () => fixture(root => withIssue(root, sbiIssue(['sbi', 'ready'], planned({ securityImpact: ['外部サービス連携'], riskCandidate: 'L3' })), async ({ github }) => {
+    it('when the Issue run stops at the gate then a human approves it by the Issue URL, without a RUN_ID, and the Harness opens the PR', () => fixture(root => withIssue(root, sbiIssue(['sbi', 'ready'], planned({ riskCandidate: 'L3' })), async ({ github }) => {
       const run = await start(root);
       assert.equal(run.status, 'WAITING_FOR_HUMAN_GATE');
       const approved = await approveRun({ root, issueUrl, purpose: 'implementation-gate', identityProvider: human('Designer'), agent: agent(), quiet: true });
@@ -538,7 +538,7 @@ describe('GitHub PR Adapter', () => {
       assert.equal(approved.executionStatus, 'DONE');
       assert.equal((await github.state()).pulls.length, 1);
     })));
-    it('when two runs of the Issue wait at the gate then approving by the Issue URL refuses to guess and names both runs', () => fixture(root => withIssue(root, sbiIssue(['sbi', 'ready'], planned({ securityImpact: ['外部サービス連携'], riskCandidate: 'L3' })), async () => {
+    it('when two runs of the Issue wait at the gate then approving by the Issue URL refuses to guess and names both runs', () => fixture(root => withIssue(root, sbiIssue(['sbi', 'ready'], planned({ riskCandidate: 'L3' })), async () => {
       const first = await start(root), second = await start(root);
       await assert.rejects(approveRun({ root, issueUrl, purpose: 'implementation-gate', identityProvider: human('Designer'), quiet: true }),
         error => error.message.includes(first.id) && error.message.includes(second.id));

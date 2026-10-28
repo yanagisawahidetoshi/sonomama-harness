@@ -6,6 +6,26 @@ Rails API + Expo + React adminの将来構成に向けた、ローカルLoop Eng
 アプリ本体はplaceholder。クラウドFactory、CI/CD、実際のmergeは実装しない。
 このリポジトリはHarness専用。既存の動画PoC・参照ファイル・実行履歴・秘密情報は含めない。
 
+## 通常の開発フロー
+
+人間が使うコマンドは次の3つ。`harness:approve`はHuman Gateで止まったときだけ使う。
+
+```sh
+pnpm planner:sbi https://github.com/<owner>/<repo>/issues/<PBI番号>     # PBI → SBI Issue [sbi][needs-review]
+# 人間がSBI Issueをレビューし、全ACのTrusted Acceptanceを登録してから ready にする
+pnpm harness:run https://github.com/<owner>/<repo>/issues/<SBI番号>     # 実装 → ローカル検証 → PR作成
+pnpm harness:approve https://github.com/<owner>/<repo>/issues/<SBI番号> --phase gate   # Human Gateのときだけ。承認後にHarnessが再開しPRを作る
+```
+
+providerの既定はClaude。Codexだけ使える場合は各コマンドに`--provider codex`を付ける。
+PRのmergeは人間がGitHub Reviewのあとで行う。RUN_IDのコピー、`harness:resume`・`harness:pr`の実行は通常フローでは要らない。
+`harness:run`はIssueがopen・`sbi`と`ready`付き・`needs-review`なしで、Planner markerがあるときだけ開始する。
+Issue本文から実行SBIを組み立て、Run開始時点の内容を`.harness/runs/<id>/sbi-snapshot.json`に保存し、PRへ`.harness/state/sbi-<Issue番号>.json`としてcommitする。
+想定変更範囲は末尾`/`付きのディレクトリ許可（allowedDirs）になる。`apps/admin/`は`apps/admin-other/`を含まず、予約パスは範囲内でも書けない。
+ACごとのTrusted Acceptanceは、人間が`.harness/verification/`にscriptを書き、`.harness/config/harness.json`のverifiersへ
+`"trust": "acceptance"`、`"sbiIssue": <SBI番号>`、`"acceptanceIds": [IssueのAC ID]`で登録する。未登録・対応漏れ・余分な登録があればRunを開始しない。
+内部・保守用コマンドとAPI設計時のコマンドは`node tools/harness/cli.mjs`のhelpに分けて載せている。
+
 ## 実行
 
 Node.js 22以上、pnpm 8以上、Git 2.28以上が必要。レビューZIPの作成にはzip、テストにはunzipも使用する。
@@ -397,8 +417,8 @@ title・本文が今回の生成結果と完全一致する場合だけ再利用
 digest不一致（PBIやモデル出力が変わった）、人間による本文・title編集、`ready`化、closeのいずれかがあれば書き込まずに停止し、人間が判断する。
 途中失敗後の再実行で重複Issueを作らない。
 
-Plannerは`needs-review`のSBIをExecution Harnessへ投入しない。人間がレビューして`needs-review`を外し`ready`を付ける。
-Execution Harnessは引き続きSBI JSONを入力にし、Issueからの自動実行・`ready`への自動遷移・Risk確定・mergeは行わない。
+Plannerは`needs-review`のSBIをExecution Harnessへ投入しない。人間がレビューし、全ACのTrusted Acceptanceを登録してから`needs-review`を外し`ready`を付ける。
+`ready`のSBIは`pnpm harness:run <SBI Issue URL>`で実行する。SBI JSONは書かない。`ready`への自動遷移・Risk確定・mergeは行わない。
 手順は[.ai/workflows/pbi-sbi-planner.md](.ai/workflows/pbi-sbi-planner.md)。
 
 ## API Schema Planner

@@ -5,7 +5,8 @@ import { classifySecurity } from './security-enforcement.mjs';
 import { verifierRegistry } from './verifier.mjs';
 import { assertWritablePath } from './workspace.mjs';
 import { configSchema, rulesSchema, sbiSchema, riskPolicySchema, relativePath, securityPolicySchema, humanGatesSchema, lanePolicySchema } from './schemas.mjs';
-export async function check(root, sbiPath) {
+// sbi is the execution SBI built from a ready SBI Issue; without it the SBI JSON at sbiPath (or the configured sample) is read.
+export async function check(root, sbiPath, sbiValue) {
   const directories = ['apps/api', 'apps/mobile', 'apps/admin', 'packages/api-schema', 'docs/architecture', 'docs/product', 'docs/adr', 'docs/workflows', 'docs/security', '.harness/config', '.harness/rules', '.harness/skills', '.harness/state', '.harness/runs', 'tools/harness'];
   for (const path of directories) {
     if (!await exists(join(root, path)) || !(await stat(join(root, path))).isDirectory()) throw new Error(`Missing directory: ${path}`);
@@ -36,7 +37,7 @@ export async function check(root, sbiPath) {
   if (new Set(config.securityVerifiers.map(v => v.id)).size !== config.securityVerifiers.length) throw new Error('Duplicate security verifier');
   if (sbiPath) relativePath.parse(sbiPath);
   if (config.verifiers.some(v => securityPolicy.verifiers.some(sec=>sec.id===v.id) || config.securityVerifiers.some(sec=>sec.id===v.id))) throw new Error('General and security verifier IDs must be unique');
-  const sbi = sbiSchema.parse(await readJson(join(root, sbiPath || config.sbi)));
+  const sbi = sbiSchema.parse(sbiValue ?? await readJson(join(root, sbiPath || config.sbi)));
   classifySecurity({ sbi }, securityPolicy);
   const registry = verifierRegistry(config);
   const areas = new Set(config.verifiers.flatMap(v => v.areas));
@@ -48,13 +49,14 @@ export async function check(root, sbiPath) {
     for (const p of v.appliesTo || []) new RegExp(p);
     if (v.trust === 'acceptance') {
       if (!v.trustedScript || !/^\.harness\/verification\/[^\n]+\.mjs$/.test(v.trustedScript) || !await exists(join(root,v.trustedScript))) throw new Error('Trusted acceptance requires a protected .harness/verification script');
-    } else if (v.acceptanceIds.length || v.trustedScript) throw new Error('Application tests cannot provide trusted acceptance evidence');
+    } else if (v.acceptanceIds.length || v.trustedScript || v.sbiIssue !== undefined) throw new Error('Application tests cannot provide trusted acceptance evidence');
   }
   for (const a of sbi.acceptanceCriteria) {
     if (!registry.has(a.verifier) || registry.get(a.verifier).trust !== 'acceptance' || !registry.get(a.verifier).acceptanceIds.includes(a.id)) throw new Error(`Unsupported acceptance verifier or unregistered AC: ${a.verifier}/${a.id}`);
   }
   if (sbi.acceptanceCriteria.some(a => a.verifier === 'sample-bdd') && !sbi.allowedFiles.includes('greeting.mjs')) throw new Error('sample-bdd requires greeting.mjs');
   for (const path of sbi.allowedFiles) assertWritablePath(path, { allowSensitiveDeclaration: true });
+  for (const dir of sbi.allowedDirs) assertWritablePath(dir.slice(0, -1));
   const pkg = await readJson(join(root, 'package.json'));
   if (!pkg.private || !pkg.packageManager?.startsWith('pnpm@') || !pkg.scripts?.['harness:check'] || !pkg.scripts?.['harness:demo']) throw new Error('Invalid pnpm root package');
   return { ok: true, config, rules, sbi, riskPolicy, securityPolicy, humanGates, securityDocuments, lanePolicy };

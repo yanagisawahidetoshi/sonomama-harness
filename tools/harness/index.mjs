@@ -1,4 +1,4 @@
-import { mkdir, writeFile, realpath, readFile, lstat } from 'node:fs/promises';
+import { mkdir, writeFile, realpath, readFile, readdir, lstat } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { check } from './check.mjs';
@@ -19,6 +19,10 @@ import { digest, prepareWorkspace, commitWorkspace, changedFiles, workspaceInteg
 import { saveRun, loadRun, runPaths, withRunLock } from './run-store.mjs';
 import { classifyLane } from './lanes.mjs';
 import { assertState } from './state-machine.mjs';
+import { loadSbiIssue, inScope } from './sbi-issue.mjs';
+import { snapshotFromIssue, snapshotPath } from './sbi-source.mjs';
+import { parseIssueUrl } from './planner.mjs';
+import { githubCli } from './planner-github.mjs';
 export { check, judge, providerCommand };
 
 function controller(root, summary, quiet) {
@@ -152,7 +156,7 @@ async function executeLoop({ root, summary, inputs, quiet, agent = runAgent, rev
       }
       for (const file of response.files) {
         assertWritablePath(file.path);
-        if (!sbi.allowedFiles.includes(file.path)) throw new Error(`scope/path violation: ${file.path}`);
+        if (!inScope(sbi, file.path)) throw new Error(`scope/path violation: ${file.path}`);
         if (Buffer.byteLength(file.content) > rules.maxFileBytes) throw new Error(`scope file size exceeded: ${file.path}`);
         let parent = workspace;
         for (const segment of file.path.split('/')) {
@@ -174,7 +178,11 @@ async function executeLoop({ root, summary, inputs, quiet, agent = runAgent, rev
         await record(); return escalate('New high risk detected before applying code; declare the risk in SBI and obtain an implementation gate in a new run', 'NEW_HIGH_RISK');
       }
       for (const file of response.files) { const path = join(workspace, file.path); await mkdir(dirname(path), { recursive: true }); await writeFile(path, file.content); }
-      summary.headSha = await commitWorkspace(workspace, `SBI ${sbi.id}, iteration ${iteration}`, sbi.allowedFiles);
+      // A run from an SBI Issue commits its snapshot and links itself in the trailers, as the CI SBI source check requires.
+      const snapshot = inputs.sbiSnapshot;
+      if (snapshot) { const path = join(workspace, snapshotPath(snapshot)); await mkdir(dirname(path), { recursive: true }); await writeFile(path, `${JSON.stringify(snapshot, null, 2)}\n`); }
+      const trailers = snapshot ? `\n\nHarness-Run: ${summary.id}\nSBI-Issue: ${snapshot.source.url}` : '';
+      summary.headSha = await commitWorkspace(workspace, `SBI ${sbi.id}, iteration ${iteration}${trailers}`, sbi.allowedFiles);
       summary.workspaceDigest = await workspaceFingerprint(workspace);
       result.headSha = summary.headSha;
       result.agent = { status: 'PASS', files: response.files.map(f => f.path) };
@@ -204,7 +212,7 @@ async function executeLoop({ root, summary, inputs, quiet, agent = runAgent, rev
       if (!quiet) for (const c of result.verification.checks) console.log(`  ${c.id}: ${c.status}${c.reason ? ` (${c.reason})` : ''}`);
       if (result.verification.status === 'PASS' && result.security.status === 'PASS') {
         await transition('REVIEWING', `iteration ${iteration}`);
-        result.review = redact(await reviewer({ root, workspace, sbi, rules, verification: result.verification }));
+        result.review = redact(await reviewer({ root, workspace, sbi, rules, verification: result.verification, files }));
         await json(join(iterDir, 'review.json'), result.review);
         if (config.semanticReview.enabled) {
           result.semanticReview = semanticReviewer ? { ...await semanticReviewer({ root, workspace, sbi, verification: result.verification }), enabled: true } : { enabled: true, status: 'FAIL', reasons: ['semantic reviewer is enabled but no trusted adapter is configured'] };
@@ -240,9 +248,12 @@ async function executeLoop({ root, summary, inputs, quiet, agent = runAgent, rev
   }
   return escalate(`iteration limit (${config.maxIterations}) reached`, 'ITERATION_LIMIT');
 }
-async function runProtected({ root, provider, sbiPath, quiet = false, agent = runAgent, reviewer = review, semanticReviewer, full = false, publish = false }) {
+async function runProtected({ root, provider, sbiPath, issueUrl, quiet = false, agent = runAgent, reviewer = review, semanticReviewer, full = false, publish = false, issues = githubCli }) {
   root = await realpath(root);
-  const { config, rules, sbi, riskPolicy, securityPolicy, humanGates, securityDocuments, lanePolicy } = await check(root, sbiPath);
+  if (issueUrl && sbiPath) throw new Error('Give either an SBI Issue URL or --sbi, not both');
+  // The Issue is read and validated before any run directory or worktree exists.
+  const source = issueUrl ? await loadSbiIssue({ issueUrl, config: (await check(root)).config, github: issues }) : null;
+  const { config, rules, sbi, riskPolicy, securityPolicy, humanGates, securityDocuments, lanePolicy } = await check(root, sbiPath, source?.sbi);
   assertSafeInput({config,rules,sbi,riskPolicy,securityPolicy,humanGates,securityDocuments,lanePolicy});
   provider ??= config.provider;
   if (!['fake', 'codex', 'claude'].includes(provider)) throw new Error(`Unknown provider: ${provider}`);
@@ -250,11 +261,14 @@ async function runProtected({ root, provider, sbiPath, quiet = false, agent = ru
   const { directory, workspace } = runPaths(root, id);
   await mkdir(directory, { recursive: true });
   const baselineSha = await prepareWorkspace(root, workspace, sbi);
-  const inputs = { config, rules, sbi, riskPolicy, securityPolicy, humanGates, securityDocuments, lanePolicy, toolFingerprint: await toolFingerprint(root), skill: await readFile(join(root, '.harness/skills/implement.md'), 'utf8') };
-  const summary = { id, runDir: `.harness/runs/${id}`, sbi: sbi.id, sbiPath: sbiPath || config.sbi, provider,
+  const sbiSnapshot = source ? snapshotFromIssue({ ref: source.ref, issue: source.issue, runId: id, sbi }) : undefined;
+  if (sbiSnapshot) await json(join(directory, 'sbi-snapshot.json'), sbiSnapshot);
+  const inputs = { config, rules, sbi, riskPolicy, securityPolicy, humanGates, securityDocuments, lanePolicy, sbiSnapshot, toolFingerprint: await toolFingerprint(root), skill: await readFile(join(root, '.harness/skills/implement.md'), 'utf8') };
+  const summary = { id, runDir: `.harness/runs/${id}`, sbi: sbi.id, sbiPath: source ? null : sbiPath || config.sbi, provider,
+    ...(source ? { sbiIssue: sbiSnapshot.source } : {}),
     // harness:run opens the PR itself once execution is DONE, but only for an SBI it was given. The fake provider (harness:demo)
     // and the configured sample SBI never publish.
-    publish: publish === true && provider !== 'fake' && Boolean(sbiPath), fullVerification:full, status: 'PENDING', executionStatus: 'PENDING', reason: null, consecutiveFailures: 0, iterations: [], events: [],
+    publish: publish === true && provider !== 'fake' && Boolean(sbiPath || source), fullVerification:full, status: 'PENDING', executionStatus: 'PENDING', reason: null, consecutiveFailures: 0, iterations: [], events: [],
     baselineSha, headSha: baselineSha, workspaceDigest: await workspaceFingerprint(workspace), inputsDigest: digest(inputs), gate: { required: false, state: 'NOT_REQUIRED' },
     merge: { state: 'NOT_ASSESSED', autoMergeEligible: false }, startedAt: new Date().toISOString() };
   await json(join(directory, 'inputs.json'), inputs);
@@ -262,10 +276,10 @@ async function runProtected({ root, provider, sbiPath, quiet = false, agent = ru
   await transition('PENDING', sbi.title);
   if (sbi.ambiguous || sbi.requiresDesignDecision) return escalate(humanGate(sbi, rules), sbi.ambiguous ? 'SPEC_AMBIGUOUS' : 'DESIGN_DECISION_REQUIRED');
   const excludedSources = await readJson(join(directory,'workspace-exclusions.json'));
-  const preflightFiles = await Promise.all(sbi.allowedFiles.map(async path => {
+  const preflightFiles = [...await Promise.all(sbi.allowedFiles.map(async path => {
     let added = ''; try { added = await readFile(join(workspace,path),'utf8'); } catch(e) { if(e.code!=='ENOENT') throw e; }
     return {path,status:'M',binary:false,added,excludedSecret:excludedSources.some(f=>f.path===path)};
-  }));
+  })), ...sbi.allowedDirs.map(path => ({path,status:'M',binary:false,added:'',excludedSecret:false}))];
   summary.lane = classifyLane(preflightFiles,sbi,lanePolicy);
   summary.designApproval = {required:summary.lane.requiresDesignApproval,state:summary.lane.requiresDesignApproval?'WAITING_FOR_DESIGN_APPROVAL':'NOT_REQUIRED',contextDigest:digest({inputsDigest:summary.inputsDigest,baselineSha,promotion:sbi.promotion || null})};
   await json(join(directory,'lane-assessment.json'),summary.lane);
@@ -277,7 +291,7 @@ async function runProtected({ root, provider, sbiPath, quiet = false, agent = ru
   summary.riskPreflight = preflight;
   if (gateReason || preflight.level === 3) {
     summary.gate = { required: true, state: 'WAITING_FOR_HUMAN_GATE', approvalState:'WAITING_FOR_HUMAN_APPROVAL', reason: gateReason || (summary.designApproval.required ? 'Human Gate: Design Approval for prototype promotion' : null) || `Human Gate: ${preflight.reasons.join(', ')}`,
-      headSha: baselineSha, contextDigest: digest({ inputsDigest: summary.inputsDigest, baselineSha, allowedFiles: sbi.allowedFiles, reasons: preflight.reasons, securityAssessment:summary.securityAssessment }) };
+      headSha: baselineSha, contextDigest: digest({ inputsDigest: summary.inputsDigest, baselineSha, allowedFiles: sbi.allowedFiles, allowedDirs: sbi.allowedDirs, reasons: preflight.reasons, securityAssessment:summary.securityAssessment }) };
     summary.reason = summary.gate.reason || 'Human Gate: Design Approval for prototype promotion';
     await json(join(directory, 'risk-preflight.json'), preflight);
   }
@@ -343,12 +357,23 @@ export async function runHarness(options) {
   const root = await realpath(options.root);
   return withEvidenceProtection(root, async () => continueToPullRequest({...options,root}, await runProtected({...options,root})), { extensions: options.redactionExtensions || [] });
 }
+// An SBI Issue URL names the run that waits for this decision. More than one candidate is never guessed.
+async function waitingRun(root, issueUrl, purpose) {
+  const { url } = parseIssueUrl(issueUrl);
+  const directory = join(root, '.harness/state/runs');
+  const summaries = await Promise.all((await readdir(directory)).filter(name => name.endsWith('.json')).map(name => readJson(join(directory, name))));
+  const waiting = summaries.filter(s => s.sbiIssue?.url === url && !s.cleanedAt && (purpose === 'implementation-gate' ? s.gate?.state === 'WAITING_FOR_HUMAN_GATE'
+    : purpose === 'design-approval' ? s.designApproval?.state === 'WAITING_FOR_DESIGN_APPROVAL' : s.executionStatus === 'DONE' && !s.pullRequest));
+  if (waiting.length !== 1) throw new Error(`${url} を待っているrunが${waiting.length}件あります${waiting.length ? `（${waiting.map(s => s.id).join(', ')}）。--run RUN_ID で指定してください` : ''}`);
+  return waiting[0].id;
+}
 // harness:approve records the decision through the trusted identity adapter, then continues the run as harness:resume and harness:pr would.
 export async function approveRun(options) {
   const root = await realpath(options.root);
   return withEvidenceProtection(root, async () => {
-    await recordDecision({ root, runId: options.runId, purpose: options.purpose, decision: options.decision, identityProvider: options.identityProvider });
-    return continueToPullRequest({...options,root}, await resumeProtected({...options,root}));
+    const runId = options.runId ?? await waitingRun(root, options.issueUrl, options.purpose);
+    await recordDecision({ root, runId, purpose: options.purpose, decision: options.decision, identityProvider: options.identityProvider });
+    return continueToPullRequest({...options,root,runId}, await resumeProtected({...options,root,runId}));
   }, { extensions: options.redactionExtensions || [] });
 }
 export async function openPullRequest(options) {

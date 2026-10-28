@@ -7,8 +7,10 @@
 4. SBI Quality JudgeがFAILならIssueは作成されず、exit 1で修正理由が表示される。PBIを直して再実行する。
 5. PASSなら依存順にSBI Issueを作成し、`sbi`と`needs-review`を付与する。元PBIに`## Generated SBI`一覧をコメントする。
 6. 人間がSBI Issueをレビューする。見るのは分割粒度、受け入れ要件、Gherkin、依存関係、Security影響、検証方法。
-7. 採用するSBIは`needs-review`を外して`ready`を付ける。`gh issue edit <number> --remove-label needs-review --add-label ready`。
-8. `ready`のSBIを人間がSBI JSON（docs/product/sbi-template.md）へ落とし、Execution Harnessで実行する。
+7. 採用するSBIは、ACごとのTrusted Acceptanceを人間が書いてレビューし、`.harness/config/harness.json`のverifiersへ
+   `"trust": "acceptance"`、`"sbiIssue": <SBI番号>`、`"acceptanceIds": [IssueのAC ID]`で登録する。
+8. 全ACの対応を確認したら`needs-review`を外して`ready`を付ける。`gh issue edit <number> --remove-label needs-review --add-label ready`。
+9. `pnpm harness:run <SBI Issue URL>`で実行する。SBI JSONは書かない。HarnessがIssueを取得・検証し、Run snapshotを保存して実装・検証・PR作成まで進める。
 
 ## SBI Issueの項目
 
@@ -34,4 +36,4 @@ CI/CDとSecretの変更はLEVEL 3 / Security Gateの対象になる。
 
 ## やらないこと
 
-Jira等の他トラッカー、Issueからの自動実行、`ready`への自動遷移、Human Reviewの省略、最終Risk確定、自動merge。
+Jira等の他トラッカー、`ready`への自動遷移、Human Reviewの省略、最終Risk確定、自動merge。
