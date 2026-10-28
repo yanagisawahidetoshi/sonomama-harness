@@ -14,6 +14,7 @@ import { git } from './workspace.mjs';
 import { exists, readJson } from './io.mjs';
 import { renderSbiBody } from './planner.mjs';
 import { runLinks, verifySbiSource } from './sbi-source.mjs';
+import { loadImpact } from './impact.mjs';
 
 const head = 'a'.repeat(40), old = 'b'.repeat(40), base = 'd'.repeat(40);
 let nextId = 1;
@@ -479,8 +480,9 @@ describe('GitHub PR Adapter', () => {
     // A human wrote and registered the Trusted Acceptance of Issue #7 before marking it ready. No SBI JSON exists for it.
     const registered = async root => {
       await writeFile(join(root, '.harness/verification/issue-7.mjs'), `import assert from "node:assert/strict";import{readFileSync}from"node:fs";import{join}from"node:path";assert.equal(readFileSync(join(process.argv[2],${JSON.stringify(home)}),"utf8"),"ホーム");console.log(JSON.stringify({acceptance:["AC-1","AC-2"]}));`);
+      await mkdir(join(root, '.harness/acceptance'), { recursive: true });
+      await writeFile(join(root, '.harness/acceptance/sbi-7.json'), JSON.stringify({ version: 1, sbiIssue: 7, verifiers: [{ id: 'issue-7-acceptance', trustedScript: '.harness/verification/issue-7.mjs', planned: ['ホーム見出し'], acceptanceIds: ['AC-1', 'AC-2'] }] }));
       await update(root, '.harness/config/harness.json', c => {
-        c.verifiers.push({ id: 'issue-7-acceptance', trust: 'acceptance', trustedScript: '.harness/verification/issue-7.mjs', directory: '.', planned: ['ホーム見出し'], commands: [], acceptanceIds: ['AC-1', 'AC-2'], sbiIssue: 7 });
         // The admin placeholder has no installable app in the fixture; its verifier stands in with a passing command.
         c.verifiers.find(v => v.id === 'admin').commands = [[process.execPath, '-e', 'process.exit(0)']];
       });
@@ -503,20 +505,23 @@ describe('GitHub PR Adapter', () => {
       assert.equal(committed.runId, run.id);
       assert.deepEqual(await runLinks(workspace, run.baselineSha), [{ runId: run.id, url: issueUrl }]);
       const files = [{ path: home }, { path: '.harness/state/sbi-7.json' }];
-      // CI rebuilds the SBI with the harness.json of the PR head.
-      const source = await verifySbiSource({ root: workspace, base: run.baselineSha, files, required: [`production:${home}`], repository: 'acme/app', config: await readJson(join(workspace, '.harness/config/harness.json')) });
+      // CI rebuilds the SBI with the registration of Issue #7 at the PR head.
+      const source = await verifySbiSource({ root: workspace, base: run.baselineSha, files, required: [`production:${home}`], repository: 'acme/app', config: (await loadImpact({ root: workspace, base: run.baselineSha })).config });
       assert.equal(source.status, 'PASS', source.reasons.join('; '));
     })));
-    // harness.json holds the Trusted Acceptance of every SBI Issue. CI rebuilds this SBI from the registrations of Issue #7 only,
-    // while a local resume compares the whole harness.json with the one the run started with.
+    // Each SBI Issue registers its Trusted Acceptance in its own file. CI rebuilds this SBI from .harness/acceptance/sbi-7.json only,
+    // so another Issue registered on main meanwhile changes nothing for it. Locally any new commit still stops the run (ADR-0001).
     it('when another Issue registers its Trusted Acceptance after the run started then CI still rebuilds the same SBI, while a local resume stops because the source moved', () => fixture(root => withIssue(root, sbiIssue(), async () => {
       const run = await start(root);
-      await update(root, '.harness/config/harness.json', c => { c.verifiers.push({ id: 'issue-8-acceptance', trust: 'acceptance', trustedScript: '.harness/verification/issue-7.mjs', directory: '.', planned: ['別Issue'], commands: [], acceptanceIds: ['AC-1'], sbiIssue: 8 }); });
-      await commitFixture(root);
       const workspace = join(root, run.runDir, 'workspace');
-      const source = await verifySbiSource({ root: workspace, base: run.baselineSha, files: [{ path: home }, { path: '.harness/state/sbi-7.json' }], required: [`production:${home}`], repository: 'acme/app', config: await readJson(join(root, '.harness/config/harness.json')) });
+      await writeFile(join(workspace, '.harness/acceptance/sbi-8.json'), JSON.stringify({ version: 1, sbiIssue: 8, verifiers: [{ id: 'issue-8-acceptance', trustedScript: '.harness/verification/issue-7.mjs', planned: ['別Issue'], acceptanceIds: ['AC-1'] }] }));
+      await git(workspace, ['add', '--all']);
+      await git(workspace, ['commit', '-m', 'register the Trusted Acceptance of SBI Issue #8 on main']);
+      const { config, files } = await loadImpact({ root: workspace, base: run.baselineSha });
+      assert.deepEqual(config.verifiers.filter(v => v.sbiIssue).map(v => v.id), ['issue-7-acceptance']);
+      const source = await verifySbiSource({ root: workspace, base: run.baselineSha, files, required: [`production:${home}`], repository: 'acme/app', config });
       assert.equal(source.status, 'PASS', source.reasons.join('; '));
-      // Locally any new commit on the source checkout stops the run, before harness.json is compared (ADR-0001: the tested SHA is the merge result only on its baseline).
+      await git(root, ['commit', '--allow-empty', '-m', 'main moved']);
       const resumed = await resumeRun({ root, runId: run.id, quiet: true });
       assert.equal(resumed.executionStatus, 'ESCALATED');
       assert.match(resumed.reason, /source HEAD changed/);
