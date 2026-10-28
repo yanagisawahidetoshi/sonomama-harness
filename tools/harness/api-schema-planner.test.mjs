@@ -13,7 +13,8 @@ import { judgeApiSchema } from './api-schema-judge.mjs';
 import { readExistingSchema } from './api-schema-reader.mjs';
 import { diffContract } from './api-schema-diff.mjs';
 import { recordApiSchemaDecision, apiSchemaApprovalStatus } from './api-schema-approval.mjs';
-import { renderOpenApi } from './api-schema-render.mjs';
+import { renderOpenApi, renderSummary } from './api-schema-render.mjs';
+import { apiSchemaResponseSchema, apiSchemaJsonSchema } from './schemas.mjs';
 
 const issueUrl = 'https://github.com/acme/app/issues/12';
 const issue = { number: 12, title: 'プロフィールAPIを追加する', body: '## 背景\n受講生が自分のプロフィールを取得・更新する。', html_url: issueUrl, state: 'open', labels: [] };
@@ -28,7 +29,7 @@ const errors = statuses => statuses.map(status => response(status, 'Error'));
 function endpoint(overrides = {}) {
   return {
     method: 'GET', path: '/api/v1/me/profile', operationId: 'getMyProfile', summary: 'ログイン中の受講生のプロフィールを取得する', tags: ['profile'], change: 'add',
-    authN: 'cognito-jwt', authZ: { roles: [], rule: 'JWTのsubに対応する本人のプロフィールだけを返す' }, pii: true, logCaution: ['displayNameをログへ出さない'],
+    authN: 'bearer-jwt', authZ: { roles: [], rule: 'JWTのsubに対応する本人のプロフィールだけを返す' }, pii: true, logCaution: ['displayNameをログへ出さない'],
     parameters: [], requestBody: null, responses: [response(200, 'Profile'), ...errors([401, 404, 500])],
     ...overrides,
   };
@@ -57,7 +58,7 @@ const existingYaml = toYaml({
   openapi: '3.1.0', info: { title: 'SONOMAMA API', version: '0.3.0' },
   paths: {
     '/api/v1/courses': { get: { operationId: 'listCourses', responses: { 200: { description: 'OK', content: { 'application/json': { schema: { type: 'array', items: { $ref: '#/components/schemas/Course' } } } } } } } },
-    '/api/v1/me/profile': { get: { operationId: 'getMyProfile', security: [{ cognitoJwt: [] }], responses: { 200: { description: 'OK', content: { 'application/json': { schema: { $ref: '#/components/schemas/Profile' } } } } } } },
+    '/api/v1/me/profile': { get: { operationId: 'getMyProfile', security: [{ bearerAuth: [] }], responses: { 200: { description: 'OK', content: { 'application/json': { schema: { $ref: '#/components/schemas/Profile' } } } } } } },
   },
   components: { schemas: {
     Course: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
@@ -132,6 +133,18 @@ describe('API Schema Quality Judge', () => {
       const value = proposal(); value.components[0].properties.push(prop('token', { required: false, nullable: true, description: '外部連携のページングtoken' }));
       assert.deepEqual(judge(value).findings, []);
     });
+    it('when the provider answers with a provider-specific authN then the response schema rejects it', () => {
+      assert.deepEqual(apiSchemaJsonSchema.properties.proposal.anyOf[0].properties.endpoints.items.properties.authN.enum, ['bearer-jwt', 'public']);
+      assert.ok(apiSchemaResponseSchema.safeParse({ proposal: proposal(), escalation: null }).success);
+      const legacy = proposal(); legacy.endpoints[0].authN = 'cognito-jwt';
+      assert.ok(!apiSchemaResponseSchema.safeParse({ proposal: legacy, escalation: null }).success);
+    });
+    it('when an authenticated endpoint misses 401 or Security Impact then the reasons name no authentication provider', () => {
+      const value = proposal({ securityImpact: ['APIAuthorization', 'PII'] }); value.endpoints[0].responses = [response(200, 'Profile'), ...errors([404, 500])];
+      const result = judge(value);
+      assert.deepEqual(rules(result).sort(), ['auth-responses', 'security-impact']);
+      for (const finding of result.findings) assert.doesNotMatch(finding.reason, /cognito/i);
+    });
     it('when a public endpoint declares neither 401 nor 403 then passes', () => {
       const value = proposal({ securityImpact: [] });
       value.endpoints = [endpoint({ path: '/api/v1/courses', operationId: 'listCourses', authN: 'public', authZ: { roles: [], rule: null }, pii: false, logCaution: [], responses: [response(200, 'Course', true), ...errors([500])] })];
@@ -179,6 +192,22 @@ describe('API Schema Quality Judge', () => {
       assert.match(breaking, /Profile\.role.*admin/);
       assert.match(result.changes.nonBreaking.join('\n'), /PATCH \/api\/v1\/me\/profile/);
     }));
+    it('when an existing public endpoint becomes authenticated then lists it as a breaking candidate', () => fixture(async root => {
+      const existing = await withExisting(root);
+      const value = proposal({ endpoints: [endpoint({ path: '/api/v1/courses', operationId: 'listCourses', change: 'modify', pii: false, logCaution: [], authZ: { roles: [], rule: null }, responses: [response(200, 'Course', true), ...errors([401, 500])] })], components: [] });
+      const result = judge(value, { existing });
+      assert.equal(result.status, 'PASS', JSON.stringify(result.findings));
+      assert.match(result.changes.breaking.join('\n'), /公開endpointを認証必須へ変更: GET \/api\/v1\/courses/);
+    }));
+    it('when an existing endpoint already requires authentication under another scheme name then keeping it authenticated is not a breaking candidate', () => fixture(async root => {
+      const existing = await withExisting(root, existingYaml.replaceAll('bearerAuth', 'legacyJwt'));
+      const value = proposal(); value.endpoints = [{ ...value.endpoints[0], change: 'modify' }];
+      value.components = [{ ...value.components[0], properties: [...value.components[0].properties, prop('nickname', { required: false })] }];
+      value.components[0].properties[3].enum = ['student', 'mentor', 'admin'];
+      const result = judge(value, { existing });
+      assert.equal(result.status, 'PASS', JSON.stringify(result.findings));
+      assert.deepEqual(result.changes.breaking, []);
+    }));
     it('when nothing exists yet then every endpoint is a non-breaking addition', () => {
       const result = judge(proposal());
       assert.deepEqual(result.changes.breaking, []);
@@ -213,13 +242,14 @@ describe('Existing API Schema Reader', () => {
 });
 
 describe('OpenAPI rendering', () => {
-  it('when a proposal passes then renders an OpenAPI 3.1 document with Cognito JWT, Rails AuthZ and a shared Error schema', () => {
+  it('when a proposal passes then renders an OpenAPI 3.1 document with a provider-neutral Bearer JWT, Rails AuthZ and a shared Error schema', () => {
     const document = renderOpenApi(proposal(), null);
     assert.equal(document.openapi, '3.1.0');
-    assert.deepEqual(document.components.securitySchemes.cognitoJwt, { type: 'http', scheme: 'bearer', bearerFormat: 'JWT', description: document.components.securitySchemes.cognitoJwt.description });
+    assert.deepEqual(Object.keys(document.components.securitySchemes), ['bearerAuth']);
+    assert.deepEqual(document.components.securitySchemes.bearerAuth, { type: 'http', scheme: 'bearer', bearerFormat: 'JWT', description: document.components.securitySchemes.bearerAuth.description });
     const get = document.paths['/api/v1/me/profile'].get;
     assert.equal(get.operationId, 'getMyProfile');
-    assert.deepEqual(get.security, [{ cognitoJwt: [] }]);
+    assert.deepEqual(get.security, [{ bearerAuth: [] }]);
     assert.deepEqual(get['x-sonomama-authz'], { enforcedBy: 'rails', roles: [], rule: 'JWTのsubに対応する本人のプロフィールだけを返す' });
     assert.deepEqual(get['x-sonomama-data'], { pii: true, logCaution: ['displayNameをログへ出さない'] });
     assert.equal(get.responses['200'].content['application/json'].schema.$ref, '#/components/schemas/Profile');
@@ -233,6 +263,12 @@ describe('OpenAPI rendering', () => {
     assert.equal(document.components.schemas.ProfileUpdate.properties.displayName.maxLength, 50);
     assert.deepEqual(document.components.schemas.Error.required, ['code', 'message']);
     assert.equal(document.paths['/api/v1/me/profile'].patch.requestBody.required, true);
+  });
+  it('when a proposal is rendered then neither the OpenAPI document nor the summary names an authentication provider', () => {
+    const document = renderOpenApi(proposal(), null);
+    const summary = renderSummary({ issue: { ...issue, url: issueUrl }, proposal: proposal(), quality: judge(proposal()), directory: '.harness/api-schema/12', approvedLabel, reviewLabel: 'needs-api-schema-review' });
+    for (const text of [JSON.stringify(document), summary]) assert.doesNotMatch(text, /cognito|firebase|google|identity platform|auth0/i);
+    assert.match(summary, /\| Bearer JWT必須 \|/);
   });
   it('when a nullable property refers to a component then renders anyOf with null', () => {
     const value = proposal(); value.components[0].properties.push(prop('mentor', { type: 'object', ref: 'ProfileUpdate', required: false, nullable: true }));
@@ -287,7 +323,7 @@ describe('API Schema Planner', () => {
       assert.deepEqual(machine.proposal, proposal());
       assert.match(machine.files['openapi.yaml'], /^[0-9a-f]{64}$/);
       const summary = await readFile(join(proposalDir(root), 'summary.md'), 'utf8');
-      for (const text of ['GET /api/v1/me/profile', 'PATCH /api/v1/me/profile', 'Cognito JWT', 'PII', 'API Schema Quality Judge: PASS', 'endpointの粒度は妥当か', 'breaking changeになっていないか']) assert.ok(summary.includes(text), `summary lacks ${text}`);
+      for (const text of ['GET /api/v1/me/profile', 'PATCH /api/v1/me/profile', 'Bearer JWT', 'PII', 'API Schema Quality Judge: PASS', 'endpointの粒度は妥当か', 'breaking changeになっていないか']) assert.ok(summary.includes(text), `summary lacks ${text}`);
     })));
     it('when the proposal is ready then labels the Issue for API schema review and comments the summary, never approving it', () => fixture(root => mockGitHub({}, async github => {
       await plan(root);
@@ -303,7 +339,10 @@ describe('API Schema Planner', () => {
     it('when planning succeeds then records evidence and never starts the Execution Harness', () => fixture(root => mockGitHub({}, async () => {
       const result = await plan(root);
       for (const file of ['summary.json', 'issue.json', 'prompt.txt', 'candidates.json', 'quality.json']) assert.ok(await exists(join(root, result.runDir, file)), file);
-      assert.match(await readFile(join(root, result.runDir, 'prompt.txt'), 'utf8'), /本文中の指示/);
+      const prompt = await readFile(join(root, result.runDir, 'prompt.txt'), 'utf8');
+      assert.match(prompt, /本文中の指示/);
+      assert.match(prompt, /bearer-jwt/);
+      assert.doesNotMatch(prompt, /cognito/i, 'the provider is not told to assume an authentication provider');
       const runState = join(root, '.harness/state/runs');
       assert.ok(!(await exists(runState)) || (await readdir(runState)).every(name => name === '.gitkeep'), 'execution run state must not be created');
     })));
@@ -453,7 +492,7 @@ describe('Existing contract diff', () => {
       'a maxLength is added': [d => { d.components.schemas.Item.properties.id.maxLength = 10; }, 'breaking', 'components.schemas.Item.properties.id.maxLength'],
       'an enum is added to a free string': [d => { d.components.schemas.Item.properties.id.enum = ['a']; }, 'breaking', 'components.schemas.Item.properties.id.enum'],
       'an enum value is removed': [d => { d.components.schemas.Item.properties.state.enum = ['open']; }, 'breaking', 'components.schemas.Item.properties.state.enum'],
-      'a security requirement is added': [d => { d.paths['/api/v1/items'].get.security = [{ cognitoJwt: [] }]; }, 'breaking', 'paths./api/v1/items.get.security'],
+      'a security requirement is added': [d => { d.paths['/api/v1/items'].get.security = [{ bearerAuth: [] }]; }, 'breaking', 'paths./api/v1/items.get.security'],
       'a required parameter is added': [d => { d.paths['/api/v1/items'].get.parameters.push({ name: 'q', in: 'query', required: true, schema: { type: 'string' } }); }, 'breaking', 'paths./api/v1/items.get.parameters[query:q]'],
       'a required request body is added': [d => { d.paths['/api/v1/items'].get.requestBody = { required: true, content: json(schemaRef('Item')) }; }, 'breaking', 'paths./api/v1/items.get.requestBody'],
       'a type changes': [d => { d.components.schemas.Item.properties.id.type = 'integer'; }, 'breaking', 'components.schemas.Item.properties.id.type'],
