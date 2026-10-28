@@ -20,7 +20,7 @@ import { saveRun, loadRun, runPaths, withRunLock } from './run-store.mjs';
 import { classifyLane } from './lanes.mjs';
 import { assertState } from './state-machine.mjs';
 import { loadSbiIssue, inScope } from './sbi-issue.mjs';
-import { snapshotFromIssue, snapshotPath } from './sbi-source.mjs';
+import { snapshotFromIssue, snapshotPath, riskView, snapshotVerified } from './sbi-source.mjs';
 import { parseIssueUrl } from './planner.mjs';
 import { githubCli } from './planner-github.mjs';
 export { check, judge, providerCommand };
@@ -77,6 +77,15 @@ async function readGitHub(root, summary, inputs, github) {
     return await githubState({ github, root, remote: inputs.config.github.remote, repository: { owner, repo }, pullRequest: summary.pullRequest, headSha: summary.headSha, requiredChecks: inputs.config.github.requiredChecks });
   } catch (error) { return { unavailable: redactText(error.message) }; }
 }
+// Files as Risk and Security see them. The Run snapshot of an SBI Issue counts by its values only while it is verified now.
+async function riskFiles(root, summary, inputs, files) {
+  const snapshot = inputs.sbiSnapshot;
+  if (!snapshot) return files;
+  const check = await snapshotVerified({ workspace: runPaths(root, summary.id).workspace, base: summary.baselineSha, files, snapshot });
+  summary.snapshotVerification = { ...check, headSha: summary.headSha, at: new Date().toISOString() };
+  await json(join(runPaths(root, summary.id).directory, 'sbi-source.json'), summary.snapshotVerification);
+  return riskView(files, { snapshot, verified: check.verified });
+}
 async function assessMerge(root, summary, inputs, quiet, github = githubPrCli) {
   const { directory, workspace } = runPaths(root, summary.id);
   const { transition } = controller(root, summary, quiet);
@@ -88,9 +97,11 @@ async function assessMerge(root, summary, inputs, quiet, github = githubPrCli) {
   const files = await changedFiles(workspace, summary.baselineSha, summary.headSha);
   await json(join(directory, 'changes.json'), { baselineSha: summary.baselineSha, headSha: summary.headSha, files });
   const last = summary.iterations.at(-1);
-  summary.securityAssessment = combineSecurity(summary.securityAssessment, classifySecurity({ files, sbi: inputs.sbi }, inputs.securityPolicy));
+  const assessed = await riskFiles(root, summary, inputs, files);
+  // Each assessment starts from the execution's assessment, so a snapshot verified earlier but not now cannot keep a lower level.
+  summary.securityAssessment = combineSecurity(summary.executionSecurityAssessment ?? summary.securityAssessment, classifySecurity({ files: assessed, sbi: inputs.sbi }, inputs.securityPolicy));
   await json(join(directory, 'security-assessment.json'), { ...summary.securityAssessment, headSha: summary.headSha });
-  summary.risk = assessRisk({ files, metadata: metadata(inputs.sbi), humanGate: summary.gate.required, aiRisk: last.semanticReview?.riskLevel ?? null, securityAssessment: summary.securityAssessment, lane:summary.lane }, inputs.riskPolicy);
+  summary.risk = assessRisk({ files: assessed, metadata: metadata(inputs.sbi), humanGate: summary.gate.required, aiRisk: last.semanticReview?.riskLevel ?? null, securityAssessment: summary.securityAssessment, lane:summary.lane }, inputs.riskPolicy);
   await json(join(directory, 'risk-assessment.json'), { ...summary.risk, phase: 'post-execution', headSha: summary.headSha, inputsDigest: summary.inputsDigest });
   const securityVerification = last.securityVerification;
   if (summary.securityAssessment.requiredVerifiers.some(id => !securityVerification.requiredVerifiers.includes(id))) throw new Error('Required security checks changed; re-verification required');
@@ -197,7 +208,8 @@ async function executeLoop({ root, summary, inputs, quiet, agent = runAgent, rev
         lane:summary.lane, full:summary.fullVerification,
         requiredVerifiers:summary.securityAssessment.requiredVerifiers.filter(id=>generalIds.has(id)) }));
       await json(join(iterDir,'verifier-selection.json'),result.verification.checks.map(({id,selectionReasons,required,status})=>({id,selectionReasons,required,status})));
-      summary.securityAssessment = combineSecurity(summary.securityAssessment, classifySecurity({files,sbi},securityPolicy));
+      summary.securityAssessment = combineSecurity(summary.securityAssessment, classifySecurity({files:await riskFiles(root,summary,inputs,files),sbi},securityPolicy));
+      summary.executionSecurityAssessment = summary.securityAssessment;
       result.securityVerification = redact(await verifySecurity({ workspace, sbi, assessment: summary.securityAssessment, policy: securityPolicy, config, headSha:summary.headSha, verification:result.verification }));
       result.security = { id:'security',required:true,status:securityPassed(result.securityVerification)?'PASS':'FAIL' };
       result.gateApproved = await resolveGate(root,summary);
