@@ -194,6 +194,31 @@ describe('Verifier isolation', () => {
     }))));
   });
 
+  describe('given a Compose based verifier that also runs a Harness script', () => {
+    it('when verifying then runs the Harness script on the host without credentials and Compose only after checking the file', () => fixture(async root => fakeDocker(async ({ docker, calls }) => withCredentials(async () => {
+      const { config } = await check(root);
+      config.isolation = { docker };
+      await writeFile(join(root, 'compose.yaml'), await readFile(new URL('../../compose.yaml', import.meta.url), 'utf8'));
+      await writeFile(join(root, 'tools/harness/probe-env.mjs'), `if (${JSON.stringify(Object.keys(credentials))}.some(k => process.env[k]) || process.env.HOME) process.exit(1);`);
+      Object.assign(config.verifiers.find(v => v.id === 'rails'), { commands: [['node', '../../tools/harness/probe-env.mjs'], ['docker', 'compose', '-f', '../../compose.yaml', 'run', '--rm', 'api', 'true']] });
+      const result = await verify({ root, workspace: root, config, sbi, files: [{ path: 'apps/api/app.rb' }] });
+      assert.equal(result.checks.find(c => c.id === 'rails').status, 'PASS', JSON.stringify(result.checks.find(c => c.id === 'rails').processes));
+      assert.equal((await calls()).filter(c => c.args[0] === 'compose').length, 1);
+    }))));
+    it('when a security verifier uses Compose then checks the Compose file before starting it', () => fakeDocker(async ({ docker, calls }) => {
+      const workspace = await mkdtemp(join(tmpdir(), 'harness-isolated-security-'));
+      try {
+        await writeFile(join(workspace, 'compose.yaml'), 'services:\n  api:\n    image: ruby\n    privileged: true\n');
+        const config = { timeoutMs: 10000, isolation: { docker }, securityVerifiers: [{ id: 'migration', directory: '.', isolation: 'compose', network: true, commands: [['docker', 'compose', '-f', 'compose.yaml', 'run', 'api']] }] };
+        const result = await verifySecurity({ workspace, sbi, assessment: { requiredVerifiers: ['migration'] }, policy: { verifiers: [] }, config, headSha: 'x' });
+        const checked = result.checks.find(c => c.id === 'migration');
+        assert.equal(checked.status, 'FAIL');
+        assert.match(checked.reason, /^isolation unavailable: Compose file rejected/);
+        assert.ok(!(await calls()).some(c => c.args[0] === 'compose'));
+      } finally { await rm(workspace, { recursive: true, force: true }); }
+    }));
+  });
+
   describe('given the verifier configuration', () => {
     const base = async () => JSON.parse(await readFile(new URL('../../.harness/config/harness.json', import.meta.url), 'utf8'));
     it('when a verifier omits isolation then defaults to a container without network', async () => {
