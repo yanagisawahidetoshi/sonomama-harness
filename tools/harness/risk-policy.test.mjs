@@ -26,7 +26,7 @@ describe('PR risk rules', () => {
       assert.equal(risk([file('docs/intro.md', '', { status: 'R', previousPath: 'auth/access.md' })]).level, 3);
       assert.equal(risk([file('docs/intro.md', '', { binary: true })]).level, 2);
     });
-    for (const [path, reason] of [['apps/api/db/migrate/001.rb', 'migration'], ['apps/api/db/schema.rb', 'schema'], ['apps/api/auth/login.rb', 'auth'], ['security/rls.sql', 'security'], ['docs/adr/0001.md', 'adr'], ['.github/workflows/deploy.yml', 'cicd'], ['infrastructure/main.tf', 'infrastructure'], ['.harness/rules/pr-risk.json', 'harness_policy']]) {
+    for (const [path, reason] of [['apps/api/db/migrate/001.rb', 'migration'], ['apps/api/db/schema.rb', 'schema'], ['apps/api/auth/login.rb', 'auth'], ['security/rls.sql', 'security'], ['docs/adr/0001.md', 'adr'], ['.github/workflows/deploy.yml', 'cicd'], ['infrastructure/main.tf', 'infrastructure'], ['.harness/rules/pr-risk.json', 'harness_policy'], ['.ai/security-rules.md', 'harness_policy (.ai)']]) {
       it(`when ${reason} changes alongside docs then level 3 always wins`, () => {
         assert.equal(risk([file('docs/intro.md'), file(path)], { aiRisk: 1 }).level, 3);
       });

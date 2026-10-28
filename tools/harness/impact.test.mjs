@@ -103,7 +103,7 @@ describe('SBI Impact Analysis', () => {
   });
 
   describe('given Harness itself changes', () => {
-    for (const path of ['tools/harness/verifier.mjs', '.harness/config/harness.json', '.harness/verification/admin-env.mjs', '.harness/rules/pr-risk.json', '.github/workflows/harness.yml']) {
+    for (const path of ['tools/harness/verifier.mjs', '.harness/config/harness.json', '.harness/verification/admin-env.mjs', '.harness/rules/pr-risk.json', '.github/workflows/harness.yml', '.ai/security-rules.md']) {
       it(`when ${path} changes then triggers the Full Gate with the path as the reason`, () => {
         const impact = analyzeImpact({ config, sbis: [], files: files(path) });
         assert.equal(impact.fullGate, true);

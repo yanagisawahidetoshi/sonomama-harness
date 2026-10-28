@@ -1,16 +1,19 @@
-# 認証・認可・アクセス境界
+# 認証・認可・アクセス範囲
 
-## 未決の要件
+## まだ決めていないこと
 
-認証方式、利用者の役割、操作・データごとのアクセス範囲、RLSの適用範囲を人間が定義する。
-具体的な権限表はdocs/productと関連ADRに紐付ける。このテンプレートでは権限を新設しない。
+ログインの方式、利用者の役割、操作やデータごとに誰がどこまで扱えるか、データベースの行単位のアクセス制御（RLS）をどこに使うかを、人が決める。
+具体的な権限表は、docs/productと関連するADRに書いてここから参照する。このテンプレートで新しい権限を作ることはしない。
 
-## 実行ルール
+## Harnessで守らせるルール
 
-- SEC-AUTH-001: AuthN / API認証の変更。authn-testが必要。
-- SEC-AUTHZ-001: AuthZ / API認可の変更。rails-authz-testが必要。
-- SEC-RLS-001: RLS変更。rails-rls-testが必要。
-- SEC-ROLE-001: role / permissionモデルの変更。rails-authz-testが必要。
+次の変更には、実装前の人の承認、レベル3のリスク判定、決めた検証の実行が必要になる（詳しくは[README](README.md)）。
 
-いずれも実装前Human Gate、最低LEVEL 3、実装後は異なる人間2人以上の承認を要求する。
-未設定の必須検証はNOT_CONFIGUREDとなり、承認だけで突破できない。
+| ルールID | 対象となる変更 | 必ず実行する検証 |
+| --- | --- | --- |
+| SEC-AUTH-001 | 認証、APIの認証 | 認証のテスト（authn-test） |
+| SEC-AUTHZ-001 | 認可、APIの認可 | Railsの認可テスト（rails-authz-test） |
+| SEC-RLS-001 | RLS | RailsのRLSテスト（rails-rls-test） |
+| SEC-ROLE-001 | 役割や権限のモデル | Railsの認可テスト（rails-authz-test） |
+
+必ず実行する検証がまだ用意されていない場合、人が承認しても先へ進めない。

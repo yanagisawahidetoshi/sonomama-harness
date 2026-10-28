@@ -16,7 +16,7 @@ describe('Application and trusted acceptance boundary', () => {
     for (const path of ['apps/api/spec/widget_spec.rb', 'apps/mobile/src/Widget.test.tsx', 'apps/admin/src/Widget.test.tsx', 'packages/ui/Widget.spec.tsx', 'prototypes/web/Widget.test.tsx']) {
       it(`when writing ${path} then permits the application test`, () => assert.doesNotThrow(() => assertWritablePath(path)));
     }
-    for (const path of ['.harness/verification/acceptance.test.mjs', 'tools/harness/verifier.mjs', 'AGENTS.md', '.git/config', '.githooks/pre-push', '.github/workflows/harness.yml', 'acceptance.test.mjs']) {
+    for (const path of ['.harness/verification/acceptance.test.mjs', 'tools/harness/verifier.mjs', 'AGENTS.md', '.git/config', '.githooks/pre-push', '.github/workflows/harness.yml', '.ai/coding-rules.md', 'acceptance.test.mjs']) {
       it(`when writing ${path} then refuses the trusted namespace`, () => assert.throws(() => assertWritablePath(path)));
     }
     it('when only application tests pass then refuses DONE even with claimed acceptance', () => {

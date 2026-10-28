@@ -1,20 +1,23 @@
-# Threat modelの最小テンプレート
+# 脅威モデルのテンプレート
 
-## 人間が明確にすること
+## 人が明確にすること
 
-資産、利用者、信頼境界、外部接続、想定する攻撃、保護手段、残存リスクを記録する。
-本番データへの影響と復旧手順を確認し、重要設計はADRを残す。
+守るべき資産、利用者、信頼できる範囲の境目、外部との接続、想定する攻撃、守る手段、残るリスクを記録する。
+本番データへの影響と復旧の手順を確認し、重要な設計はADRに残す。
 
-## 実行ルール
+## Harnessで守らせるルール
 
-- SEC-MIGRATION-001: Migration。migration-safetyが必要。
-- SEC-SCHEMA-001: DB Schema。migration-safetyが必要。
-- SEC-CICD-001: CI/CD security setting。forbidden-pattern-checkが必要。
-- SEC-INFRA-001: Infrastructure security setting。forbidden-pattern-checkが必要。
-- SEC-DESTRUCTIVE-001: 破壊的操作・本番データ。data-lifecycle-testが必要。
-- SEC-DESIGN-001: Securityに関する重要設計・ADR。forbidden-pattern-checkが必要。
+次の変更には、実装前の人の承認、レベル3のリスク判定、決めた検証の実行が必要になる（詳しくは[README](README.md)）。
 
-いずれも事前Human Gateと最低LEVEL 3。
-汎用パターン検査だけでは業務上の安全性を証明しない。必要な個別テストをRegistryへ登録する。
+| ルールID | 対象となる変更 | 必ず実行する検証 |
+| --- | --- | --- |
+| SEC-MIGRATION-001 | データベースのマイグレーション | マイグレーションの安全性検査（migration-safety） |
+| SEC-SCHEMA-001 | データベースのスキーマ | マイグレーションの安全性検査（migration-safety） |
+| SEC-CICD-001 | CI/CDのセキュリティ設定 | 禁止パターンの検査（forbidden-pattern-check） |
+| SEC-INFRA-001 | インフラのセキュリティ設定 | 禁止パターンの検査（forbidden-pattern-check） |
+| SEC-DESTRUCTIVE-001 | 破壊的な操作、本番データ | データの保存と削除のテスト（data-lifecycle-test） |
+| SEC-DESIGN-001 | セキュリティに関わる重要な設計、ADR | 禁止パターンの検査（forbidden-pattern-check） |
 
-SEC-DESTRUCTIVE-001は本番データ、本番API、Cognito User Poolへの接続も対象とする。試作でもSBI.securityImpactにProductionData / ProductionAPI / CognitoUserPoolを宣言し、Human Gateとdata-lifecycle-testを必要とする。本番環境の接続先に応じてlane securityPatternsも拡張する。
+汎用のパターン検査だけでは、業務上の安全性は証明できない。必要な個別のテストを用意し、Harnessに登録する。
+
+SEC-DESTRUCTIVE-001は、本番データ、本番API、Cognito User Poolへの接続も対象にする。試作であっても、これらに影響する場合はSBIでその影響を宣言し、実装前の人の承認とデータの保存と削除のテストを必要とする。本番環境の接続先が増えたら、試作の変更から本番への影響を見つけるためのパターンも広げる。

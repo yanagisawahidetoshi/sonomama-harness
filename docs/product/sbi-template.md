@@ -1,12 +1,20 @@
 # SBIテンプレート
 
-- ID / タイトル:
-- 目的 / ユーザー価値:
-- 対象範囲 / 対象外:
-- acceptance criteria: 一意のIDと検証方法
-- allowedFiles: runのworkspace内で許可する相対パス
-- risks: AuthN / AuthZ / RLS / PII / Migration / ADR
-- ambiguous / requiresDesignDecision: 真偽値
+SBIは、PBIをAIが実装できる大きさに分けた作業単位である。人がSBIの内容を決め、Harnessで実行するときは同じ内容をJSONにする。
+
+## 書く項目
+
+| 項目 | 書く内容 |
+| --- | --- |
+| ID / タイトル | SBIを区別するIDと、実現する振る舞いを1行で |
+| 目的 / ユーザー価値 | 何のためのSBIか |
+| 対象範囲 / 対象外 | 変更する画面・API・機能と、扱わないもの |
+| 受け入れ要件（acceptance criteria） | 何ができれば受け入れるか。項目ごとに一意のIDと検証方法を付ける |
+| 変更してよいファイル（allowedFiles） | AIが変更してよいファイルの相対パス |
+| リスク（risks） | 認証（AuthN）、認可（AuthZ）、行単位のアクセス制御（RLS）、個人情報（PII）、マイグレーション、ADRへの影響 |
+| あいまいさ（ambiguous / requiresDesignDecision） | 仕様があいまいか、先に設計の判断が要るか。真偽値で書く |
+
+受け入れ要件は、次の形のシナリオで書く。
 
 ```gherkin
 Feature: [機能]
@@ -16,17 +24,16 @@ Feature: [機能]
     Then [期待する結果]
 ```
 
-実行用JSONは.harness/state/sample-sbi.jsonを参照。
-v1の実行可能なacceptance verifierはsample-bddのみ。
-別のSBIを実行する前に、信頼する検証adapterとACの対応を追加する。
+## セキュリティに関わる項目
 
-## Security metadata
+| 項目 | 書く内容 |
+| --- | --- |
+| securityImpact | 影響するセキュリティの分類（RLS、PII、AuthN、AuthZなど）。分類は.harness/rules/security.jsonで定義している |
+| requiredSecurityRules | 関係するルールID（SEC-RLS-001など） |
+| requiredVerifiers | このSBIのために追加で必須にする検証 |
+| preImplementationGate | trueなら、実装を始める前に人の承認を求める |
+| minimumRiskLevel | 2または3 |
 
-- securityImpact: RLS / PII / AuthN / AuthZ等、security.jsonで定義した分類
-- requiredSecurityRules: SEC-RLS-001等、要件文書に紐付くID
-- requiredVerifiers: SBI固有に追加する必須Security Verifier ID
-- preImplementationGate: trueなら実装前承認を要求する
-- minimumRiskLevel: 2または3。強制ルールより低く設定しても降格できない
+ここに書いた値で、docs/securityのルールを弱めることはできない。ルールが求める検証を省いても、Harnessは必ず実行する。必須の検証が用意されていなければ、そこで止まる。
 
-matched ruleが要求する検証はSBI側で省略しても強制される。
-必須検証が未設定ならNOT_CONFIGUREDで停止し、AIの自己申告で成功扱いしない。
+JSONの例は.harness/state/sample-sbi.jsonにある。

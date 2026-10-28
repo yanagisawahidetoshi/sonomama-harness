@@ -58,7 +58,7 @@
     },
     {
       "id": "harness_policy",
-      "pattern": "(^|/)(\\.harness|tools/harness)(/|$)|(^|/)AGENTS\\.md$",
+      "pattern": "(^|/)(\\.harness|\\.ai|tools/harness)(/|$)|(^|/)AGENTS\\.md$",
       "minimumLevel": 3
     },
     {

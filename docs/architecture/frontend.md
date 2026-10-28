@@ -60,7 +60,7 @@ src/features/<feature>/
 
 ## Component と hooks
 
-AGENTS.md の規約をそのまま適用する。
+[.ai/coding-rules.md](../../.ai/coding-rules.md) の規約をそのまま適用する。
 
 ```text
 components/ComponentName/

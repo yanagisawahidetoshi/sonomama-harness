@@ -64,7 +64,7 @@ Frontend の表示制御はBackend認可の代替にしない。認可の正本�
 
 ## Component と hooks
 
-AGENTS.md の規約をそのまま適用する。
+[.ai/coding-rules.md](../../.ai/coding-rules.md) の規約をそのまま適用する。
 
 ```text
 components/ComponentName/

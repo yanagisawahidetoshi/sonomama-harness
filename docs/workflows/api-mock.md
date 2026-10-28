@@ -1,6 +1,6 @@
-# API Mock Serverの運用
+# API Mock Serverを起動する
 
-承認済みのOpenAPIから、Rails APIの完成を待たずにFrontendが使うローカルMock Serverを起動する。Mock用の独自API仕様は持たず、SSOTの`packages/api-schema/openapi.yaml`をPrismでそのまま提供する。
+Rails APIの完成を待たずにFrontendを開発できるように、承認済みのOpenAPIからローカルのMock Serverを起動する。Mock用に別のAPI仕様は持たず、API仕様の基準となるファイル（SSOT）`packages/api-schema/openapi.yaml`を、Prismでそのまま提供する。
 
 ```text
 pnpm api:mock <Issue URL>
@@ -12,7 +12,7 @@ pnpm api:mock <Issue URL>
 
 ## 手順
 
-1. API Schema Plannerの手順でProposalを承認する（[api-schema-planner.md](api-schema-planner.md)）。
+1. API仕様の案（Proposal）を人が承認する（手順は[.ai/workflows/api-schema.md](../../.ai/workflows/api-schema.md)）。
 2. 承認済みの`.harness/api-schema/<number>/openapi.yaml`を整形せずに`packages/api-schema/openapi.yaml`へコピーする。1バイトでも違えば起動しない。
 3. `pnpm api:mock https://github.com/<owner>/<repo>/issues/<number>`を実行する。Ctrl+Cで停止する。
 4. FrontendはAPI Base URLを環境変数で`http://127.0.0.1:4010`に切り替える。Mock ServerはExpo / React Admin固有のロジックを持たない。
@@ -32,7 +32,7 @@ pnpm api:mock <Issue URL>
 
 ## 制約
 
-- **同じPCでのみ起動できる（MVP）**: 生成記録と承認台帳はGit管理外のため、Proposalを生成・承認したPCでしか承認を判定できない。恒久仕様にはせず、認証済みApproval Adapterへ移すときに別PCへ対応する。
+- 同じPCでのみ起動できる（MVP）: 生成記録と承認台帳はGit管理外のため、Proposalを生成・承認したPCでしか承認を判定できない。恒久仕様にはせず、認証済みApproval Adapterへ移すときに別PCへ対応する。
 - SSOTと一致するのは最後に反映した承認済みProposalだけ。Proposalは既存OpenAPIへマージした全体を出すので、古いIssueのURLでは起動できない。
 - Prismは`@stoplight/prism-cli@5.14.2`に固定している。5.15以降はNode 24以上が必要なため。
 - proxy modeは使わない。Rails API・Cognito・本番APIへは接続しない。

@@ -1,6 +1,6 @@
-# API Docs（Swagger UI）の運用
+# API仕様をブラウザで見る（Swagger UI）
 
-`packages/api-schema/openapi.yaml`（SSOT）を、ブラウザのSwagger UIで読むためのローカルサーバ。仕様の閲覧専用で、APIへのリクエストは送らない。
+API仕様の基準となるファイル（SSOT）`packages/api-schema/openapi.yaml`を、ブラウザのSwagger UIで読むためのローカルサーバ。仕様を見るためだけのもので、APIへのリクエストは送らない。
 
 ```text
 OpenAPI（packages/api-schema/openapi.yaml） = 契約 / SSOT
@@ -11,16 +11,16 @@ OpenAPI（packages/api-schema/openapi.yaml） = 契約 / SSOT
 ## 手順
 
 1. `pnpm api:docs`を実行する。`http://127.0.0.1:8080`を開く。Ctrl+Cで停止する。
-2. 8080が使用中なら`pnpm api:docs --port 18080`のように変える。listenするのは常に`127.0.0.1`。
+2. 8080番ポートが使用中なら、`pnpm api:docs --port 18080`のように変える。ポートを変えても、接続を受け付けるのは常に`127.0.0.1`だけ。
 
 OpenAPIは表示のたびにファイルから読む。編集した内容は、ブラウザを再読み込みすれば反映される。複製や変換したファイルは作らない。
-API Schemaの承認は確認しない。承認済みのOpenAPIだけを扱う必要がある場合は`api:mock`を使う。
+このサーバは、API仕様が承認済みかどうかを確認しない。承認済みのOpenAPIだけを扱う必要がある場合は`api:mock`を使う。
 
 ## 外部通信をしないための設定
 
 - Try it outは無効（`supportedSubmitMethods: []`）。OpenAPIの`servers`にProductionやStagingのURLがあっても、そこへリクエストしない。
 - オンラインvalidator（validator.swagger.io）を無効にしている。
-- URL入力欄のあるtop barを出さない。表示できるのはSSOTだけ。
+- URL入力欄のあるtop barを出さない。表示できるのは`packages/api-schema/openapi.yaml`だけ。
 - Content Security Policyで、ブラウザが読み込みと通信をできる先を、このサーバだけに制限している。
 - Hostヘッダが`127.0.0.1:<port>`か`localhost:<port>`以外のリクエストは403にする（DNS rebinding対策）。
 - OpenAPIのsecurityScheme（Bearer / JWTなど）はAuthorizeボタンと鍵アイコンで表示される。Try it outがないので、tokenを入力しても使われない。認証Providerの実際のtokenやCredentialは不要。
