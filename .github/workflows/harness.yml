@@ -25,8 +25,8 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      # The Harness CLI and trusted acceptance need only the root dependencies, still checked against the lockfile; restoring the workspace store would cost more.
+      - run: pnpm install --frozen-lockfile --prod --ignore-workspace
       - run: pnpm harness:check
       - id: impact
         run: pnpm harness:impact $HARNESS_SCOPE
@@ -102,8 +102,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - run: pnpm install --frozen-lockfile --prod --ignore-workspace
       - run: pnpm harness:judge $HARNESS_SCOPE
         env:
           HARNESS_NEEDS: ${{ toJson(needs) }}
