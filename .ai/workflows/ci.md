@@ -78,3 +78,16 @@ Railsのrouteも照合する。Railsを起動せず、`apps/api/config/routes.ma
 pnpm harness:impact --base origin/main
 pnpm harness:verify --verifier admin --base origin/main
 ```
+
+## pre-pushとの分担
+
+`.githooks/pre-push`は`harness:check`と`harness:push-gate`を呼ぶだけで、Verifierの一覧を持たない。`harness:push-gate`がgitから渡されたpush先のcommitをbaseに`harness:impact`と同じ判定を行い、required verifierを順に実行する。新しいbranchは`origin/main`と比べる。
+
+検証はcheckoutのworking treeではなく、pushするcommitのdetached worktree（OSの一時ディレクトリ）で行う。未commitの修正でworking treeだけがPASSしても、壊れたcommitはpushできない。worktreeでは`pnpm install --frozen-lockfile --prefer-offline`を先に実行する。検証後は`git worktree remove`（forceなし）で消し、検証が未追跡ファイルを残して消せなかったときはパスをログに出して残す。
+
+次の場合はFull Gateとして`harness:test`全件を実行する。
+
+- `impact.fullGate`のパスが変わった
+- 複数のrefを同時にpushした（pushするcommitごとに実行）、push先のcommitが手元に無い、比較するbaseが無い、refを読めない（HEADのcommitで実行）
+
+hookはローカルの早期検出用で、回避できる。SBI必須・Trusted Acceptance・Security・`harness:demo --full`はCIのCompletion Judgeが最終判定する。

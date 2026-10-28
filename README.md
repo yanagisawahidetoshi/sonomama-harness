@@ -516,9 +516,11 @@ cleanで所有関係を確認できたworktreeだけを削除する。証跡・r
 
 Nodeは`.node-version`、pnpmはpackage.jsonのpackageManagerに固定。`pnpm install --frozen-lockfile`後のprepareで
 version管理された`.githooks/pre-push`を設定する。必要なら`pnpm hooks:install`で再設定できる。
-push前にharness:check→harness:testを実行し、失敗するとpushを止める。
+push前にharness:checkを必ず実行し、続けて`harness:push-gate`がImpact Analysisで選んだVerifierだけを実行する。
+Harness本体などFull Gate対象の変更や、push先との差分を特定できない場合はharness:test全件を実行する。どれかが失敗するとpushを止める。
+`--no-verify`は通常手順にしない。
 
-GitHub ActionsはPRとmainへのpushでfrozen install→harness:check→harness:test→harness:demo --fullを実行する。
-いずれかの失敗でworkflowも失敗する。Actionsはcommit SHA固定、読取専用権限、checkout認証情報を保存しない。
+GitHub ActionsはSBIと差分から必要なVerifierを並列実行し、Full Gate対象ならharness:testとharness:demo --fullも実行する。
+最終の品質ゲートはCIの`harness`チェック（Completion Judge）。詳細は[.ai/workflows/ci.md](.ai/workflows/ci.md)。Actionsはcommit SHA固定、読取専用権限、checkout認証情報を保存しない。
 ローカルhookは回避可能なので、チーム運用ではRuleset / branch protectionで成功チェックを必須にする。
 これは次の設定段階。hook・CI・Harnessのどれにもmerge機能はない。

@@ -10,14 +10,26 @@ import { startApiMock } from './api-mock.mjs';
 import { startApiDocs } from './api-docs.mjs';
 import { relativePath } from './schemas.mjs';
 import { describeImpact, describeJudge, loadImpact, runCompletionJudge, runVerifier } from './impact.mjs';
+import { runPushGate } from './push-gate.mjs';
 import { describeSbiSource } from './sbi-source.mjs';
 import { appendFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
 const root = fileURLToPath(new URL('../../', import.meta.url));
+async function printVerifier({ root: workspace = root, base, all, id }) {
+  const { impact, result, passed } = await runVerifier({ root: workspace, base, all, id });
+  const selection = impact.verifiers.find(v => v.id === id);
+  console.log(redactText(`Selected by: ${selection ? selection.reasons.join(', ') : '(not selected by impact)'}`));
+  for (const c of result.checks) {
+    for (const p of c.processes || (c.process ? [c.process] : [])) if (!p.ok) console.error(redactText((p.stderr || p.stdout || p.error || '').slice(-4000)));
+    console.log(redactText(`${c.id}: ${c.status}${c.reason ? ` (${c.reason})` : ''} [${c.selectionReasons.join(', ')}]`));
+  }
+  return passed;
+}
 await withEvidenceProtection(root, async () => {
 try {
   const [command, ...args] = process.argv.slice(2);
-  const allowed = { check: ['--sbi'], demo: ['--sbi', '--full'], run: ['--provider', '--sbi', '--full'], plan: ['--provider'], 'api-schema': ['--provider'], 'api-schema-approve': ['--decision'], 'api-schema-status': [], 'api-mock': ['--dynamic'], 'api-docs': ['--port'], cleanup:['--run'], impact: ['--base', '--all'], verify: ['--base', '--all', '--verifier'], judge: ['--base', '--all'], resume: ['--run'], pr: ['--run'], approve: ['--run', '--phase', '--decision'], export: ['--run','--out'] };
-  if (!allowed[command]) throw new Error('Usage: check | demo [--full] | run [--full] | plan ISSUE_URL [--provider codex|claude] | api-schema ISSUE_URL [--provider codex|claude] | api-schema-approve ISSUE_URL [--decision approve|revoke|request-changes] | api-schema-status ISSUE_URL | api-mock ISSUE_URL [--dynamic] | api-docs [--port PORT] | impact --base REF|--all | verify --verifier ID --base REF|--all | judge --base REF|--all | cleanup --run ID | resume --run ID | pr --run ID | approve --run ID --phase gate|design|merge [--decision approve|revoke|request-changes]');
+  const allowed = { check: ['--sbi'], demo: ['--sbi', '--full'], run: ['--provider', '--sbi', '--full'], plan: ['--provider'], 'api-schema': ['--provider'], 'api-schema-approve': ['--decision'], 'api-schema-status': [], 'api-mock': ['--dynamic'], 'api-docs': ['--port'], cleanup:['--run'], impact: ['--base', '--all'], verify: ['--base', '--all', '--verifier'], judge: ['--base', '--all'], 'push-gate': [], resume: ['--run'], pr: ['--run'], approve: ['--run', '--phase', '--decision'], export: ['--run','--out'] };
+  if (!allowed[command]) throw new Error('Usage: check | demo [--full] | run [--full] | plan ISSUE_URL [--provider codex|claude] | api-schema ISSUE_URL [--provider codex|claude] | api-schema-approve ISSUE_URL [--decision approve|revoke|request-changes] | api-schema-status ISSUE_URL | api-mock ISSUE_URL [--dynamic] | api-docs [--port PORT] | impact --base REF|--all | verify --verifier ID --base REF|--all | judge --base REF|--all | push-gate | cleanup --run ID | resume --run ID | pr --run ID | approve --run ID --phase gate|design|merge [--decision approve|revoke|request-changes]');
   const options = {};
   const positional = ['plan', 'api-schema', 'api-schema-approve', 'api-schema-status', 'api-mock'].includes(command) && args.length && !args[0].startsWith('--') ? args.shift() : null;
   for (let i = 0; i < args.length; i += 2) {
@@ -75,14 +87,7 @@ try {
       await output([`required_verifiers=${JSON.stringify(impact.requiredVerifiers)}`, `full_gate=${impact.fullGate}`]);
     } else if (command === 'verify') {
       if (!options['--verifier']) throw new Error('verify requires --verifier ID');
-      const { impact, result, passed } = await runVerifier({ root, base, all, id: options['--verifier'] });
-      const selection = impact.verifiers.find(v => v.id === options['--verifier']);
-      console.log(redactText(`Selected by: ${selection ? selection.reasons.join(', ') : '(not selected by impact)'}`));
-      for (const c of result.checks) {
-        for (const p of c.processes || (c.process ? [c.process] : [])) if (!p.ok) console.error(redactText((p.stderr || p.stdout || p.error || '').slice(-4000)));
-        console.log(redactText(`${c.id}: ${c.status}${c.reason ? ` (${c.reason})` : ''} [${c.selectionReasons.join(', ')}]`));
-      }
-      process.exitCode = passed ? 0 : 1;
+      process.exitCode = await printVerifier({ base, all, id: options['--verifier'] }) ? 0 : 1;
     } else {
       const needs = JSON.parse(process.env.HARNESS_NEEDS || '{}');
       const judged = await runCompletionJudge({ root, base, all, needs });
@@ -94,6 +99,17 @@ try {
       console.log(`Completion Judge: ${judged.status}${judged.reasons.length ? ` (${judged.reasons.join('; ')})` : ''}`);
       process.exitCode = judged.status === 'PASS' ? 0 : 1;
     }
+  } else if (command === 'push-gate') {
+    // git hands the pushed refs to .githooks/pre-push on stdin; the hook passes them through HARNESS_PUSH_REFS.
+    // The refs describe this push only; hook tests inside harness:test must not inherit them.
+    const { HARNESS_PUSH_REFS: refs = '', ...env } = process.env;
+    const pnpm = (args, cwd) => spawnSync('pnpm', args, { cwd, stdio: 'inherit', env }).status === 0;
+    // Each check runs in the detached worktree of the pushed commit, which starts without node_modules.
+    const result = await runPushGate({ root, refs, log: line => console.log(redactText(line)),
+      install: workspace => pnpm(['install', '--frozen-lockfile', '--prefer-offline'], workspace),
+      runFull: workspace => pnpm(['harness:test'], workspace),
+      verifyOne: async (id, base, workspace) => { process.env.HARNESS_BASE_REF = base; return printVerifier({ root: workspace, base, all: false, id }); } });
+    process.exitCode = result.passed ? 0 : 1;
   } else if (command === 'pr') {
     if (!options['--run']) throw new Error('pr requires --run ID');
     const run = await openPullRequest({ root, runId: options['--run'] });
