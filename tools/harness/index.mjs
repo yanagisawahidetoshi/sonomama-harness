@@ -8,7 +8,7 @@ import { runAgent, makePrompt, providerCommand } from './agents/index.mjs';
 import { verify, checksPassed } from './verifier.mjs';
 import { review } from './reviewer.mjs';
 import { judge } from './completion-judge.mjs';
-import { humanGate, classifyEscalation } from './escalation.mjs';
+import { humanGate, classifyEscalation, mergeFailure } from './escalation.mjs';
 import { assessRisk } from './risk-classifier.mjs';
 import { mergeDecision, validHumanApprovals } from './merge-policy.mjs';
 import { authenticatedRecords } from './human-approvals.mjs';
@@ -16,31 +16,43 @@ import { classifySecurity, verifySecurity, combineSecurity, securityPassed } fro
 import { withEvidenceProtection, redact, redactText, hasSecret, assertSafeInput, isSecretPath } from './evidence-protection.mjs';
 import { githubPrCli, githubState, pullRequestBody } from './github-pr.mjs';
 import { digest, prepareWorkspace, commitWorkspace, changedFiles, workspaceIntegrity, toolFingerprint, assertWritablePath, workspaceFingerprint, sourceIntegrity, assertWorktreeOwner, git } from './workspace.mjs';
-import { saveRun, loadRun, runPaths, withRunLock } from './run-store.mjs';
+import { saveRun, loadRun, readRunState, runPaths, withRunLock } from './run-store.mjs';
 import { classifyLane } from './lanes.mjs';
 import { assertState } from './state-machine.mjs';
 export { check, judge, providerCommand };
 
 function controller(root, summary, quiet) {
   const directory = runPaths(root, summary.id).directory;
-  const transition = async (status, detail = '', phase = 'execution') => {
-    assertState(phase === 'implementation-gate' ? 'gate' : phase === 'design-approval' ? 'design' : phase, status);
+  const record = async (status, detail, phase) => {
     summary.status = status;
-    if (phase === 'execution') summary.executionStatus = status;
-    if (phase === 'merge') summary.merge = { ...summary.merge, state: status, decision: status, autoMergeEligible: status === 'MERGE_ALLOWED' && summary.merge.autoMergeEligible === true };
     summary.events.push({ status, phase, detail, at: new Date().toISOString() });
     if (!quiet) console.log(redactText(`[${summary.id}] ${status}${detail ? `: ${detail}` : ''}`));
     await saveRun(root, summary);
   };
+  const transition = async (status, detail = '', phase = 'execution') => {
+    assertState(phase === 'implementation-gate' ? 'gate' : phase === 'design-approval' ? 'design' : phase, status);
+    if (phase === 'execution') summary.executionStatus = status;
+    if (phase === 'merge') summary.merge = { ...summary.merge, state: status, decision: status, autoMergeEligible: status === 'MERGE_ALLOWED' && summary.merge.autoMergeEligible === true };
+    await record(status, detail, phase);
+  };
+  // After Execution DONE an escalation stops only the merge lifecycle; executionStatus stays DONE.
   const escalate = async (reason, code = classifyEscalation(reason)) => {
+    const done = summary.executionStatus === 'DONE';
     summary.reason = reason;
     summary.escalation = { code, detail: reason };
-    summary.merge = { ...summary.merge, state: 'BLOCKED', decision: 'BLOCKED', autoMergeEligible: false };
+    summary.merge = { ...summary.merge, state: 'BLOCKED', decision: 'BLOCKED', autoMergeEligible: false, ...(done ? { failure: { code, retryable: false, detail: reason } } : {}) };
     await json(join(directory, 'escalation.json'), { reason, code, action: '人間が原因を確認して新しいrunを開始してください。mergeは実行しません。' });
-    await transition('ESCALATED', reason);
+    if (done) await record('ESCALATED', reason, 'merge'); else await transition('ESCALATED', reason);
     return summary;
   };
-  return { transition, escalate };
+  const defer = async (reason, code) => {
+    summary.reason = reason;
+    summary.merge = { state: 'RETRYABLE', decision: 'RETRYABLE', autoMergeEligible: false, reasons: ['merge_assessment_failed'], failure: { code, retryable: true, detail: reason } };
+    await json(join(directory, 'merge-decision.json'), summary.merge);
+    await transition('RETRYABLE', `${code}; 原因を解消してharness:resume --run ${summary.id}で再判定してください`, 'merge');
+    return summary;
+  };
+  return { transition, escalate, defer };
 }
 function metadata(sbi) {
   return { id: sbi.id, title: sbi.title, description: sbi.description, risks: sbi.risks, acceptanceCriteria: sbi.acceptanceCriteria, securityImpact: sbi.securityImpact, requiredSecurityRules: sbi.requiredSecurityRules, requiredVerifiers: sbi.requiredVerifiers, minimumRiskLevel: sbi.minimumRiskLevel };
@@ -110,6 +122,16 @@ async function assessMerge(root, summary, inputs, quiet, github = githubPrCli) {
   summary.reason = summary.merge.reasons.join(', ');
   await transition(summary.merge.decision, `LEVEL ${summary.risk.level}; human approvals ${summary.merge.validApprovals}/${summary.merge.requiredApprovals} (${summary.merge.approvalSource}); autoMergeEligible=${summary.merge.autoMergeEligible}`, 'merge');
   return summary;
+}
+// Execution success and merge assessment are separate phases. A failure here never rewrites executionStatus.
+function mergeFailed(root, summary, quiet, error) {
+  const { escalate, defer } = controller(root, summary, quiet);
+  const failure = mergeFailure(error);
+  return failure.retryable ? defer(error.message, failure.code) : escalate(error.message, failure.code);
+}
+async function settleMerge(root, summary, inputs, quiet, github) {
+  try { return await assessMerge(root, summary, inputs, quiet, github); }
+  catch (error) { return mergeFailed(root, summary, quiet, error); }
 }
 async function executeLoop({ root, summary, inputs, quiet, agent = runAgent, reviewer = review, semanticReviewer }) {
   const { config, rules, sbi, riskPolicy, securityPolicy } = inputs;
@@ -222,7 +244,7 @@ async function executeLoop({ root, summary, inputs, quiet, agent = runAgent, rev
         summary.executionFinishedAt = new Date().toISOString();
         summary.consecutiveFailures = 0;
         await transition('DONE', 'Execution: Verifier → Policy Reviewer → Completion Judge passed');
-        return await assessMerge(root, summary, inputs, quiet);
+        return await settleMerge(root, summary, inputs, quiet);
       }
       feedback = { verification: result.verification, security: result.security, securityVerification: result.securityVerification, review: result.review, semanticReview: result.semanticReview };
     } catch (error) {
@@ -288,15 +310,19 @@ async function runProtected({ root, provider, sbiPath, quiet = false, agent = ru
 async function resumeProtected({ root, runId, quiet = false, agent = runAgent, reviewer = review, semanticReviewer, github = githubPrCli }) {
   root = await realpath(root);
   return withRunLock(root, runId, async () => {
+    const stored = await readRunState(root, runId);
+    // An escalated merge assessment is final even if its cause disappears; only a new run re-verifies.
+    if (stored.executionStatus === 'DONE' && stored.status === 'ESCALATED') return stored;
     let summary;
     try {
       const loaded = await loadRun(root, runId);
       summary = loaded.summary;
-      if (summary.executionStatus === 'DONE') return await assessMerge(root, summary, loaded.inputs, quiet, github);
+      if (summary.executionStatus === 'DONE') return await settleMerge(root, summary, loaded.inputs, quiet, github);
       if (summary.executionStatus !== 'PENDING' || summary.iterations.length) throw new Error('Only an unstarted implementation gate or completed execution can resume; start a new run');
       return await executeLoop({ root, summary, inputs: loaded.inputs, quiet, agent, reviewer, semanticReviewer });
     } catch (error) {
-      summary ??= await readJson(runPaths(root, runId).summary);
+      summary ??= stored;
+      if (summary.executionStatus === 'DONE') return mergeFailed(root, summary, quiet, error);
       return controller(root, summary, quiet).escalate(error.message);
     }
   });
@@ -306,7 +332,7 @@ async function resumeProtected({ root, runId, quiet = false, agent = runAgent, r
 async function publishProtected({ root, runId, quiet = false, github = githubPrCli }) {
   await withRunLock(root, runId, async () => {
     const { summary, inputs } = await loadRun(root, runId);
-    if (summary.executionStatus !== 'DONE') throw new Error(`Execution must be DONE before opening a pull request (now ${summary.executionStatus})`);
+    if (summary.executionStatus !== 'DONE' || summary.status === 'ESCALATED') throw new Error(`Execution must be DONE and not ESCALATED before opening a pull request (now ${summary.executionStatus}/${summary.status})`);
     const { workspace } = runPaths(root, runId);
     await workspaceIntegrity(workspace, summary.headSha);
     const { remote, base } = inputs.config.github;
@@ -349,8 +375,8 @@ export async function cleanupRun({root,runId}) {
   root = await realpath(root);
   return withRunLock(root,runId,async()=>{
     const paths = runPaths(root,runId);
-    const summary = await readJson(paths.summary);
-    if (summary.id !== runId || summary.cleanedAt) throw new Error('Invalid or already cleaned run');
+    const summary = await readRunState(root, runId);
+    if (summary.cleanedAt) throw new Error('Invalid or already cleaned run');
     await assertWorktreeOwner(root,paths.workspace,summary.baselineSha);
     await workspaceIntegrity(paths.workspace,summary.headSha);
     if (await workspaceFingerprint(paths.workspace) !== summary.workspaceDigest) throw new Error('workspace snapshot changed');

@@ -14,6 +14,7 @@ import { apiSchemaApprovalStatus } from './api-schema-approval.mjs';
 import { reviewLabels, approvedLabel, proposalDirectory, sha256, assertReplaceable, recordGeneration } from './api-schema-files.mjs';
 import { judgeApiSchema, reservedComponents, supportedStatuses, limits } from './api-schema-judge.mjs';
 import { renderOpenApi, renderSummary } from './api-schema-render.mjs';
+import { deriveSecurityImpact, requiredApprovals } from './api-schema-security.mjs';
 import { withEvidenceProtection, redactText, hasSecret } from './evidence-protection.mjs';
 
 export { reviewLabels, approvedLabel };
@@ -89,7 +90,7 @@ async function proposeProtected({ root, issueUrl, provider, quiet, agent, github
     const contractDiff = existing ? diffContract(existing.document, document) : { breaking: [], nonBreaking: [] };
     await json(join(directory, 'contract-diff.json'), contractDiff);
     const yamlText = toYaml(document, { lineWidth: 0 });
-    const summaryText = renderSummary({ issue, proposal: response.proposal, quality, contractDiff, existing, directory: proposalDir, approvedLabel, reviewLabel: reviewLabels[1] });
+    const summaryText = renderSummary({ issue, proposal: response.proposal, quality, contractDiff, existing, derivedImpact: deriveSecurityImpact(response.proposal, existing), directory: proposalDir, approvedLabel, reviewLabel: reviewLabels[1] });
     const comment = [proposalMarker(ref.url), summaryText.length > commentLimit ? `${summaryText.slice(0, commentLimit)}\n\n（長いため省略。全文は ${proposalDir}/summary.md）` : summaryText].join('\n');
     if (hasSecret(comment)) throw new Error('Secret/Credential detected in the proposal summary; rejected before any file or GitHub write');
 
@@ -103,7 +104,7 @@ async function proposeProtected({ root, issueUrl, provider, quiet, agent, github
       generatedBy: { runId: id, provider }, generatedAt: new Date().toISOString(), existingSchema: existing?.path ?? null,
       quality, contractDiff, proposal: response.proposal, files: { 'openapi.yaml': sha256(yamlText), 'summary.md': sha256(summaryText) },
     });
-    await recordGeneration(root, ref, { runId: id, required: response.proposal.securityImpact.length ? 2 : 1 });
+    await recordGeneration(root, ref, { runId: id, required: requiredApprovals(response.proposal, existing) });
     summary.proposalDir = proposalDir;
     await save(); log(`Proposal: ${proposalDir}/openapi.yaml`);
     await github.ensureLabels(ref, reviewLabels);

@@ -4,7 +4,7 @@ import {mkdir,writeFile,readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {fixture,commitFixture,runFixture} from './test-fixture.mjs';
 import {prepareWorkspace,git,assertWritablePath} from './workspace.mjs';
-import {isSecretPath} from './evidence-protection.mjs';
+import {isSecretPath,isSafeEnvTemplate} from './evidence-protection.mjs';
 
 describe('Tracked environment templates',()=>{
   describe('given sample configuration containing no real credentials',()=>{
@@ -48,5 +48,44 @@ describe('Tracked environment templates',()=>{
         await assert.rejects(readFile(join(workspace,'.git')),/ENOENT/);
       }));
     }
+  });
+});
+
+describe('Repository .gitignore for environment files',()=>{
+  // --no-index evaluates the rules alone, independent of which files this checkout already tracks.
+  const ignored=async(root,path)=>(await git(root,['check-ignore','--quiet','--no-index','--',path],true)).ok;
+  describe('given live environment filenames',()=>{
+    for(const path of ['.env','.env.local','apps/admin/.env','apps/admin/.env.production','apps/admin/.env.development.local','apps/admin/.env.example.local']) {
+      it(`when checking ${path} then it stays ignored and Harness treats it as a secret`,()=>fixture(async root=>{
+        assert.equal(await ignored(root,path),true);
+        assert.equal(isSafeEnvTemplate(path,'PORT=3000\n'),false);
+      }));
+    }
+  });
+  describe('given a template inside a directory that is itself a secret path',()=>{
+    for(const path of ['secrets/.env.example','apps/admin/.env.d/.env.example']) {
+      it(`when checking ${path} then it stays ignored like Harness refuses it`,()=>fixture(async root=>{
+        assert.equal(await ignored(root,path),true);
+        assert.equal(isSafeEnvTemplate(path,'PORT=3000\n'),false);
+      }));
+    }
+  });
+  describe('given a template name Harness accepts',()=>{
+    for(const path of ['.env.example','apps/admin/.env.example','apps/mobile/.env.sample','prototypes/web/.env.template','apps/admin/.env.development.example']) {
+      it(`when adding ${path} without --force then Git tracks it`,()=>fixture(async root=>{
+        assert.equal(isSafeEnvTemplate(path,'PORT=3000\n'),true);
+        await mkdir(join(root,path,'..'),{recursive:true});
+        await writeFile(join(root,path),'PORT=3000\n');
+        await git(root,['add','--',path]);
+        assert.equal((await git(root,['ls-files','--',path])).stdout.trim(),path);
+      }));
+    }
+  });
+  describe('given a template holding a real credential',()=>{
+    it('when it is added without --force then Harness still refuses to materialize it',()=>fixture(async root=>{
+      await writeFile(join(root,'apps/admin/.env.sample'),'API_KEY=ghp_'+'x'.repeat(36)+'\n');
+      await git(root,['add','--','apps/admin/.env.sample']);await commitFixture(root);
+      await assert.rejects(prepareWorkspace(root,join(root,'.harness/runs/unsafe-template/workspace')),/tracked credential/);
+    }));
   });
 });

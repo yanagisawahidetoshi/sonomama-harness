@@ -76,6 +76,9 @@ CLIが直接ファイルを変更した場合も停止する。差分をロー�
 承認・resume時はHEAD、未commit変更、Gitで無視されたファイルを含むsource fingerprint、
 入力設定、SBI、rules、スキル、信頼するHarnessコードの一致を確認する。
 いずれか変われば以前の検証・承認を使わずESCALATED。新しいrunで再検証・再承認する。
+実装DONE後のmerge判定で止まってもexecutionStatusはDONEのまま残し、merge.failureに理由（code・retryable）を記録する。
+元のcheckoutの未commitファイルだけ（信頼する入力は一致）や一時的なGit/IOエラーはmerge.state=RETRYABLEとし、
+原因を解消して同じrunを`harness:resume`で再判定できる。上記の不一致はESCALATEDで、原因が消えてもそのrunは再開しない。
 node_modulesはworktreeへ持ち込まず、fingerprintの対象外。アプリを接続する際は同じworkspaceに必要な実行環境を準備する。
 検証コマンドによるsource変更も拒否する。アプリのverifierは先頭で`pnpm install --frozen-lockfile --filter <app>`を実行し、
 build出力はnode_modules配下へ出してsnapshotを変えない。
@@ -160,8 +163,10 @@ requiredな検証はすべてPASSが必要。FAIL・SKIP・NOT_CONFIGURED、未�
 Completion JudgeもMerge Policy Judgeも拒否する。未設定の必須検証は修正ループで解決できないため即Escalation。
 
 組み込みはsecret-scan / forbidden-pattern-check / pii-log-check。
-Rails Brakeman / bundler-audit / authz / RLS / OpenAPI security、dependency-audit、migration-safety、
+Rails Brakeman / bundler-audit / authz / RLS / OpenAPI security、dependency-audit、
 authz-ui-test、sensitive-storage-check、data-lifecycle-testは接続用placeholderを用意する。
+migration-safetyはharness.jsonのsecurityVerifiersで接続済み。apps/api/db/migrateの静的検査（drop_table・remove_column・rename・change_column・execute等はFAIL、許可マーカーなし）と、
+ローカルtest DB（Compose内の専用DB、RAILS_ENV=test）へのdb:migrate → VERSION=0までのrollback → 再適用を行う。
 必要になったplaceholderはSKIPにせずNOT_CONFIGUREDにする。
 harness.jsonのsecurityVerifiersにid、workspace内directory、信頼するcommandsを登録して接続する。
 組み込みの必須検査は置き換えられない。実ツール本体の導入・本番の権限検証はまだ行っていない。
@@ -236,7 +241,7 @@ MERGED状態を生成するコードやGitHub merge APIは持たない。
 - 試作採用時の設計承認: designApproval.state = NOT_REQUIRED / WAITING_FOR_DESIGN_APPROVAL / APPROVED / REJECTED
 - 実装前: gate.state = NOT_REQUIRED / WAITING_FOR_HUMAN_GATE / APPROVED / REJECTED
 - 実装: executionStatus = PENDING / IMPLEMENTING / VERIFYING / REVIEWING / JUDGING / FAILED / DONE / ESCALATED
-- 実装後: merge.state = NOT_ASSESSED / RISK_ASSESSING / WAITING_FOR_DESIGN_APPROVAL / WAITING_FOR_HUMAN_GATE / WAITING_FOR_HUMAN_REVIEW / MERGE_ALLOWED / REJECTED / BLOCKED
+- 実装後: merge.state = NOT_ASSESSED / RISK_ASSESSING / WAITING_FOR_DESIGN_APPROVAL / WAITING_FOR_HUMAN_GATE / WAITING_FOR_HUMAN_REVIEW / MERGE_ALLOWED / REJECTED / BLOCKED / RETRYABLE
 
 Human Gate未充足ならMerge JudgeもWAITING_FOR_HUMAN_GATEを返す。
 Design Approval未充足（未承認・撤回後）ならMerge JudgeはWAITING_FOR_DESIGN_APPROVALを返し、WAITING_FOR_HUMAN_GATEを流用しない。
@@ -290,7 +295,7 @@ LEVEL 3を複数人で承認する本運用には、認証済みの別人を返�
 ```text
 .harness/runs/<run-id>/
   inputs.json                   # SBI / 設定 / Rules / スキル / tool fingerprint
-  summary.json                  # 3つの状態、HEAD、遷移履歴
+  summary.json                  # 3つの状態、HEAD、遷移履歴。判定の正本（schema検証・署名付き）
   human-gate.json
   security-assessment.json      # impacts / rule IDs / Gate / 最低Risk / 必須検証
   security-verification.json    # 必須Security checksのPASS/FAIL/SKIP/NOT_CONFIGURED
@@ -316,6 +321,12 @@ LEVEL 3を複数人で承認する本運用には、認証済みの別人を返�
 
 未実行のフェーズはNOT_RUNとし、成功結果を捏造しない。ゲート待ちでも初期リスクと承認・マージ未評価を保存する。
 Stateは.harness/state/runsにも保存する。resume時には同じrunを再評価する。
+
+判定の正本はsummary.json、署名付き承認台帳、inputs.json（inputsDigestで束縛）、workspace（headSha・workspaceDigestで束縛）だけ。
+summary.jsonは保存のたびにschemaで検証し、承認台帳と同じ`.harness/state/human/.key`のHMACで署名する。
+resume・PR作成・承認記録・cleanupは、schemaか署名の検証に失敗したrunを読まずに停止し、stateも書き換えない。
+.harness/state/runs、health-metrics.json、merge-decision.json、approvals.jsonなど残りのファイルは投影で、判定には読まない。
+署名は同じOSユーザーでも鍵を読まない書き換えを検出する。鍵そのものを読めるプロセスからは守れない（隔離は#58）。
 実行証跡・ローカル承認はGit管理対象外。
 
 ## Health MetricsとHarness Observerの責務分離
@@ -419,7 +430,7 @@ GitHub Issue → 既存OpenAPI（packages/api-schema）→ API Schema Planner（
 ```
 
 providerはOpenAPIそのものではなく、閉じたJSON（endpoint・component・propertyの配列）を返す。
-OpenAPIへの変換、Cognito JWTのsecurityScheme、共通Error schemaはHarnessが持つ。
+OpenAPIへの変換、Bearer JWTのsecurityScheme（認証Provider非依存）、共通Error schemaはHarnessが持つ。
 Quality Judgeは決定的なルールで構造・認証認可・Security Impact・秘密値・既存endpointとの衝突を検査し、破壊的変更の候補を列挙する。
 
 `modify`で既存の内容が消える場合は、既存OpenAPIとの構造差分から破壊的変更の候補として必ず表示する。

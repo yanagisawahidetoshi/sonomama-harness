@@ -1,0 +1,8 @@
+[
+  {
+    "verb": "GET",
+    "path": "/up(.:format)",
+    "controller": "rails/health",
+    "action": "show"
+  }
+]
