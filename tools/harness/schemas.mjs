@@ -223,7 +223,6 @@ export const lanePolicySchema = z.strictObject({
 });
 // summary.json is the signed authority for resume and merge assessment. Nested evidence stays open; the fields judges read are typed.
 const gitSha = z.string().regex(/^[0-9a-f]{40,64}$/);
-const sha256 = z.string().regex(/^[0-9a-f]{64}$/);
 const result = z.looseObject({ status: text }).nullable();
 export const runIterationSchema = z.strictObject({
   iteration: z.number().int().positive(), agent: z.looseObject({ status: text }).nullable(), verification: z.looseObject({ status: text, checks: z.array(z.looseObject({ id: text, status: text })) }).nullable(),
