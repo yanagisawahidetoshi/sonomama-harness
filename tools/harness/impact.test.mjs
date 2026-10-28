@@ -4,7 +4,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fixture, update } from './test-fixture.mjs';
 import { readJson } from './io.mjs';
-import { analyzeImpact, judgeCi } from './impact.mjs';
+import { analyzeImpact, describeImpact, judgeCi } from './impact.mjs';
 import { verify } from './verifier.mjs';
 import { check } from './check.mjs';
 import { parse } from 'yaml';
@@ -125,6 +125,58 @@ describe('SBI Impact Analysis', () => {
   });
 });
 
+describe('SBI requirement for Production changes', () => {
+  describe('given a Production diff without an SBI', () => {
+    for (const path of [touched.admin, touched.mobile, touched.api, 'packages/api-schema/openapi.yaml']) {
+      it(`when ${path} changes then requires an SBI with the path as the reason`, () => {
+        const impact = analyzeImpact({ config, sbis: [], files: files(path, 'docs/architecture/README.md') });
+        assert.equal(impact.sbiRequired, true);
+        assert.deepEqual(impact.sbiRequiredReasons, [`production:${path}`]);
+      });
+    }
+
+    it('when the Completion Judge aggregates without checking the source SBI Issue then fails closed', () => {
+      const impact = analyzeImpact({ config, sbis: [], files: files(touched.admin) });
+      const needs = { impact: { result: 'success' }, verifiers: { result: 'success' }, 'harness-test': { result: 'skipped' }, 'harness-demo': { result: 'skipped' } };
+      const result = judgeCi({ impact, needs, acceptance: { status: 'PASS', missing: [] } });
+      assert.equal(result.status, 'FAIL');
+      assert.ok(result.reasons.includes('sbi source: not evaluated'));
+    });
+
+    it('when the impact is printed then the CI log shows why the SBI is required', () => {
+      const lines = describeImpact(analyzeImpact({ config, sbis: [], files: files(touched.api) }));
+      assert.ok(lines.includes(`SBI required: yes (production:${touched.api})`));
+    });
+  });
+
+  describe('given a Production diff with a valid SBI from an approved SBI Issue', () => {
+    const source = { status: 'PASS', reasons: [] };
+    it('when the Completion Judge aggregates then judges the verifiers and acceptance as before', () => {
+      const impact = analyzeImpact({ config, sbis: [sbi(['admin'])], files: files(touched.admin) });
+      const needs = { impact: { result: 'success' }, verifiers: { result: 'success' }, 'harness-test': { result: 'skipped' }, 'harness-demo': { result: 'skipped' } };
+      assert.equal(impact.sbiRequired, true);
+      assert.deepEqual(required(impact), ['admin']);
+      assert.equal(judgeCi({ impact, needs, acceptance: { status: 'PASS', missing: [] }, source }).status, 'PASS');
+      assert.equal(judgeCi({ impact, needs, acceptance: { status: 'FAIL', missing: ['X-AC-1'] }, source }).status, 'FAIL');
+    });
+  });
+
+  describe('given a change outside the Production paths', () => {
+    for (const path of ['prototypes/web/src/main.tsx', 'prototypes/mobile/index.ts', 'docs/architecture/README.md', 'tools/harness/verifier.mjs', '.harness/config/harness.json', 'README.md']) {
+      it(`when only ${path} changes then does not require an SBI`, () => {
+        const impact = analyzeImpact({ config, sbis: [], files: files(path) });
+        assert.equal(impact.sbiRequired, false);
+        assert.deepEqual(impact.sbiRequiredReasons, []);
+        assert.ok(describeImpact(impact).includes('SBI required: no (no production path changed)'));
+      });
+    }
+
+    it('when every verifier is requested on main then does not require an SBI', () => {
+      assert.equal(analyzeImpact({ config, sbis: [], files: [], all: true }).sbiRequired, false);
+    });
+  });
+});
+
 describe('Single verifier execution', () => {
   describe('given the verifier selected by Impact Analysis', () => {
     it('when only one verifier is requested then evaluates that verifier alone', () => fixture(async root => {
@@ -154,55 +206,57 @@ describe('Single verifier execution', () => {
 });
 
 describe('CI Completion Judge', () => {
-  const impact = analyzeImpact({ config, sbis: [], files: files(touched.admin) });
-  const harnessImpact = analyzeImpact({ config, sbis: [], files: files('tools/harness/verifier.mjs', touched.admin) });
+  // Production diffs need an SBI from an approved SBI Issue (#45), so the matrix and Full Gate cases carry one.
+  const impact = analyzeImpact({ config, sbis: [sbi(['admin'])], files: files(touched.admin) });
+  const harnessImpact = analyzeImpact({ config, sbis: [sbi(['admin'])], files: files('tools/harness/verifier.mjs', touched.admin) });
   const docsImpact = analyzeImpact({ config, sbis: [], files: files('docs/architecture/README.md') });
   const needs = (verifiers, test = 'skipped', demo = 'skipped') => ({ impact: { result: 'success' }, verifiers: { result: verifiers }, 'harness-test': { result: test }, 'harness-demo': { result: demo } });
   const acceptance = { status: 'PASS', missing: [] };
+  const source = { status: 'PASS', reasons: [] };
 
   describe('given the required verifier matrix', () => {
     it('when every required verifier passes then passes', () => {
-      assert.equal(judgeCi({ impact, needs: needs('success'), acceptance }).status, 'PASS');
+      assert.equal(judgeCi({ impact, needs: needs('success'), acceptance, source }).status, 'PASS');
     });
 
     it('when one required verifier fails then fails', () => {
-      const result = judgeCi({ impact, needs: needs('failure'), acceptance });
+      const result = judgeCi({ impact, needs: needs('failure'), acceptance, source });
       assert.equal(result.status, 'FAIL');
       assert.ok(result.reasons.includes('verifiers: failure'));
     });
 
     it('when the matrix was skipped although verifiers were required then fails', () => {
-      assert.equal(judgeCi({ impact, needs: needs('skipped'), acceptance }).status, 'FAIL');
+      assert.equal(judgeCi({ impact, needs: needs('skipped'), acceptance, source }).status, 'FAIL');
     });
 
     it('when no verifier was required and the matrix was skipped then passes', () => {
-      assert.equal(judgeCi({ impact: docsImpact, needs: needs('skipped'), acceptance }).status, 'PASS');
+      assert.equal(judgeCi({ impact: docsImpact, needs: needs('skipped'), acceptance, source }).status, 'PASS');
     });
   });
 
   describe('given the Full Gate', () => {
     it('when Harness changes and harness:test fails then fails', () => {
-      assert.equal(judgeCi({ impact: harnessImpact, needs: needs('success', 'failure', 'success'), acceptance }).status, 'FAIL');
+      assert.equal(judgeCi({ impact: harnessImpact, needs: needs('success', 'failure', 'success'), acceptance, source }).status, 'FAIL');
     });
 
     it('when Harness changes and the Full Gate was skipped then fails', () => {
-      assert.equal(judgeCi({ impact: harnessImpact, needs: needs('success'), acceptance }).status, 'FAIL');
+      assert.equal(judgeCi({ impact: harnessImpact, needs: needs('success'), acceptance, source }).status, 'FAIL');
     });
 
     it('when Harness changes and both Full Gate jobs pass then passes', () => {
-      assert.equal(judgeCi({ impact: harnessImpact, needs: needs('success', 'success', 'success'), acceptance }).status, 'PASS');
+      assert.equal(judgeCi({ impact: harnessImpact, needs: needs('success', 'success', 'success'), acceptance, source }).status, 'PASS');
     });
   });
 
   describe('given SBI acceptance', () => {
     it('when an acceptance criterion has no PASS evidence then fails', () => {
-      const result = judgeCi({ impact, needs: needs('success'), acceptance: { status: 'FAIL', missing: ['X-AC-1'] } });
+      const result = judgeCi({ impact, needs: needs('success'), acceptance: { status: 'FAIL', missing: ['X-AC-1'] }, source });
       assert.equal(result.status, 'FAIL');
       assert.ok(result.reasons.includes('acceptance missing: X-AC-1'));
     });
 
     it('when the impact job itself failed then fails', () => {
-      assert.equal(judgeCi({ impact, needs: { ...needs('success'), impact: { result: 'failure' } }, acceptance }).status, 'FAIL');
+      assert.equal(judgeCi({ impact, needs: { ...needs('success'), impact: { result: 'failure' } }, acceptance, source }).status, 'FAIL');
     });
   });
 });

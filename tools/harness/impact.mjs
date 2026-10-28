@@ -1,9 +1,11 @@
-import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readJson } from './io.mjs';
-import { configSchema, sbiSchema, securityPolicySchema } from './schemas.mjs';
+import { isProductionPath } from './lanes.mjs';
+import { readSbiFiles, verifySbiSource } from './sbi-source.mjs';
+import { configSchema, securityPolicySchema } from './schemas.mjs';
 import { verifySecurity } from './security-enforcement.mjs';
 import { checksPassed, verify } from './verifier.mjs';
+import { withAcceptance } from './acceptance-registry.mjs';
 import { git } from './workspace.mjs';
 // SBI Impact Analysis for CI scheduling. harness.json stays the single definition of verifiers; this only decides which of them a change needs.
 const sorted = values => [...new Set(values)].sort();
@@ -43,6 +45,8 @@ export function analyzeImpact({ config, sbis = [], files = [], all = false }) {
   }
   const fullGatePath = firstMatch(config.impact?.fullGate, files);
   const fullGateReasons = all ? ['all'] : fullGatePath ? [`diff:${fullGatePath}`] : [];
+  // Production work goes through an SBI; prototypes, docs and Harness maintenance stay outside lanes.json productionPaths.
+  const sbiRequiredReasons = files.filter(f => isProductionPath(f.path)).slice(0, 1).map(f => `production:${f.path}`);
   const selected = [...verifiers.values()].sort((a, b) => a.id.localeCompare(b.id));
   return {
     sbis: sbis.map(s => s.id),
@@ -52,17 +56,20 @@ export function analyzeImpact({ config, sbis = [], files = [], all = false }) {
     acceptanceVerifiers: sorted(sbis.flatMap(s => s.acceptanceCriteria.map(a => a.verifier))),
     fullGate: fullGateReasons.length > 0,
     fullGateReasons,
+    sbiRequired: sbiRequiredReasons.length > 0,
+    sbiRequiredReasons,
   };
 }
 
 // Required jobs must succeed; a job may be skipped only when the impact did not ask for it.
-export function judgeCi({ impact, needs, acceptance }) {
+export function judgeCi({ impact, needs, acceptance, source }) {
   const reasons = [];
   const expect = (job, wanted) => {
     const result = needs[job]?.result ?? 'missing';
     if (wanted ? result !== 'success' : !['success', 'skipped'].includes(result)) reasons.push(`${job}: ${result}`);
   };
   expect('impact', true);
+  if (impact.sbiRequired && source?.status !== 'PASS') reasons.push(...(source?.reasons.length ? source.reasons : ['sbi source: not evaluated']));
   expect('verifiers', impact.requiredVerifiers.length > 0);
   expect('harness-test', impact.fullGate);
   expect('harness-demo', impact.fullGate);
@@ -75,21 +82,16 @@ export async function changedFiles(root, base) {
   return stdout.split('\n').filter(Boolean).map(path => ({ path }));
 }
 
+// Changed hand-written SBI JSON and the SBI inside Harness Run snapshots both drive Impact Analysis and Trusted Acceptance.
 export async function changedSbis(root, files) {
-  const paths = files.map(f => f.path).filter(path => /^\.harness\/state\/sbi-[^/]+\.json$/.test(path));
-  const sbis = [];
-  for (const path of paths) {
-    let text;
-    try { text = await readFile(join(root, path), 'utf8'); } catch { continue; }
-    sbis.push(sbiSchema.parse(JSON.parse(text)));
-  }
-  return sbis;
+  return (await readSbiFiles(root, files)).sbis;
 }
 
 export async function loadImpact({ root, base, all = false }) {
-  const config = configSchema.parse(await readJson(join(root, '.harness/config/harness.json')));
   const files = all ? [] : await changedFiles(root, base);
-  const sbis = await changedSbis(root, files);
+  const { sbis, snapshots } = await readSbiFiles(root, files);
+  // Each Run snapshot brings the Trusted Acceptance of its own SBI Issue only (.harness/acceptance/sbi-<N>.json).
+  const config = await withAcceptance(root, configSchema.parse(await readJson(join(root, '.harness/config/harness.json'))), snapshots.map(s => s.snapshot.source.number));
   return { config, files, sbis, impact: analyzeImpact({ config, sbis, files, all }) };
 }
 
@@ -110,8 +112,9 @@ export async function runVerifier({ root, base, all = false, id }) {
   return { impact, result, passed: checksPassed(result.checks) };
 }
 
-// Completion Judge: trusted acceptance of every changed SBI runs here, then the job results are checked against what the impact required.
-export async function runCompletionJudge({ root, base, all = false, needs }) {
+// Completion Judge: trusted acceptance of every changed SBI runs here, the source SBI Issue of a Production change is read from GitHub,
+// then the job results are checked against what the impact required.
+export async function runCompletionJudge({ root, base, all = false, needs, repository, github }) {
   const { config, files, sbis, impact } = await loadImpact({ root, base, all });
   const missing = [], checks = [];
   for (const sbi of sbis) {
@@ -120,12 +123,14 @@ export async function runCompletionJudge({ root, base, all = false, needs }) {
     missing.push(...sbi.acceptanceCriteria.filter(a => !result.acceptance.includes(a.id)).map(a => a.id));
   }
   const acceptance = { status: !sbis.length || (checksPassed(checks) && !missing.length) ? 'PASS' : 'FAIL', missing };
-  return { impact, acceptance, checks, ...judgeCi({ impact, needs, acceptance }) };
+  const source = await verifySbiSource({ root, base, files, required: impact.sbiRequiredReasons, config, repository, github });
+  return { impact, acceptance, checks, source, ...judgeCi({ impact, needs, acceptance, source }) };
 }
 
 export function describeImpact(impact) {
   return [
     `SBI: ${impact.sbis.join(', ') || '(none; diff only)'}`,
+    `SBI required: ${impact.sbiRequired ? `yes (${impact.sbiRequiredReasons.join(', ')})` : 'no (no production path changed)'}`,
     `Affected areas: ${impact.affectedAreas.join(', ') || '(none)'}`,
     ...impact.verifiers.map(v => `Verifier ${v.id}${v.mandatory ? ' [mandatory]' : ''}: ${v.reasons.join(', ')}`),
     `Acceptance (Completion Judge): ${impact.acceptanceVerifiers.join(', ') || '(none)'}`,
