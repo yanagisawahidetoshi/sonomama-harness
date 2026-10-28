@@ -16,8 +16,8 @@ RSpec.describe RouteManifest do
   describe "config/routes.manifest.json" do
     context "when the routes change" do
       it "matches the routes Rails draws, so the contract check never reads a stale manifest" do
-        expect(JSON.parse(described_class.path.read)).to eq(described_class.entries),
-                                                     "Run `bin/rails contract:routes` and commit #{described_class.path}"
+        hint = "Run `bin/rails contract:routes` and commit #{described_class.path}"
+        expect(JSON.parse(described_class.path.read)).to eq(described_class.entries), hint
       end
     end
   end
