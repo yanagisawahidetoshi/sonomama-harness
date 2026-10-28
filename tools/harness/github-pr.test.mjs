@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, realpath, rm, writeFile, readdir } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, writeFile, readdir, chmod, symlink, appendFile, mkdir } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { reviewApprovals, ciStatus } from './github-pr.mjs';
@@ -506,6 +507,29 @@ describe('GitHub PR Adapter', () => {
       const source = await verifySbiSource({ root: workspace, base: run.baselineSha, files, required: [`production:${home}`], repository: 'acme/app' });
       assert.equal(source.status, 'PASS', source.reasons.join('; '));
     })));
+    it('when the snapshot matches the ready Issue then the run is judged by its app change, not by where the snapshot is stored', () => fixture(root => withIssue(root, sbiIssue(), async () => {
+      const run = await start(root);
+      assert.equal(run.risk.level, 2, JSON.stringify(run.risk.reasons));
+      assert.ok(!run.risk.reasons.includes('harness_policy'));
+      assert.equal(run.securityAssessment.securitySensitive, false);
+    })));
+    it('when the Issue is edited after the run started then the snapshot is no longer verified and the run is LEVEL 3', () => fixture(root => withIssue(root, sbiIssue(), async ({ github }) => {
+      const run = await start(root);
+      await github.update(s => { s.issue.body += '\n追記'; });
+      const resumed = await resumeRun({ root, runId: run.id, quiet: true });
+      assert.equal(resumed.risk.level, 3);
+      assert.ok(resumed.risk.reasons.includes('harness_policy'));
+    })));
+    it('when the Issue cannot be read during the assessment then the snapshot is not verified and the run is LEVEL 3', () => fixture(root => withIssue(root, sbiIssue(), async ({ github }) => {
+      const run = await start(root);
+      await github.update(s => { s.issue.number = 99; });
+      assert.equal((await resumeRun({ root, runId: run.id, quiet: true })).risk.level, 3);
+    })));
+    it('when another SBI runs with --full after Issue #7 registered its Trusted Acceptance then that acceptance is not run for it', () => fixture(root => withIssue(root, sbiIssue(), async () => {
+      const run = await startRun({ root, quiet: true, provider: 'fake', full: true });
+      // --full also runs every real app verifier, which the fixture cannot pass; only the selection of issue-7-acceptance matters here.
+      for (const iteration of run.iterations) assert.deepEqual((({ status, required }) => [status, required])(iteration.verification.checks.find(c => c.id === 'issue-7-acceptance')), ['SKIP', false]);
+    })));
     for (const labels of [['sbi', 'needs-review'], ['ready']]) {
       it(`when the Issue is labelled ${labels.join(' + ')} then no run, workspace or PR is created`, () => fixture(root => withIssue(root, sbiIssue(labels), async ({ github }) => {
         await assert.rejects(start(root), /ready|sbi label|needs-review/);
@@ -539,6 +563,63 @@ describe('GitHub PR Adapter', () => {
       assert.equal(approved.executionStatus, 'DONE');
       assert.equal((await github.state()).pulls.length, 1);
     })));
+    // .harness/state/runs/*.json is a projection anyone can edit. The run to approve is chosen from .harness/runs/<id>/summary.json and re-checked before the decision.
+    it('when the run projections are edited to make another run look like the one waiting for the Issue then the approval still goes to the run of the Issue', () => fixture(root => update(root, sbiPath, s => { s.risks = ['RLS']; }).then(() => withIssue(root, sbiIssue(['sbi', 'ready'], planned({ riskCandidate: 'L3' })), async () => {
+      const own = await start(root), other = await startRun({ root, quiet: true, provider: 'fake' });
+      assert.deepEqual([own.status, other.status], ['WAITING_FOR_HUMAN_GATE', 'WAITING_FOR_HUMAN_GATE']);
+      await update(root, `.harness/state/runs/${other.id}.json`, s => { s.sbiIssue = { repo: 'acme/app', number: 7, url: issueUrl }; });
+      await update(root, `.harness/state/runs/${own.id}.json`, s => { s.gate.state = 'APPROVED'; delete s.sbiIssue; });
+      const approved = await approveRun({ root, issueUrl, purpose: 'implementation-gate', identityProvider: human('Designer'), agent: agent(), quiet: true });
+      assert.equal(approved.id, own.id);
+      assert.equal(await exists(join(root, '.harness/state/human', `${other.id}.json`)), false);
+    }))));
+    it('when a decision for the Issue is recorded on a run of another SBI then it is refused before anything is recorded', () => fixture(root => update(root, sbiPath, s => { s.risks = ['RLS']; }).then(() => withIssue(root, sbiIssue(), async () => {
+      const other = await startRun({ root, quiet: true, provider: 'fake' });
+      await assert.rejects(recordDecision({ root, runId: other.id, purpose: 'implementation-gate', issueUrl, identityProvider: human('Designer') }), /issues\/7/);
+      assert.equal(await exists(join(root, '.harness/state/human', `${other.id}.json`)), false);
+    }))));
+    // The exit code is what a person or a script sees: only a failed run is non-zero. cli.mjs of the fixture is spawned with a codex stub on PATH.
+    describe('when the commands are run from the CLI', () => {
+      const cli = async (root, args, response = { files: [{ path: home, content: 'ホーム' }], escalation: null }) => {
+        const bin = await mkdtemp(join(tmpdir(), 'harness-codex-'));
+        try {
+          await writeFile(join(bin, 'codex'), `#!${process.execPath}\nconst fs = require('node:fs'), args = process.argv.slice(2); fs.readFileSync(0); fs.writeFileSync(args[args.indexOf('--output-last-message') + 1], process.env.CODEX_STUB_RESPONSE);\n`);
+          await chmod(join(bin, 'codex'), 0o755);
+          const child = spawn(process.execPath, [join(root, 'tools/harness/cli.mjs'), ...args], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'],
+            env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, CODEX_STUB_RESPONSE: JSON.stringify(response) } });
+          let output = '';
+          child.stdout.on('data', chunk => { output += chunk; }); child.stderr.on('data', chunk => { output += chunk; });
+          const code = await new Promise(resolve => child.on('exit', resolve));
+          return { code, output };
+        } finally { await rm(bin, { recursive: true, force: true }); }
+      };
+      // The fixture copies tools/harness without node_modules; the installed ones are linked and kept out of Git.
+      const linked = async root => {
+        await symlink(join(new URL('../../', import.meta.url).pathname, 'node_modules'), join(root, 'node_modules'));
+        await mkdir(join(root, '.git/info'), { recursive: true });
+        await appendFile(join(root, '.git/info/exclude'), 'node_modules\n');
+      };
+      it('when harness:run SBI_URL opens the PR and only GitHub CI is pending then exits 0', () => fixture(root => linked(root).then(() => withIssue(root, sbiIssue(), async ({ github }) => {
+        const { code, output } = await cli(root, ['run', issueUrl, '--provider', 'codex']);
+        assert.equal(code, 0, output);
+        assert.equal((await github.state()).pulls.length, 1);
+        assert.match(output, /Pull request: https:\/\/github.com\/acme\/app\/pull\//);
+      }))));
+      it('when harness:run SBI_URL stops at the gate as required, and harness:approve SBI_URL then opens the PR, then both exit 0', () => fixture(root => linked(root).then(() => withIssue(root, sbiIssue(['sbi', 'ready'], planned({ riskCandidate: 'L3' })), async ({ github }) => {
+        const started = await cli(root, ['run', issueUrl, '--provider', 'codex']);
+        assert.equal(started.code, 0, started.output);
+        assert.match(started.output, /Human Gate: pnpm harness:approve https:\/\/github.com\/acme\/app\/issues\/7 --phase gate/);
+        assert.deepEqual((await github.state()).pulls, []);
+        const approved = await cli(root, ['approve', issueUrl, '--phase', 'gate']);
+        assert.equal(approved.code, 0, approved.output);
+        assert.equal((await github.state()).pulls.length, 1);
+      }))));
+      it('when harness:run SBI_URL escalates because the agent writes outside the scope then exits 2 and opens no PR', () => fixture(root => linked(root).then(() => withIssue(root, sbiIssue(), async ({ github }) => {
+        const { code, output } = await cli(root, ['run', issueUrl, '--provider', 'codex'], { files: [{ path: 'apps/admin-other/home.txt', content: 'ホーム' }], escalation: null });
+        assert.equal(code, 2, output);
+        assert.deepEqual((await github.state()).pulls, []);
+      }))));
+    });
     it('when two runs of the Issue wait at the gate then approving by the Issue URL refuses to guess and names both runs', () => fixture(root => withIssue(root, sbiIssue(['sbi', 'ready'], planned({ riskCandidate: 'L3' })), async () => {
       const first = await start(root), second = await start(root);
       await assert.rejects(approveRun({ root, issueUrl, purpose: 'implementation-gate', identityProvider: human('Designer'), quiet: true }),

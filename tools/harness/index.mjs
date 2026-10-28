@@ -3,7 +3,7 @@ import { join, dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { check } from './check.mjs';
 import { json, readJson, exists, evidenceText } from './io.mjs';
-import { responseSchema } from './schemas.mjs';
+import { responseSchema, runIdSchema } from './schemas.mjs';
 import { runAgent, makePrompt, providerCommand } from './agents/index.mjs';
 import { verify, checksPassed } from './verifier.mjs';
 import { review } from './reviewer.mjs';
@@ -11,7 +11,7 @@ import { judge } from './completion-judge.mjs';
 import { humanGate, classifyEscalation } from './escalation.mjs';
 import { assessRisk } from './risk-classifier.mjs';
 import { mergeDecision, validHumanApprovals } from './merge-policy.mjs';
-import { authenticatedRecords, recordDecision } from './human-approvals.mjs';
+import { authenticatedRecords, recordDecision, waitsForIssue } from './human-approvals.mjs';
 import { classifySecurity, verifySecurity, combineSecurity, securityPassed } from './security-enforcement.mjs';
 import { withEvidenceProtection, redact, redactText, hasSecret, assertSafeInput, isSecretPath } from './evidence-protection.mjs';
 import { githubPrCli, githubState, pullRequestBody } from './github-pr.mjs';
@@ -20,7 +20,7 @@ import { saveRun, loadRun, runPaths, withRunLock } from './run-store.mjs';
 import { classifyLane } from './lanes.mjs';
 import { assertState } from './state-machine.mjs';
 import { loadSbiIssue, inScope } from './sbi-issue.mjs';
-import { snapshotFromIssue, snapshotPath } from './sbi-source.mjs';
+import { snapshotFromIssue, snapshotPath, riskView, snapshotVerified } from './sbi-source.mjs';
 import { parseIssueUrl } from './planner.mjs';
 import { githubCli } from './planner-github.mjs';
 export { check, judge, providerCommand };
@@ -77,6 +77,15 @@ async function readGitHub(root, summary, inputs, github) {
     return await githubState({ github, root, remote: inputs.config.github.remote, repository: { owner, repo }, pullRequest: summary.pullRequest, headSha: summary.headSha, requiredChecks: inputs.config.github.requiredChecks });
   } catch (error) { return { unavailable: redactText(error.message) }; }
 }
+// Files as Risk and Security see them. The Run snapshot of an SBI Issue counts by its values only while it is verified now.
+async function riskFiles(root, summary, inputs, files) {
+  const snapshot = inputs.sbiSnapshot;
+  if (!snapshot) return files;
+  const check = await snapshotVerified({ workspace: runPaths(root, summary.id).workspace, base: summary.baselineSha, files, snapshot });
+  summary.snapshotVerification = { ...check, headSha: summary.headSha, at: new Date().toISOString() };
+  await json(join(runPaths(root, summary.id).directory, 'sbi-source.json'), summary.snapshotVerification);
+  return riskView(files, { snapshot, verified: check.verified });
+}
 async function assessMerge(root, summary, inputs, quiet, github = githubPrCli) {
   const { directory, workspace } = runPaths(root, summary.id);
   const { transition } = controller(root, summary, quiet);
@@ -88,9 +97,11 @@ async function assessMerge(root, summary, inputs, quiet, github = githubPrCli) {
   const files = await changedFiles(workspace, summary.baselineSha, summary.headSha);
   await json(join(directory, 'changes.json'), { baselineSha: summary.baselineSha, headSha: summary.headSha, files });
   const last = summary.iterations.at(-1);
-  summary.securityAssessment = combineSecurity(summary.securityAssessment, classifySecurity({ files, sbi: inputs.sbi }, inputs.securityPolicy));
+  const assessed = await riskFiles(root, summary, inputs, files);
+  // Each assessment starts from the execution's assessment, so a snapshot verified earlier but not now cannot keep a lower level.
+  summary.securityAssessment = combineSecurity(summary.executionSecurityAssessment ?? summary.securityAssessment, classifySecurity({ files: assessed, sbi: inputs.sbi }, inputs.securityPolicy));
   await json(join(directory, 'security-assessment.json'), { ...summary.securityAssessment, headSha: summary.headSha });
-  summary.risk = assessRisk({ files, metadata: metadata(inputs.sbi), humanGate: summary.gate.required, aiRisk: last.semanticReview?.riskLevel ?? null, securityAssessment: summary.securityAssessment, lane:summary.lane }, inputs.riskPolicy);
+  summary.risk = assessRisk({ files: assessed, metadata: metadata(inputs.sbi), humanGate: summary.gate.required, aiRisk: last.semanticReview?.riskLevel ?? null, securityAssessment: summary.securityAssessment, lane:summary.lane }, inputs.riskPolicy);
   await json(join(directory, 'risk-assessment.json'), { ...summary.risk, phase: 'post-execution', headSha: summary.headSha, inputsDigest: summary.inputsDigest });
   const securityVerification = last.securityVerification;
   if (summary.securityAssessment.requiredVerifiers.some(id => !securityVerification.requiredVerifiers.includes(id))) throw new Error('Required security checks changed; re-verification required');
@@ -197,7 +208,8 @@ async function executeLoop({ root, summary, inputs, quiet, agent = runAgent, rev
         lane:summary.lane, full:summary.fullVerification,
         requiredVerifiers:summary.securityAssessment.requiredVerifiers.filter(id=>generalIds.has(id)) }));
       await json(join(iterDir,'verifier-selection.json'),result.verification.checks.map(({id,selectionReasons,required,status})=>({id,selectionReasons,required,status})));
-      summary.securityAssessment = combineSecurity(summary.securityAssessment, classifySecurity({files,sbi},securityPolicy));
+      summary.securityAssessment = combineSecurity(summary.securityAssessment, classifySecurity({files:await riskFiles(root,summary,inputs,files),sbi},securityPolicy));
+      summary.executionSecurityAssessment = summary.securityAssessment;
       result.securityVerification = redact(await verifySecurity({ workspace, sbi, assessment: summary.securityAssessment, policy: securityPolicy, config, headSha:summary.headSha, verification:result.verification }));
       result.security = { id:'security',required:true,status:securityPassed(result.securityVerification)?'PASS':'FAIL' };
       result.gateApproved = await resolveGate(root,summary);
@@ -357,22 +369,37 @@ export async function runHarness(options) {
   const root = await realpath(options.root);
   return withEvidenceProtection(root, async () => continueToPullRequest({...options,root}, await runProtected({...options,root})), { extensions: options.redactionExtensions || [] });
 }
+// Exit code of harness:run / approve / resume / pr / demo. 0: the run stopped where a human or GitHub CI takes over
+// (PR opened and waiting for CI or Review, MERGE_ALLOWED, a gate the Risk requires, or a DONE run that never publishes). 2: the run failed or needs recovery.
+// A run that could not open its PR throws, and the CLI exits 1.
+export function runExitCode(run) {
+  if (run.status === 'MERGE_ALLOWED') return 0;
+  if (run.executionStatus === 'PENDING') return run.gate?.state === 'WAITING_FOR_HUMAN_GATE' || run.designApproval?.state === 'WAITING_FOR_DESIGN_APPROVAL' ? 0 : 2;
+  if (run.executionStatus !== 'DONE' || (run.publish && !run.pullRequest)) return 2;
+  const waitingForCi = Boolean(run.pullRequest) && run.status === 'BLOCKED' && run.merge?.reasons?.length > 0 && run.merge.reasons.every(r => r === 'required_ci_not_passed');
+  return run.status === 'WAITING_FOR_HUMAN_REVIEW' || waitingForCi ? 0 : 2;
+}
 // An SBI Issue URL names the run that waits for this decision. More than one candidate is never guessed.
-async function waitingRun(root, issueUrl, purpose) {
-  const { url } = parseIssueUrl(issueUrl);
-  const directory = join(root, '.harness/state/runs');
-  const summaries = await Promise.all((await readdir(directory)).filter(name => name.endsWith('.json')).map(name => readJson(join(directory, name))));
-  const waiting = summaries.filter(s => s.sbiIssue?.url === url && !s.cleanedAt && (purpose === 'implementation-gate' ? s.gate?.state === 'WAITING_FOR_HUMAN_GATE'
-    : purpose === 'design-approval' ? s.designApproval?.state === 'WAITING_FOR_DESIGN_APPROVAL' : s.executionStatus === 'DONE' && !s.pullRequest));
-  if (waiting.length !== 1) throw new Error(`${url} を待っているrunが${waiting.length}件あります${waiting.length ? `（${waiting.map(s => s.id).join(', ')}）。--run RUN_ID で指定してください` : ''}`);
-  return waiting[0].id;
+// Candidates come from .harness/runs/<id>/summary.json, the run state loadRun verifies; .harness/state/runs is a projection and is never read here.
+async function waitingRun(root, url, purpose) {
+  const waiting = [];
+  for (const name of await readdir(join(root, '.harness/runs'))) {
+    if (!runIdSchema.safeParse(name).success) continue;
+    // Planner and API Schema directories have their own summary.json; only a run summary for this Issue matches.
+    let summary;
+    try { summary = await readJson(runPaths(root, name).summary); } catch { continue; }
+    if (summary?.id === name && waitsForIssue(summary, url, purpose)) waiting.push(name);
+  }
+  if (waiting.length !== 1) throw new Error(`${url} を待っているrunが${waiting.length}件あります${waiting.length ? `（${waiting.join(', ')}）。--run RUN_ID で指定してください` : ''}`);
+  return waiting[0];
 }
 // harness:approve records the decision through the trusted identity adapter, then continues the run as harness:resume and harness:pr would.
 export async function approveRun(options) {
   const root = await realpath(options.root);
   return withEvidenceProtection(root, async () => {
-    const runId = options.runId ?? await waitingRun(root, options.issueUrl, options.purpose);
-    await recordDecision({ root, runId, purpose: options.purpose, decision: options.decision, identityProvider: options.identityProvider });
+    const issueUrl = options.runId ? null : parseIssueUrl(options.issueUrl).url;
+    const runId = options.runId ?? await waitingRun(root, issueUrl, options.purpose);
+    await recordDecision({ root, runId, purpose: options.purpose, decision: options.decision, identityProvider: options.identityProvider, issueUrl });
     return continueToPullRequest({...options,root,runId}, await resumeProtected({...options,root,runId}));
   }, { extensions: options.redactionExtensions || [] });
 }

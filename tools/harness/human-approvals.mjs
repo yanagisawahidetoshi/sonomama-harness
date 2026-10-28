@@ -36,10 +36,15 @@ export async function authenticatedRecords(root, runId) {
 }
 // The identity adapter runs in the trusted human CLI, never in the agent response protocol.
 // CLI deliberately offers no --reviewer option; two aliases of one OS account count as one.
-export async function recordDecision({ root, runId, purpose, decision = 'APPROVE', identityProvider = localHumanIdentity }) {
+// A run waits for a decision given by SBI Issue URL only while its own summary names that Issue and is in the waiting state of the purpose.
+export const waitsForIssue = (summary, url, purpose) => summary.sbiIssue?.url === url && !summary.cleanedAt && (purpose === 'implementation-gate' ? summary.gate?.state === 'WAITING_FOR_HUMAN_GATE'
+  : purpose === 'design-approval' ? summary.designApproval?.state === 'WAITING_FOR_DESIGN_APPROVAL' : summary.executionStatus === 'DONE' && !summary.pullRequest);
+export async function recordDecision({ root, runId, purpose, decision = 'APPROVE', identityProvider = localHumanIdentity, issueUrl = null }) {
   return withRunLock(root, runId, async () => {
     if (!['implementation-gate', 'design-approval', 'merge'].includes(purpose) || !['APPROVE', 'REVOKE', 'REQUEST_CHANGES'].includes(decision)) throw new Error('Invalid approval purpose/decision');
     const { summary } = await loadRun(root, runId);
+    // Chosen by Issue URL: re-checked on the verified run under its lock, so no other run receives the decision.
+    if (issueUrl && !waitsForIssue(summary, issueUrl, purpose)) throw new Error(`run ${runId} は ${issueUrl} の${purpose}を待っていません。記録していません`);
     if (purpose === 'merge' && summary.executionStatus !== 'DONE') throw new Error('Execution/gate must complete before merge approval');
     if (purpose === 'merge' && summary.pullRequest) throw new Error(`GitHub PR mode: merge approval comes from GitHub Review on ${summary.pullRequest.url}; harness:approve --phase merge is not used`);
     if (purpose === 'implementation-gate' && (!summary.gate.required || (summary.executionStatus !== 'PENDING' && decision !== 'REVOKE'))) throw new Error('Implementation gate cannot be granted after execution');
