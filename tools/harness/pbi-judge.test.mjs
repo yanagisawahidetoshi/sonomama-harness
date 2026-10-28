@@ -46,7 +46,7 @@ describe('SBI kind', () => {
   });
   describe('given an SBI candidate from the Planner provider', () => {
     it('when the candidate has no kind then it is rejected so every generated SBI states its kind', () => {
-      const candidate = { id: 'SBI-001', title: 't', purpose: 'p', scope: { included: ['x'], excluded: [] }, acceptanceCriteria: [], scenarios: [], dependsOn: [], changeAreas: [], riskCandidate: 'L2', securityImpact: [], verification: { applicationTest: 'a', acceptance: 'b', e2e: 'c' } };
+      const candidate = { id: 'SBI-001', title: 't', purpose: 'p', scope: { included: ['x'], excluded: [] }, acceptanceCriteria: [], scenarios: [], dependsOn: [], changeAreas: [], layers: [], estimatedFiles: 0, oversizeReason: null, riskCandidate: 'L2', securityImpact: [], verification: { applicationTest: 'a', acceptance: 'b', e2e: 'c' } };
       assert.equal(plannedSbiSchema.safeParse(candidate).success, false);
       assert.equal(plannedSbiSchema.safeParse({ ...candidate, kind: 'validation' }).success, true);
     });

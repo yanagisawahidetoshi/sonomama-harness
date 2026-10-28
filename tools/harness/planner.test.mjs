@@ -6,7 +6,8 @@ import { fixture } from './test-fixture.mjs';
 import { githubMock } from './test-github.mjs';
 import { exists, readJson } from './io.mjs';
 import { parseIssueUrl, planIssue, renderCreatedList, sbiMarker, sbiDigest } from './planner.mjs';
-import { judgePlan, creationOrder } from './planner-judge.mjs';
+import { judgePlan, creationOrder, judgeChangedFileCount } from './planner-judge.mjs';
+import { plannedSbiSchema, planJsonSchema } from './schemas.mjs';
 
 const pbiUrl = 'https://github.com/acme/app/issues/8';
 const pbi = { number: 8, title: '受講生プロフィールを表示する', body: '## 背景\nプロフィールを取得・更新・表示する。', html_url: pbiUrl, state: 'open', labels: [] };
@@ -17,17 +18,18 @@ function sbi(id, overrides = {}) {
     scope: { included: ['apps/mobile プロフィール画面'], excluded: [] },
     acceptanceCriteria: [{ id: 'AC-1', description: '登録済みの氏名が画面に表示される' }, { id: 'AC-2', description: '未登録なら未設定と表示される' }],
     scenarios: [
-      { name: '登録済みプロフィールを表示する', given: ['ログイン済みの受講生がいる', 'プロフィールが登録されている'], when: ['プロフィール画面を開く'], then: ['登録済みの氏名が表示される'], acceptanceIds: ['AC-1'] },
-      { name: '未登録プロフィールを表示する', given: ['ログイン済みの受講生がいる'], when: ['プロフィール画面を開く'], then: ['未設定と表示される'], acceptanceIds: ['AC-2'] },
+      { name: '登録済みプロフィールを表示する', given: ['ログイン済みの受講生がいる', 'プロフィールが登録されている'], when: ['プロフィール画面を開く'], then: ['登録済みの氏名が表示される'], acceptanceIds: ['AC-1'], test: 'RNTL: プロフィール画面Component' },
+      { name: '未登録プロフィールを表示する', given: ['ログイン済みの受講生がいる'], when: ['プロフィール画面を開く'], then: ['未設定と表示される'], acceptanceIds: ['AC-2'], test: 'RNTL: プロフィール画面Component' },
     ],
-    dependsOn: [], changeAreas: ['apps/mobile'], riskCandidate: 'L2', securityImpact: [],
+    dependsOn: [], changeAreas: ['apps/mobile'], layers: ['画面Component'], estimatedFiles: 4, oversizeReason: null, riskCandidate: 'L2', securityImpact: [],
     verification: { applicationTest: 'RNTL', acceptance: 'Trusted Acceptance', e2e: '不要' },
     ...overrides,
   };
 }
 // Every PBI ends with one validation SBI (real API + Maestro) and one acceptance SBI (human confirmation).
-const validation = (id, dependsOn) => sbi(id, { kind: 'validation', dependsOn, changeAreas: ['apps/mobile', 'apps/api'], verification: { applicationTest: '不要', acceptance: 'Trusted Acceptance', e2e: 'Maestro（実API + Rails + DB）' } });
-const acceptance = (id, dependsOn) => sbi(id, { kind: 'acceptance', dependsOn, changeAreas: [], verification: { applicationTest: '不要', acceptance: '人間確認', e2e: '不要' } });
+const e2eScenarios = (test) => sbi('x').scenarios.map(s => ({ ...s, test }));
+const validation = (id, dependsOn) => sbi(id, { kind: 'validation', dependsOn, changeAreas: ['apps/mobile', 'apps/api'], layers: ['画面Component', 'Rails Controller', 'Rails Model'], estimatedFiles: 3, scenarios: e2eScenarios('Maestro: 実API + Rails + DB'), verification: { applicationTest: '不要', acceptance: 'Trusted Acceptance', e2e: 'Maestro（実API + Rails + DB）' } });
+const acceptance = (id, dependsOn) => sbi(id, { kind: 'acceptance', dependsOn, changeAreas: [], layers: [], estimatedFiles: 0, scenarios: e2eScenarios('人間確認'), verification: { applicationTest: '不要', acceptance: '人間確認', e2e: '不要' } });
 const validPlan = () => [sbi('SBI-001'), validation('SBI-002', ['SBI-001']), acceptance('SBI-003', ['SBI-002'])];
 const withChecks = (...implementations) => [...implementations, validation('SBI-901', implementations.map(s => s.id)), acceptance('SBI-902', ['SBI-901'])];
 const agentWith = sbis => async () => ({ sbis, escalation: null });
@@ -83,6 +85,9 @@ describe('PBI → SBI Planner', () => {
       assert.match(state.created[0].body, /## 種類\n\n実装SBI（implementation）/);
       assert.match(state.created[1].body, /## 種類\n\n最終確認SBI（validation）/);
       assert.match(state.created[2].body, /## 種類\n\n人間確認SBI（acceptance）/);
+      assert.match(state.created[0].body, /## レイヤー\n\n画面Component\n\n## 想定変更ファイル数\n\n4\n\n/);
+      assert.match(state.created[0].body, /## Gherkinと実テスト\n\n- 登録済みプロフィールを表示する → RNTL: プロフィール画面Component\n- 未登録プロフィールを表示する → RNTL: プロフィール画面Component\n/);
+      assert.match(state.created[1].body, /- 登録済みプロフィールを表示する → Maestro: 実API \+ Rails \+ DB\n/);
       assert.deepEqual(result.created.map(c => [c.sbiId, c.number, c.url]), [['SBI-001', 101, 'https://github.com/acme/app/issues/101'], ['SBI-002', 102, 'https://github.com/acme/app/issues/102'], ['SBI-003', 103, 'https://github.com/acme/app/issues/103']]);
       assert.deepEqual(state.labels.sort(), ['needs-review', 'sbi']);
     })));
@@ -307,10 +312,98 @@ describe('SBI Quality Judge', () => {
         assert.ok(result.findings.some(f => f.sbi === target && reason.test(f.reason)), JSON.stringify(result.findings));
       });
     }
+    for (const field of ['layers', 'estimatedFiles', 'oversizeReason']) {
+      it(`when a candidate omits ${field} then the provider output is rejected and the provider schema requires it`, () => {
+        const { [field]: _omitted, ...candidate } = sbi('SBI-001');
+        assert.equal(plannedSbiSchema.safeParse(candidate).success, false);
+        assert.ok(planJsonSchema.properties.sbis.items.required.includes(field));
+      });
+    }
+    it('when a scenario omits the test that verifies it then the provider output is rejected and the provider schema requires it', () => {
+      const candidate = sbi('SBI-001');
+      candidate.scenarios = candidate.scenarios.map(({ test: _omitted, ...scenario }) => scenario);
+      assert.equal(plannedSbiSchema.safeParse(candidate).success, false);
+      assert.ok(planJsonSchema.properties.sbis.items.properties.scenarios.items.required.includes('test'));
+    });
+    const layered = (id, layer, changeAreas, test, overrides = {}) => sbi(id, { layers: [layer], changeAreas, scenarios: sbi(id).scenarios.map(s => ({ ...s, test })), verification: { applicationTest: test.split(':')[0], acceptance: 'Trusted Acceptance', e2e: '不要' }, ...overrides });
+    it('when a PBI is split into one SBI per Rails and Frontend layer with an integration SBI then passes', () => {
+      const plan = withChecks(
+        layered('SBI-001', 'OpenAPI Schema', ['packages/api-schema'], 'Prism mock contract test: GET /students'),
+        layered('SBI-002', 'Rails Model', ['apps/api'], 'RSpec Model Spec: Student', { dependsOn: ['SBI-001'] }),
+        layered('SBI-003', 'Rails Controller / Request', ['apps/api'], 'RSpec Request Spec: GET /students', { dependsOn: ['SBI-002'] }),
+        layered('SBI-004', 'FE API Hook', ['apps/mobile'], 'Vitest Hook test with API mock: useStudents', { dependsOn: ['SBI-001'] }),
+        layered('SBI-005', 'FE state hook', ['apps/mobile'], 'Vitest Hook test: useStudentFilter'),
+        layered('SBI-006', '画面Component', ['apps/mobile', 'packages/ui'], 'RNTL Component test: StudentList', { dependsOn: ['SBI-004', 'SBI-005'] }),
+        layered('SBI-007', 'Integration', ['apps/mobile'], 'Maestro E2E against the mock API: 受講生一覧', { dependsOn: ['SBI-006'] }),
+      );
+      assert.deepEqual(judgePlan(plan), { status: 'PASS', findings: [] });
+    });
+    it('when an implementation SBI expects more than 10 changed files and states why it cannot be split then passes', () => {
+      assert.equal(judgePlan(withChecks(sbi('SBI-001', { estimatedFiles: 14, oversizeReason: '生成されたAPI clientの再生成で14ファイルが同時に変わり、分割すると型が一致しない' }))).status, 'PASS');
+    });
+    it('when the application test names a real test alongside lint and typecheck then passes', () => {
+      assert.equal(judgePlan(withChecks(sbi('SBI-001', { verification: { applicationTest: 'Vitest + eslint + tsc', acceptance: 'Trusted Acceptance', e2e: '不要' } }))).status, 'PASS');
+    });
+    it('when the validation SBI spans several layers, more than 10 files and has no application test then passes because its Maestro E2E is the real test', () => {
+      const plan = withChecks(sbi('SBI-001'));
+      plan[1].estimatedFiles = 12;
+      assert.equal(judgePlan(plan).status, 'PASS');
+    });
+    it('when the acceptance SBI has no layer, no changed file and only a human check then passes', () => {
+      assert.equal(judgePlan(validPlan()).findings.filter(f => f.sbi === 'SBI-003').length, 0);
+    });
+    const verification = applicationTest => ({ applicationTest, acceptance: 'Trusted Acceptance', e2e: '不要' });
+    const granularityFailures = [
+      ['an implementation SBI declares more than one layer', () => withChecks(sbi('SBI-001', { layers: ['Rails Model', 'Rails Controller'] })), 'SBI-001', /レイヤー/],
+      ['an implementation SBI declares no layer', () => withChecks(sbi('SBI-001', { layers: [] })), 'SBI-001', /レイヤー/],
+      ['an implementation SBI changes both the Rails API and the mobile app', () => withChecks(sbi('SBI-001', { changeAreas: ['apps/api', 'apps/mobile'] })), 'SBI-001', /レイヤー.*apps\/api.*apps\/mobile/],
+      ['an implementation SBI expects more than 10 changed files without a reason', () => withChecks(sbi('SBI-001', { estimatedFiles: 11 })), 'SBI-001', /11ファイル.*分割/],
+      ['an implementation SBI expects more than 10 changed files with a blank reason', () => withChecks(sbi('SBI-001', { estimatedFiles: 11, oversizeReason: ' ' })), 'SBI-001', /11ファイル.*分割/],
+      ['an implementation SBI expects no changed file', () => withChecks(sbi('SBI-001', { estimatedFiles: 0 })), 'SBI-001', /変更ファイル数/],
+      ['the application test is lint only', () => withChecks(sbi('SBI-001', { verification: verification('lint') })), 'SBI-001', /実テスト/],
+      ['the application test is lint and typecheck only', () => withChecks(sbi('SBI-001', { verification: verification('eslint / tsc --noEmit のみ') })), 'SBI-001', /実テスト/],
+      ['the application test is 型チェック only', () => withChecks(sbi('SBI-001', { verification: verification('型チェックと静的解析だけ') })), 'SBI-001', /実テスト/],
+      ['the application test is declared unnecessary', () => withChecks(sbi('SBI-001', { verification: verification('不要') })), 'SBI-001', /実テスト/],
+      ['the application test says no test is needed', () => withChecks(sbi('SBI-001', { verification: verification('テスト不要（lintのみ）') })), 'SBI-001', /実テスト/],
+      ['an implementation scenario names no test', () => withChecks(sbi('SBI-001', { scenarios: sbi('SBI-001').scenarios.map((s, i) => ({ ...s, test: i ? s.test : ' ' })) })), 'SBI-001', /Scenario「登録済みプロフィールを表示する」.*実テスト/],
+      ['an implementation scenario is verified by typecheck only', () => withChecks(sbi('SBI-001', { scenarios: sbi('SBI-001').scenarios.map(s => ({ ...s, test: 'typecheck' })) })), 'SBI-001', /Scenario「未登録プロフィールを表示する」.*実テスト/],
+      ['the validation SBI has no E2E', () => { const plan = withChecks(sbi('SBI-001')); plan[1].verification = { applicationTest: '不要', acceptance: 'Trusted Acceptance', e2e: '不要' }; return plan; }, 'SBI-901', /E2E/],
+    ];
+    for (const [condition, candidates, target, reason] of granularityFailures) {
+      it(`when ${condition} then fails with the reason`, () => {
+        const result = judgePlan(candidates());
+        assert.equal(result.status, 'FAIL');
+        assert.ok(result.findings.some(f => f.sbi === target && reason.test(f.reason)), JSON.stringify(result.findings));
+      });
+    }
     it('when dependencies form a cycle then fails naming the cycle', () => {
       const result = judgePlan([sbi('SBI-001', { dependsOn: ['SBI-002'] }), sbi('SBI-002', { dependsOn: ['SBI-001'] })]);
       assert.equal(result.status, 'FAIL');
       assert.ok(result.findings.some(f => /循環/.test(f.reason) && /SBI-001/.test(f.reason)));
+    });
+  });
+});
+
+describe('Changed file count after implementation', () => {
+  describe('given the number of files an SBI expected to change and the files its PR changed', () => {
+    const changed = count => Array.from({ length: count }, (_, i) => `apps/mobile/src/file-${i}.ts`);
+    it('when the PR stays within 10 files then passes even if it exceeds the estimate', () => {
+      assert.equal(judgeChangedFileCount({ estimatedFiles: 3, changedPaths: changed(10) }).status, 'PASS');
+    });
+    it('when the PR stays within an estimate above 10 that the Planner justified then passes', () => {
+      assert.equal(judgeChangedFileCount({ estimatedFiles: 14, changedPaths: changed(14) }).status, 'PASS');
+    });
+    it('when the PR exceeds both 10 files and the estimate then fails naming both numbers', () => {
+      const result = judgeChangedFileCount({ estimatedFiles: 4, changedPaths: changed(11) });
+      assert.equal(result.status, 'FAIL');
+      assert.match(result.reason, /11ファイル/);
+      assert.match(result.reason, /想定4ファイル/);
+    });
+    it('when the same path is listed twice then counts it once', () => {
+      assert.equal(judgeChangedFileCount({ estimatedFiles: 4, changedPaths: [...changed(10), 'apps/mobile/src/file-0.ts'] }).status, 'PASS');
+    });
+    it('when the estimate is missing then fails closed instead of assuming any size is fine', () => {
+      assert.equal(judgeChangedFileCount({ estimatedFiles: undefined, changedPaths: changed(1) }).status, 'FAIL');
     });
   });
 });
