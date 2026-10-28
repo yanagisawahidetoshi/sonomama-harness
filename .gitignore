@@ -12,6 +12,13 @@ node_modules/
 # Sensitive source files are never review/export artifacts.
 **/.env
 **/.env.*
+# Placeholder-only templates are tracked; Harness still inspects their content (isSafeEnvTemplate).
+!**/.env.example
+!**/.env.*.example
+!**/.env.sample
+!**/.env.*.sample
+!**/.env.template
+!**/.env.*.template
 **/*.pem
 **/*.key
 **/*.p12

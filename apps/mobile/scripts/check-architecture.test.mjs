@@ -25,6 +25,7 @@ const valid = {
   'shared/components/PageHeading/index.tsx': "import { tokens } from '../../theme';\n",
   'shared/theme/index.ts': 'export const tokens = {};\n',
   'shared/api/index.ts': "export * from './http-client';\n",
+  'env.d.ts': 'declare module "*.png";\n',
 };
 
 describe('checkArchitecture', () => {
@@ -95,6 +96,84 @@ describe('checkArchitecture', () => {
       assert.deepEqual(
         checkArchitecture(src).map((v) => v.rule),
         ['app → features/<feature>/index.ts only'],
+      );
+    });
+  });
+
+  describe('given a declaration file outside the layers', () => {
+    it('when env.d.ts sits next to the layers then reports no violation', () => {
+      assert.deepEqual(checkArchitecture(fixture(valid)), []);
+    });
+
+    it('when a feature imports the declaration file then reports it, so it cannot become a detour', () => {
+      const src = fixture({ ...valid, 'features/home/hooks/useEnv.ts': "import '@/env.d';\n" });
+      assert.deepEqual(
+        checkArchitecture(src).map((v) => v.rule),
+        ['layered → non-layer file'],
+      );
+    });
+  });
+
+  describe('given an unclassified top-level directory such as src/lib', () => {
+    it('when a feature imports it through the alias then reports it', () => {
+      const src = fixture({
+        ...valid,
+        'lib/format.ts': 'export const format = String;\n',
+        'features/home/hooks/useFormat.ts': "import { format } from '@/lib/format';\n",
+      });
+      assert.deepEqual(checkArchitecture(src), [
+        { file: 'features/home/hooks/useFormat.ts', specifier: '@/lib/format', rule: 'unknown top-level layer' },
+      ]);
+    });
+
+    it('when a feature imports it through a relative path then reports the same rule', () => {
+      const src = fixture({
+        ...valid,
+        'lib/format.ts': 'export const format = String;\n',
+        'features/home/hooks/useFormat.ts': "import { format } from '../../../lib/format';\n",
+      });
+      assert.deepEqual(
+        checkArchitecture(src).map((v) => v.rule),
+        ['unknown top-level layer'],
+      );
+    });
+
+    it('when features/A reaches features/B through it then reports both hops', () => {
+      const src = fixture({
+        ...valid,
+        'lib/bridge.ts': "export { HomeScreen } from '@/features/home';\n",
+        'features/lessons/index.ts': "export { HomeScreen } from '@/lib/bridge';\n",
+      });
+      assert.deepEqual(
+        checkArchitecture(src)
+          .map((v) => `${v.file}: ${v.rule}`)
+          .sort(),
+        ['features/lessons/index.ts: unknown top-level layer', 'lib/bridge.ts: unknown top-level layer'],
+      );
+    });
+
+    it('when shared imports it then reports it', () => {
+      const src = fixture({
+        ...valid,
+        'lib/format.ts': 'export const format = String;\n',
+        'shared/lib/date.ts': "export { format } from '../../lib/format';\n",
+      });
+      assert.deepEqual(
+        checkArchitecture(src).map((v) => v.rule),
+        ['unknown top-level layer'],
+      );
+    });
+  });
+
+  describe('given a relative import that leaves src', () => {
+    it('when a feature imports a file outside src then reports it as an unknown layer', () => {
+      const src = fixture({
+        ...valid,
+        'features/home/hooks/useOutside.ts': "import { x } from '../../../../outside';\n",
+      });
+      assert.deepEqual(
+        checkArchitecture(src).map((v) => v.rule),
+        ['unknown top-level layer'],
       );
     });
   });

@@ -62,6 +62,9 @@ API契約のSSOTは `packages/api-schema/openapi.yaml` (OpenAPI 3.1)。apps/api�
 `committee-rails` は採用していない。依存先のCommittee本体が、OpenAPI 3.1以上を未対応として受け付けないため。
 OpenAPI 3.1のrequest / response contract validationは別Issueでライブラリを選ぶ。
 
+routeを変えたら `docker compose run --rm -e RAILS_ENV=test api bin/rails contract:routes` で `config/routes.manifest.json` を更新してcommitする。
+api-contract VerifierはRailsを起動せずこのmanifestをOpenAPIと照合し、`spec/lib/route_manifest_spec.rb` はmanifestが古いと失敗する。
+
 ## 認証
 
 認証Provider（Cognito / Google Cloud Identity Platform / Firebase Auth等）は未決定。
