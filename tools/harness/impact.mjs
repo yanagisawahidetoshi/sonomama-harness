@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readJson } from './io.mjs';
+import { isProductionPath } from './lanes.mjs';
 import { configSchema, sbiSchema } from './schemas.mjs';
 import { checksPassed, verify } from './verifier.mjs';
 import { git } from './workspace.mjs';
@@ -42,6 +43,8 @@ export function analyzeImpact({ config, sbis = [], files = [], all = false }) {
   }
   const fullGatePath = firstMatch(config.impact?.fullGate, files);
   const fullGateReasons = all ? ['all'] : fullGatePath ? [`diff:${fullGatePath}`] : [];
+  // Production work goes through an SBI; prototypes, docs and Harness maintenance stay outside lanes.json productionPaths.
+  const sbiRequiredReasons = files.filter(f => isProductionPath(f.path)).slice(0, 1).map(f => `production:${f.path}`);
   const selected = [...verifiers.values()].sort((a, b) => a.id.localeCompare(b.id));
   return {
     sbis: sbis.map(s => s.id),
@@ -51,6 +54,8 @@ export function analyzeImpact({ config, sbis = [], files = [], all = false }) {
     acceptanceVerifiers: sorted(sbis.flatMap(s => s.acceptanceCriteria.map(a => a.verifier))),
     fullGate: fullGateReasons.length > 0,
     fullGateReasons,
+    sbiRequired: sbiRequiredReasons.length > 0,
+    sbiRequiredReasons,
   };
 }
 
@@ -62,6 +67,7 @@ export function judgeCi({ impact, needs, acceptance }) {
     if (wanted ? result !== 'success' : !['success', 'skipped'].includes(result)) reasons.push(`${job}: ${result}`);
   };
   expect('impact', true);
+  if (impact.sbiRequired && !impact.sbis.length) reasons.push(`sbi missing: ${impact.sbiRequiredReasons.join(', ')} requires a changed .harness/state/sbi-*.json`);
   expect('verifiers', impact.requiredVerifiers.length > 0);
   expect('harness-test', impact.fullGate);
   expect('harness-demo', impact.fullGate);
@@ -117,6 +123,7 @@ export async function runCompletionJudge({ root, base, all = false, needs }) {
 export function describeImpact(impact) {
   return [
     `SBI: ${impact.sbis.join(', ') || '(none; diff only)'}`,
+    `SBI required: ${impact.sbiRequired ? `yes (${impact.sbiRequiredReasons.join(', ')})` : 'no (no production path changed)'}`,
     `Affected areas: ${impact.affectedAreas.join(', ') || '(none)'}`,
     ...impact.verifiers.map(v => `Verifier ${v.id}${v.mandatory ? ' [mandatory]' : ''}: ${v.reasons.join(', ')}`),
     `Acceptance (Completion Judge): ${impact.acceptanceVerifiers.join(', ') || '(none)'}`,

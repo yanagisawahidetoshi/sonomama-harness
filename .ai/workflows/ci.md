@@ -20,7 +20,13 @@ PRで追加・変更された `.harness/state/sbi-*.json` と、base branchと�
 | 差分 | `appliesTo` に一致するVerifier。SBIが挙げていなければ `diff-not-in-sbi` を付けて追加する | 任意 |
 | 領域の組み合わせ | `impact.crossLayer`。apiとmobile / adminが同時に変わるとapi-contractを追加する | 任意 |
 
-必須のVerifierは、アプリが無い・コマンドが未設定ならFAILする。任意のVerifierは、対象がまだ作られていなければ「missing app (placeholder)」としてSKIPする。SBIの無いPRは差分だけで選ぶ。
+必須のVerifierは、アプリが無い・コマンドが未設定ならFAILする。任意のVerifierは、対象がまだ作られていなければ「missing app (placeholder)」としてSKIPする。
+
+## SBIが必須の変更
+
+Production（`apps/`・`packages/`と`.harness/config/lanes.json`の`productionPaths`）を変更するPRは、`.harness/state/sbi-*.json`の追加か変更が必須。無ければCompletion JudgeがFAILする。
+それ以外（`prototypes/`、docs、Harness本体など）だけを変更するPRはSBIなしで通り、Verifierは差分だけで選ぶ。
+判定理由はimpact jobとharness jobのログの`SBI required:`行に出る。
 
 `impact.fullGate` のパス（`tools/harness/`、`.harness/config|verification|rules|skills/`、`.github/`、`.githooks/`、`AGENTS.md`、`.ai/`、root の `package.json`）が変わったときはFull Gateも実行する。mainへのpushでは全Verifierを実行し、Full Gateも実行する。
 
