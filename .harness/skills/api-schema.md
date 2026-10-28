@@ -9,9 +9,9 @@ Issueの要件から、Frontend / Rails APIが実装前に合意するAPI契約�
   change: 新規はadd、既存（existing.endpoints）の変更はmodify、削除はremove。既存と同じmethod + pathをaddにしない。
   modifyは既存operationを丸ごと置き換える。existingContractを見て、残すparameter・request body・response・制約もすべて記載する。
   既存と同名のcomponentも丸ごと置き換えるため、残すpropertyをすべて記載する。消えた内容は破壊的変更の候補として人間に示される。
-- authN: Cognito JWTが必要ならcognito-jwt、不要ならpublic。JWTの検証と業務認可はRails側で行う。
+- authN: 認証（Bearer JWT）が必要ならbearer-jwt、不要ならpublic。認証Providerは指定しない。JWTの検証と業務認可はRails側で行う。
   authZ.roles: 許可するrole。authZ.rule: Railsが判定する認可条件（例: JWTのsubと一致する本人のデータだけ）。条件がなければnull。
-  cognito-jwtは401を定義する。rolesを指定したら403を定義する。publicに401 / 403 / rolesを付けない。
+  bearer-jwtは401を定義する。rolesを指定したら403を定義する。publicに401 / 403 / rolesを付けない。
 - parameters: path / query / header。pathの{param}はすべてrequired=trueのpath parameterにする。
 - requestBody / responses[].body: componentsのname（またはexisting.componentsのname）を参照する。一覧はarray=true。
   GET / DELETEにrequestBodyを付けない。204はbody=null。statusはsupportedStatusesから必要なものだけ選ぶ。
@@ -19,7 +19,7 @@ Issueの要件から、Frontend / Rails APIが実装前に合意するAPI契約�
 - components: PascalCaseのname。propertiesはcamelCase。objectはrefで別componentを参照し、arrayはitemsを指定する。
   required / nullable / enum / format / constraintsで契約を明確にする。enumを空にしない。重複するschemaは1つのcomponentにまとめる。
 - pii: PIIを含むcomponent / endpointはtrue。logCautionにログへ出してはいけない項目を書く。
-- securityImpact: securityCategoriesから選ぶ。cognito-jwtならAPIAuthentication、Rails認可条件があればAPIAuthorization、PIIならPII。
+- securityImpact: securityCategoriesから選ぶ。bearer-jwtならAPIAuthentication、Rails認可条件があればAPIAuthorization、PIIならPII。
 - Secret / Credential（password、secret、api key、JWT等）をresponseで返さない。exampleに実値やトークンを書かない。
 
 含めないもの: Rails / Frontendの実装、クラス名、DB設計、コード生成の指示。
