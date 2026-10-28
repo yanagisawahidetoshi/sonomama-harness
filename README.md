@@ -293,7 +293,7 @@ LEVEL 3を複数人で承認する本運用には、認証済みの別人を返�
 ```text
 .harness/runs/<run-id>/
   inputs.json                   # SBI / 設定 / Rules / スキル / tool fingerprint
-  summary.json                  # 3つの状態、HEAD、遷移履歴
+  summary.json                  # 3つの状態、HEAD、遷移履歴。判定の正本（schema検証・署名付き）
   human-gate.json
   security-assessment.json      # impacts / rule IDs / Gate / 最低Risk / 必須検証
   security-verification.json    # 必須Security checksのPASS/FAIL/SKIP/NOT_CONFIGURED
@@ -319,6 +319,12 @@ LEVEL 3を複数人で承認する本運用には、認証済みの別人を返�
 
 未実行のフェーズはNOT_RUNとし、成功結果を捏造しない。ゲート待ちでも初期リスクと承認・マージ未評価を保存する。
 Stateは.harness/state/runsにも保存する。resume時には同じrunを再評価する。
+
+判定の正本はsummary.json、署名付き承認台帳、inputs.json（inputsDigestで束縛）、workspace（headSha・workspaceDigestで束縛）だけ。
+summary.jsonは保存のたびにschemaで検証し、承認台帳と同じ`.harness/state/human/.key`のHMACで署名する。
+resume・PR作成・承認記録・cleanupは、schemaか署名の検証に失敗したrunを読まずに停止し、stateも書き換えない。
+.harness/state/runs、health-metrics.json、merge-decision.json、approvals.jsonなど残りのファイルは投影で、判定には読まない。
+署名は同じOSユーザーでも鍵を読まない書き換えを検出する。鍵そのものを読めるプロセスからは守れない（隔離は#58）。
 実行証跡・ローカル承認はGit管理対象外。
 
 ## Health MetricsとHarness Observerの責務分離
