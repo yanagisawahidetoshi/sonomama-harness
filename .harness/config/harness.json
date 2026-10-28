@@ -704,8 +704,14 @@
       "^\\.github/",
       "^\\.githooks/",
       "^AGENTS\\.md$",
-      "^\\.ai/",
-      "^package\\.json$"
+      "^\\.ai/"
+    ],
+    "toolchain": [
+      "^\\.node-version$",
+      "^\\.tool-versions$",
+      "^package\\.json$",
+      "^pnpm-workspace\\.yaml$",
+      "^\\.npmrc$"
     ]
   }
 }

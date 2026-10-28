@@ -28,7 +28,9 @@ Production（`apps/`・`packages/`と`.harness/config/lanes.json`の`productionP
 それ以外（`prototypes/`、docs、Harness本体など）だけを変更するPRはSBIなしで通り、Verifierは差分だけで選ぶ。
 判定理由はimpact jobとharness jobのログの`SBI required:`行に出る。
 
-`impact.fullGate` のパス（`tools/harness/`、`.harness/config|verification|rules|skills/`、`.github/`、`.githooks/`、`AGENTS.md`、`.ai/`、root の `package.json`）が変わったときはFull Gateも実行する。mainへのpushでは全Verifierを実行し、Full Gateも実行する。
+`impact.fullGate` のパス（`tools/harness/`、`.harness/config|verification|rules|skills/`、`.github/`、`.githooks/`、`AGENTS.md`、`.ai/`）が変わったときはFull Gateも実行する。
+`impact.toolchain` のパス（`.node-version`、`.tool-versions`、root の `package.json`、`pnpm-workspace.yaml`、`.npmrc`）が変わったときは、全Application VerifierとFull Gateを実行する。ログの理由は`toolchain:<path>`になる。workflowはこの判定の出力を使うだけで、pathを持たない。
+mainへのpushでは全Verifierを実行し、Full Gateも実行する。
 
 ## Completion Judgeの判定
 
@@ -63,7 +65,7 @@ pnpm harness:verify --verifier admin --base origin/main
 
 次の場合はFull Gateとして`harness:test`全件を実行する。
 
-- `impact.fullGate`のパスが変わった
+- `impact.fullGate`か`impact.toolchain`のパスが変わった
 - 複数のrefを同時にpushした、pushするcommitがHEADではない、push先のcommitが手元に無い、比較するbaseが無い、refを読めない
 
 hookはローカルの早期検出用で、回避できる。SBI必須・Trusted Acceptance・Security・`harness:demo --full`はCIのCompletion Judgeが最終判定する。
