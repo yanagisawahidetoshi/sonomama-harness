@@ -7,11 +7,11 @@ import { issueReadiness, sbiFromIssue, inScope, loadSbiIssue } from './sbi-issue
 const ref = { owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' };
 const pbi = { owner: 'acme', repo: 'app', number: 3, url: 'https://github.com/acme/app/issues/3', title: '管理画面のホーム' };
 const planned = (overrides = {}) => ({
-  id: 'SBI-001', title: 'ホームに見出しを表示する', purpose: '管理者がホームを開くと見出しが表示される。',
+  id: 'SBI-001', kind: 'implementation', title: 'ホームに見出しを表示する', purpose: '管理者がホームを開くと見出しが表示される。',
   scope: { included: ['apps/admin ホーム画面'], excluded: [] },
   acceptanceCriteria: [{ id: 'AC-1', description: 'ホームに見出しが表示される' }, { id: 'AC-2', description: '見出しの文言が仕様どおりである' }],
-  scenarios: [{ name: 'ホームを開く', given: ['管理者がログインしている'], when: ['ホームを開く'], then: ['見出しが表示される'], acceptanceIds: ['AC-1', 'AC-2'] }],
-  dependsOn: [], changeAreas: ['apps/admin'], riskCandidate: 'L2', securityImpact: [],
+  scenarios: [{ name: 'ホームを開く', given: ['管理者がログインしている'], when: ['ホームを開く'], then: ['見出しが表示される'], acceptanceIds: ['AC-1', 'AC-2'], test: 'Vitest: apps/admin/src/features/home/index.test.tsx' }],
+  dependsOn: [], changeAreas: ['apps/admin'], layers: ['画面Component'], estimatedFiles: 2, oversizeReason: null, riskCandidate: 'L2', securityImpact: [],
   verification: { applicationTest: 'Vitest', acceptance: 'Trusted Acceptance', e2e: '不要' },
   ...overrides,
 });

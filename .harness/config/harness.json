@@ -26,6 +26,11 @@
       ],
       "commands": [
         [
+          "node",
+          "../../tools/harness/api-contract.mjs",
+          "--routes"
+        ],
+        [
           "docker",
           "compose",
           "-f",
@@ -186,6 +191,7 @@
       "planned": [
         "OpenAPI 3.1 validation",
         "Breaking change detection against the base branch",
+        "Rails routes defined by the contract",
         "Prism Mock starts from the workspace OpenAPI and answers each documented GET"
       ],
       "commands": [
@@ -683,6 +689,104 @@
       ],
       "trust": "acceptance",
       "trustedScript": ".harness/verification/ci-matrix.mjs"
+    }
+  ],
+  "securityVerifiers": [
+    {
+      "id": "migration-safety",
+      "directory": ".",
+      "commands": [
+        [
+          "node",
+          "tools/harness/migration-safety.mjs"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "compose.yaml",
+          "build",
+          "api"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "compose.yaml",
+          "run",
+          "--rm",
+          "-e",
+          "RAILS_ENV=test",
+          "-e",
+          "DATABASE_URL=postgres://postgres@db:5432/sonomama_migration_safety_test",
+          "-e",
+          "SCHEMA=/rails/tmp/migration-safety-schema.rb",
+          "api",
+          "bin/rails",
+          "db:drop",
+          "db:create",
+          "db:migrate"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "compose.yaml",
+          "run",
+          "--rm",
+          "-e",
+          "RAILS_ENV=test",
+          "-e",
+          "DATABASE_URL=postgres://postgres@db:5432/sonomama_migration_safety_test",
+          "-e",
+          "SCHEMA=/rails/tmp/migration-safety-schema.rb",
+          "api",
+          "bin/rails",
+          "db:migrate",
+          "VERSION=0"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "compose.yaml",
+          "run",
+          "--rm",
+          "-e",
+          "RAILS_ENV=test",
+          "-e",
+          "DATABASE_URL=postgres://postgres@db:5432/sonomama_migration_safety_test",
+          "-e",
+          "SCHEMA=/rails/tmp/migration-safety-schema.rb",
+          "api",
+          "bin/rails",
+          "db:migrate"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "compose.yaml",
+          "run",
+          "--rm",
+          "-e",
+          "RAILS_ENV=test",
+          "-e",
+          "DATABASE_URL=postgres://postgres@db:5432/sonomama_migration_safety_test",
+          "-e",
+          "SCHEMA=/rails/tmp/migration-safety-schema.rb",
+          "api",
+          "bin/rails",
+          "db:drop"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "compose.yaml",
+          "down"
+        ]
+      ]
     }
   ],
   "semanticReview": {

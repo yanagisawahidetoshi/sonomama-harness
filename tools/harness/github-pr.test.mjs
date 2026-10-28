@@ -499,11 +499,11 @@ describe('GitHub PR Adapter', () => {
     const issueUrl = 'https://github.com/acme/app/issues/7';
     const pbi = { number: 3, url: 'https://github.com/acme/app/issues/3', title: '管理画面のホーム' };
     const planned = (overrides = {}) => ({
-      id: 'SBI-001', title: 'ホームに見出しを表示する', purpose: '管理者がホームを開くと見出しが表示される。',
+      id: 'SBI-001', kind: 'implementation', title: 'ホームに見出しを表示する', purpose: '管理者がホームを開くと見出しが表示される。',
       scope: { included: ['apps/admin ホーム画面'], excluded: [] },
       acceptanceCriteria: [{ id: 'AC-1', description: 'ホームに見出しが表示される' }, { id: 'AC-2', description: '見出しの文言が仕様どおりである' }],
-      scenarios: [{ name: 'ホームを開く', given: ['管理者がログインしている'], when: ['ホームを開く'], then: ['見出しが表示される'], acceptanceIds: ['AC-1', 'AC-2'] }],
-      dependsOn: [], changeAreas: ['apps/admin'], riskCandidate: 'L2', securityImpact: [],
+      scenarios: [{ name: 'ホームを開く', given: ['管理者がログインしている'], when: ['ホームを開く'], then: ['見出しが表示される'], acceptanceIds: ['AC-1', 'AC-2'], test: 'Vitest: apps/admin/src/features/home/index.test.tsx' }],
+      dependsOn: [], changeAreas: ['apps/admin'], layers: ['画面Component'], estimatedFiles: 2, oversizeReason: null, riskCandidate: 'L2', securityImpact: [],
       verification: { applicationTest: 'Vitest', acceptance: 'Trusted Acceptance', e2e: '不要' }, ...overrides });
     const sbiIssue = (labels = ['sbi', 'ready'], sbi = planned()) => ({ number: 7, title: `${sbi.id} ${sbi.title}`, body: renderSbiBody(sbi, pbi), html_url: issueUrl, state: 'open', labels: labels.map(name => ({ name })) });
     const home = 'apps/admin/src/home.txt';
@@ -555,8 +555,8 @@ describe('GitHub PR Adapter', () => {
       assert.equal(source.status, 'PASS', source.reasons.join('; '));
       await git(root, ['commit', '--allow-empty', '-m', 'main moved']);
       const resumed = await resumeRun({ root, runId: run.id, quiet: true });
-      assert.equal(resumed.executionStatus, 'ESCALATED');
-      assert.match(resumed.reason, /source HEAD changed/);
+      // Execution stays DONE (#70); the merge assessment stops for good because the tested SHA is no longer the merge result.
+      assert.deepEqual([resumed.executionStatus, resumed.status, resumed.merge.failure.code, resumed.merge.failure.retryable], ['DONE', 'ESCALATED', 'SOURCE_CHANGED', false]);
     })));
     it('when the snapshot matches the ready Issue then the run is judged by its app change, not by where the snapshot is stored', () => fixture(root => withIssue(root, sbiIssue(), async () => {
       const run = await start(root);
@@ -627,6 +627,28 @@ describe('GitHub PR Adapter', () => {
       assert.equal(approved.id, own.id);
       assert.equal(await exists(join(root, '.harness/state/human', `${other.id}.json`)), false);
     }))));
+    // summary.json is signed (#75). An edited summary is neither a candidate for the Issue URL nor resumable.
+    const summaryOf = (root, run) => join(root, run.runDir, 'summary.json');
+    it('when the signed summary of another run is edited to name the Issue and wait at the gate then the approval still goes to the run of the Issue', () => fixture(root => update(root, sbiPath, s => { s.risks = ['外部サービス連携']; }).then(() => withIssue(root, sbiIssue(['sbi', 'ready'], planned({ riskCandidate: 'L3' })), async () => {
+      const own = await start(root), other = await startRun({ root, quiet: true, provider: 'fake' });
+      await update(root, summaryOf(root, other).slice(root.length + 1), s => { s.sbiIssue = { repo: 'acme/app', number: 7, url: issueUrl }; });
+      const approved = await approveRun({ root, issueUrl, purpose: 'implementation-gate', identityProvider: human('Designer'), agent: agent(), quiet: true });
+      assert.equal(approved.id, own.id);
+      assert.equal(await exists(join(root, '.harness/state/human', `${other.id}.json`)), false);
+    }))));
+    it('when the signed summary of the waiting run is edited then approving by the Issue URL records nothing and names the run that failed verification', () => fixture(root => withIssue(root, sbiIssue(['sbi', 'ready'], planned({ riskCandidate: 'L3' })), async ({ github }) => {
+      const run = await start(root);
+      await update(root, summaryOf(root, run).slice(root.length + 1), s => { s.reason = '手で書き換えた'; });
+      await assert.rejects(approveRun({ root, issueUrl, purpose: 'implementation-gate', identityProvider: human('Designer'), agent: agent(), quiet: true }),
+        error => error.message.includes(run.id) && /integrity/.test(error.message));
+      assert.equal(await exists(join(root, '.harness/state/human', `${run.id}.json`)), false);
+      assert.deepEqual((await github.state()).pulls, []);
+    })));
+    it('when the signed summary of an Issue run is edited to point at another Issue then resume refuses it', () => fixture(root => withIssue(root, sbiIssue(['sbi', 'ready'], planned({ riskCandidate: 'L3' })), async () => {
+      const run = await start(root);
+      await update(root, summaryOf(root, run).slice(root.length + 1), s => { s.sbiIssue = { repo: 'acme/app', number: 8, url: 'https://github.com/acme/app/issues/8' }; });
+      await assert.rejects(resumeRun({ root, runId: run.id, quiet: true }), /run state integrity/);
+    })));
     it('when a decision for the Issue is recorded on a run of another SBI then it is refused before anything is recorded', () => fixture(root => update(root, sbiPath, s => { s.risks = ['外部サービス連携']; }).then(() => withIssue(root, sbiIssue(), async () => {
       const other = await startRun({ root, quiet: true, provider: 'fake' });
       await assert.rejects(recordDecision({ root, runId: other.id, purpose: 'implementation-gate', issueUrl, identityProvider: human('Designer') }), /issues\/7/);

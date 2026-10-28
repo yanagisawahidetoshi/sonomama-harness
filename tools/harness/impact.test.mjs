@@ -330,11 +330,11 @@ describe('CI Completion Judge for Trusted Acceptance and Security', () => {
     const ref = { owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' };
     const pbi = { owner: 'acme', repo: 'app', number: 3, url: 'https://github.com/acme/app/issues/3', title: 'CI judge' };
     const planned = {
-      id: 'SBI-001', title: 'CI judge', purpose: '名前に応じてあいさつする。',
+      id: 'SBI-001', kind: 'implementation', title: 'CI judge', purpose: '名前に応じてあいさつする。',
       scope: { included: ['apps/admin'], excluded: [] },
       acceptanceCriteria: ['AC-1', 'AC-2', 'AC-3'].map(id => ({ id, description: `${id} のあいさつ` })),
-      scenarios: [{ name: 'あいさつ', given: ['名前がある'], when: ['greetを呼ぶ'], then: ['あいさつを返す'], acceptanceIds: ['AC-1', 'AC-2', 'AC-3'] }],
-      dependsOn: [], changeAreas: ['apps/admin'], riskCandidate: 'L2', securityImpact: [],
+      scenarios: [{ name: 'あいさつ', given: ['名前がある'], when: ['greetを呼ぶ'], then: ['あいさつを返す'], acceptanceIds: ['AC-1', 'AC-2', 'AC-3'], test: 'node:test: greeting.test.mjs' }],
+      dependsOn: [], changeAreas: ['apps/admin'], layers: ['画面Component'], estimatedFiles: 2, oversizeReason: null, riskCandidate: 'L2', securityImpact: [],
       verification: { applicationTest: 'Vitest', acceptance: 'Trusted Acceptance', e2e: '不要' },
     };
     const readyIssue = { number: 7, title: 'SBI-001 CI judge', body: renderSbiBody(planned, pbi), html_url: ref.url, state: 'open', labels: [{ name: 'sbi' }, { name: 'ready' }] };
@@ -390,7 +390,9 @@ describe('CI Completion Judge for Trusted Acceptance and Security', () => {
       assert.equal(judged.status, 'FAIL');
     }));
 
+    // main connects migration-safety; this case disconnects it again so that the required verifier is not configured.
     it('when the Security Impact adds a required verifier that is not configured then fails instead of passing', () => fixture(async root => {
+      await update(root, '.harness/config/harness.json', c => { c.securityVerifiers = c.securityVerifiers.filter(v => v.id !== 'migration-safety'); });
       await branch(root, async root => {
         await mkdir(join(root, 'apps/admin/db/migrate'), { recursive: true });
         await writeFile(join(root, 'apps/admin/db/migrate/001_lessons.rb'), 'class Lessons; end\n');

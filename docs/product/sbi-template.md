@@ -7,6 +7,7 @@ SBIは、PBIをAIが実装できる大きさに分けた作業単位である。
 | 項目 | 書く内容 |
 | --- | --- |
 | ID / タイトル | SBIを区別するIDと、実現する振る舞いを1行で |
+| 種類（kind） | implementation（実装）/ validation（最終確認、必要なPBIだけ）。省略時はimplementation。人間確認はSBIにせずPBI Human Acceptance Gateで扱う |
 | 目的 / ユーザー価値 | 何のためのSBIか |
 | 対象範囲 / 対象外 | 変更する画面・API・機能と、扱わないもの |
 | 受け入れ要件（acceptance criteria） | 何ができれば受け入れるか。項目ごとに一意のIDと検証方法を付ける |

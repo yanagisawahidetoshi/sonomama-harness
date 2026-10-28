@@ -1,4 +1,4 @@
-// Structured proposal → OpenAPI 3.1. The Harness owns openapi/info, the Cognito JWT scheme and the shared Error schema; the provider cannot redefine them.
+// Structured proposal → OpenAPI 3.1. The Harness owns openapi/info, the Bearer JWT scheme and the shared Error schema; the provider cannot redefine them.
 export const reviewChecklist = Object.freeze([
   'endpointの粒度は妥当か', 'method / pathは自然か', 'request / responseはFrontendが使いやすいか', 'required / nullable / enumは妥当か',
   'error responseは適切か', 'AuthN / AuthZ境界は正しいか', '既存APIと重複・矛盾していないか', 'breaking changeになっていないか',
@@ -11,7 +11,8 @@ const errorSchemas = {
   } },
   ErrorDetail: { type: 'object', required: ['message'], properties: { field: { type: ['string', 'null'], description: '対象のフィールド' }, message: { type: 'string' } } },
 };
-const cognitoJwt = { type: 'http', scheme: 'bearer', bearerFormat: 'JWT', description: 'Amazon Cognitoが発行するJWT。検証と業務認可（x-sonomama-authz）はRails APIが行う。' };
+// Provider-neutral: the contract says a Bearer JWT is required, not who issues it. The issuer is chosen in the Rails adapter.
+const bearerAuth = { type: 'http', scheme: 'bearer', bearerFormat: 'JWT', description: '認証Providerが発行するJWT（Bearer）。検証と業務認可（x-sonomama-authz）はRails APIが行う。' };
 const typed = (type, value) => type === 'integer' ? Number.parseInt(value, 10) : type === 'number' ? Number(value) : type === 'boolean' ? value === 'true' : value;
 const compact = value => Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== null && entry !== undefined && entry !== '' && !(Array.isArray(entry) && !entry.length)));
 
@@ -39,11 +40,11 @@ function renderComponent(component) {
 }
 const content = body => ({ 'application/json': { schema: body.array ? { type: 'array', items: ref(body.component) } : ref(body.component) } });
 function renderOperation(endpoint) {
-  const jwt = endpoint.authN === 'cognito-jwt';
+  const jwt = endpoint.authN === 'bearer-jwt';
   // security is always explicit: [] marks a public endpoint even when the document later gains a global requirement.
   return {
     ...compact({ operationId: endpoint.operationId, summary: endpoint.summary, tags: endpoint.tags }),
-    security: jwt ? [{ cognitoJwt: [] }] : [],
+    security: jwt ? [{ bearerAuth: [] }] : [],
     ...compact({
     'x-sonomama-authz': jwt ? { enforcedBy: 'rails', roles: endpoint.authZ.roles, rule: endpoint.authZ.rule } : null,
     'x-sonomama-data': { pii: endpoint.pii, logCaution: endpoint.logCaution },
@@ -58,7 +59,7 @@ export function renderOpenApi(proposal, existing) {
   const document = existing ? structuredClone(existing.document) : { openapi: '3.1.0', info: { title: 'SONOMAMA API', version: '0.1.0' }, paths: {} };
   document.paths ??= {};
   document.components ??= {};
-  document.components.securitySchemes = { ...document.components.securitySchemes, cognitoJwt };
+  document.components.securitySchemes = { ...document.components.securitySchemes, bearerAuth };
   document.components.schemas = { ...document.components.schemas, ...errorSchemas };
   for (const component of proposal.components) document.components.schemas[component.name] = renderComponent(component);
   for (const endpoint of proposal.endpoints) {
@@ -75,7 +76,7 @@ export function renderOpenApi(proposal, existing) {
 
 const cell = value => String(value ?? '').replaceAll('|', '\\|').replaceAll('\n', ' ');
 const bodyName = body => body ? `${body.component}${body.array ? '[]' : ''}` : 'なし';
-export function renderSummary({ issue, proposal, quality, contractDiff = { breaking: [], nonBreaking: [] }, existing, directory, approvedLabel, reviewLabel }) {
+export function renderSummary({ issue, proposal, quality, contractDiff = { breaking: [], nonBreaking: [] }, existing, derivedImpact = [], directory, approvedLabel, reviewLabel }) {
   const active = proposal.endpoints.filter(e => e.change !== 'remove');
   const impact = proposal.securityImpact.length ? proposal.securityImpact.join(', ') : 'None';
   const caution = [...new Set(active.flatMap(e => e.logCaution))];
@@ -88,7 +89,7 @@ export function renderSummary({ issue, proposal, quality, contractDiff = { break
     proposal.summary, '',
     '## Endpoint', '',
     '| change | method / path | operationId | 認証 | 認可（Rails） | PII |', '| --- | --- | --- | --- | --- | --- |',
-    ...proposal.endpoints.map(e => `| ${e.change} | ${cell(`${e.method} ${e.path}`)} | ${cell(e.operationId)} | ${e.authN === 'cognito-jwt' ? 'Cognito JWT必須' : '公開'} | ${cell([...e.authZ.roles.map(r => `role ${r}`), e.authZ.rule].filter(Boolean).join(' / ') || 'なし')} | ${e.pii ? 'あり' : 'なし'} |`), '',
+    ...proposal.endpoints.map(e => `| ${e.change} | ${cell(`${e.method} ${e.path}`)} | ${cell(e.operationId)} | ${e.authN === 'bearer-jwt' ? 'Bearer JWT必須' : '公開'} | ${cell([...e.authZ.roles.map(r => `role ${r}`), e.authZ.rule].filter(Boolean).join(' / ') || 'なし')} | ${e.pii ? 'あり' : 'なし'} |`), '',
     '## Request / Response', '',
     ...active.flatMap(e => [
       `### ${e.method} ${e.path}`, '', e.summary, '',
@@ -105,6 +106,8 @@ export function renderSummary({ issue, proposal, quality, contractDiff = { break
     'error responseはHarnessが定義する共通のError schema（code / message / details）を使う。', '',
     '## Security Impact', '',
     `- 分類: ${impact}`,
+    `- Harnessが導出したSecurity Impact（必要承認数はこれと分類から決まる）:${derivedImpact.length ? '' : ' なし'}`,
+    ...derivedImpact.map(item => `  - ${item.categories.join(' / ')}: ${cell(item.reason)}`),
     `- ログ出力注意: ${caution.length ? caution.join(' / ') : 'なし'}`,
     '- Secret / Credentialの実値はschema・exampleに含めない（Quality Judgeで検査済み）', '',
     '## Breaking / Non-breaking', '',

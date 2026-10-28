@@ -39,7 +39,10 @@ API Schemaを利用する後続処理は、必ず`planner:api-schema-status`（`
 - Proposalが未commit、人間が生成物を編集した、Quality JudgeがPASSしていない場合は承認を記録しない。
 - 生成物の改変は、Plannerが`.harness/state/api-schema/`（Git管理対象外）に署名して残した生成記録の3ファイルのdigestと比べて判定する。proposal.json自身の`files`は参考情報で、改変の判定には使わない。
 - 生成記録は生成したPCにだけある。別のPCやcloneでは生成記録がないため承認を記録しない（承認台帳と同じくローカルの信頼状態）。
-- Security Impactがあれば異なる人間2人、なければ1人が必要。必要人数は署名付きの生成記録から読み、proposal.jsonからは読まない。同じ人の承認は1人と数え、各人の最新の判断だけを使う。
+- Security Impactがあれば異なる人間2人、なければ1人が必要。Security ImpactはHarnessが既存契約とProposalの差分から導出する（`api-schema-security.mjs`）。
+  providerの`securityImpact`は申告値で、導出値を欠けばQuality JudgeがFAILし、必要人数は導出値（申告が多ければ申告も）から決める。
+  導出の対象: Bearer JWT必須・Rails認可条件・PII、認証必須→公開、認可条件（roles / rule）の削除・緩和・変更、認証・認可付きendpointの削除。
+  必要人数は署名付きの生成記録から読み、proposal.jsonからは読まない。同じ人の承認は1人と数え、各人の最新の判断だけを使う。
 - 識別は既存の承認台帳と同じくOSユーザー。1台のPCの同じOSユーザーでは2人分にならない。複数人の本運用には認証済み承認adapterを接続する。
 - 有効な承認がある間、Plannerは再生成しない。変更する場合は承認者が`--decision revoke`してから再実行する。
 
@@ -50,7 +53,7 @@ API Schemaを利用する後続処理は、必ず`planner:api-schema-status`（`
 | 項目 | 表現 |
 | --- | --- |
 | Endpoint | method、`/api/v1/...`のpath、camelCaseのoperationId、summary、tags、change（add / modify / remove） |
-| AuthN | `cognito-jwt`は`security: [cognitoJwt]`と401。`public`は`security: []`で401 / 403なし |
+| AuthN | `bearer-jwt`は`security: [bearerAuth]`（HTTP Bearer / JWT。発行する認証Providerは契約に書かない）と401。`public`は`security: []`で401 / 403なし |
 | AuthZ | Railsが判定するroleと条件を`x-sonomama-authz`に記録。roleがあれば403 |
 | Request | path / query / header parameter、request body、required、type / format / enum、constraints |
 | Response | status、body schema、一覧はarray、204はbodyなし |
@@ -66,7 +69,7 @@ proposal.jsonはmachine-readableな提案本体、Quality Judgeの結果、生�
 method / path / operationIdの欠落・形式違反、operationIdの重複（既存含む）、method + pathの重複、
 pathの`{param}`とpath parameterの不一致、未定義schemaへの参照、空のenum、型と合わないexample、
 対象外・重複したstatus、2xxなし、204のbody、共通Error以外のerror response、GET / DELETEのrequest body、
-401 / 403と認証・認可条件の不整合、PII・認証・認可に対するSecurity Impactの宣言漏れ、security.json外の分類、
+401 / 403と認証・認可条件の不整合、Harnessが導出したSecurity Impact（PII・認証・認可、既存契約からの認証解除・認可緩和・削除）の宣言漏れ、security.json外の分類、
 Secret / Credentialらしき値、成功responseでのpassword / secret等の返却、既存endpointとの衝突（addで既存あり、modify / removeで既存なし）。
 
 破壊的変更の候補（endpoint削除、property削除、型変更、enum値の削除、必須化など）はFAILにせず、summary.mdに並べて人間が判断する。

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { hasCommand } from './lib/commands.mjs';
 // Trusted acceptance for SBI-MOBILE-ENV (#22). Reads the worktree only; the expo application verifier runs the commands.
 const root = process.argv[2];
 const app = join(root, 'apps/mobile');
@@ -87,8 +88,7 @@ try {
     }],
     ['MOBILE-AC-15', 'Given the Harness, When verifying mobile, Then typecheck, Biome check, Jest and Expo Doctor are registered', () => {
       const expo = JSON.parse(read('.harness/config/harness.json')).verifiers.find(v => v.id === 'expo');
-      const commands = expo.commands.map(c => c.join(' '));
-      for (const script of ['typecheck', 'check', 'test', 'doctor']) assert.ok(commands.some(c => c.includes(`run ${script}`)), script);
+      for (const script of ['typecheck', 'check', 'test', 'doctor']) assert.ok(hasCommand(expo.commands, ['pnpm', 'run', script]), script);
     }],
     ['MOBILE-AC-16', 'Given the Harness, When verifying mobile, Then Maestro is not a required command', () => {
       const config = JSON.parse(read('.harness/config/harness.json'));
