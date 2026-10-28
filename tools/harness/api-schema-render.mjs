@@ -76,7 +76,7 @@ export function renderOpenApi(proposal, existing) {
 
 const cell = value => String(value ?? '').replaceAll('|', '\\|').replaceAll('\n', ' ');
 const bodyName = body => body ? `${body.component}${body.array ? '[]' : ''}` : 'なし';
-export function renderSummary({ issue, proposal, quality, contractDiff = { breaking: [], nonBreaking: [] }, existing, directory, approvedLabel, reviewLabel }) {
+export function renderSummary({ issue, proposal, quality, contractDiff = { breaking: [], nonBreaking: [] }, existing, derivedImpact = [], directory, approvedLabel, reviewLabel }) {
   const active = proposal.endpoints.filter(e => e.change !== 'remove');
   const impact = proposal.securityImpact.length ? proposal.securityImpact.join(', ') : 'None';
   const caution = [...new Set(active.flatMap(e => e.logCaution))];
@@ -106,6 +106,8 @@ export function renderSummary({ issue, proposal, quality, contractDiff = { break
     'error responseはHarnessが定義する共通のError schema（code / message / details）を使う。', '',
     '## Security Impact', '',
     `- 分類: ${impact}`,
+    `- Harnessが導出したSecurity Impact（必要承認数はこれと分類から決まる）:${derivedImpact.length ? '' : ' なし'}`,
+    ...derivedImpact.map(item => `  - ${item.categories.join(' / ')}: ${cell(item.reason)}`),
     `- ログ出力注意: ${caution.length ? caution.join(' / ') : 'なし'}`,
     '- Secret / Credentialの実値はschema・exampleに含めない（Quality Judgeで検査済み）', '',
     '## Breaking / Non-breaking', '',
