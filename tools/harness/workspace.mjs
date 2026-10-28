@@ -1,7 +1,7 @@
 import { mkdir, readdir, readFile, lstat, realpath } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
-import { isSecretPath, hasSecret, isSafeEnvTemplate } from './evidence-protection.mjs';
+import { isSecretPath, hasTrackedCredential, isSafeEnvTemplate } from './evidence-protection.mjs';
 import { execute, exists } from './io.mjs';
 export const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const gitOptions = ['-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', '-c', 'user.name=SONOMAMA Harness', '-c', 'user.email=harness@localhost'];
@@ -31,9 +31,7 @@ export async function prepareWorkspace(root, workspace) {
     if (info.isSymbolicLink()) throw new Error('tracked symlink is not permitted in a worktree');
     const content = (await readFile(join(root, path))).toString('utf8');
     if (isSafeEnvTemplate(path,content)) continue;
-    const trustedSource = /^tools\/harness\/.*\.test\.mjs$/.test(path);
-    const credentialFound = trustedSource ? /gh[pousr]_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----\r?\n/.test(content) : hasSecret(content);
-    if (isSecretPath(path) || credentialFound) throw new Error('tracked credential detected; remove sensitive material before creating a worktree');
+    if (isSecretPath(path) || hasTrackedCredential(path, content)) throw new Error('tracked credential detected; remove sensitive material before creating a worktree');
   }
   await mkdir(dirname(workspace), { recursive: true });
   await git(root, ['worktree', 'add', '--detach', workspace, baseline]);

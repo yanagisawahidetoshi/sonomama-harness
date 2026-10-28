@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { execute } from './io.mjs';
-import { hasSecret, isSecretPath } from './evidence-protection.mjs';
+import { hasSecret, hasTrackedCredential, isSecretPath } from './evidence-protection.mjs';
 import { classifyLane } from './lanes.mjs';
 import { securityPolicySchema } from './schemas.mjs';
 const normalize = text => text.replace(/[^a-z0-9]/gi, '').toLowerCase();
@@ -46,7 +46,8 @@ export function securityPassed(evidence) {
     && evidence.requiredVerifiers.every(id => evidence.checks?.some(c => c.id === id && c.required === true && c.status === 'PASS'))
     && evidence.checks?.every(c => c.required !== true || c.status === 'PASS');
 }
-export async function verifySecurity({ workspace, sbi, assessment, policy, config, headSha, verification }) {
+// changed replaces reading sbi.allowedFiles: CI passes the added lines of each changed file (envTemplate marks a vetted .env template).
+export async function verifySecurity({ workspace, sbi, assessment, policy, config, headSha, verification, changed }) {
   const registry = new Map(policy.verifiers.map(v => [v.id, v]));
   for (const adapter of config.securityVerifiers || []) {
     if (registry.has(adapter.id) && registry.get(adapter.id).kind !== 'command') throw new Error('Builtin security verifiers cannot be overridden');
@@ -54,8 +55,9 @@ export async function verifySecurity({ workspace, sbi, assessment, policy, confi
   }
   const checks = [], violations = [];
   const content = [];
-  for (const path of sbi.allowedFiles) {
-    if (isSecretPath(path)) { violations.push({ code: 'prohibited_secret_path', path }); continue; }
+  for (const { path, text, envTemplate } of changed ?? sbi.allowedFiles.map(path => ({ path }))) {
+    if (isSecretPath(path) && !envTemplate) { violations.push({ code: 'prohibited_secret_path', path }); continue; }
+    if (text !== undefined) { content.push({ path, text }); continue; }
     try { content.push({ path, text: await readFile(join(workspace,path), 'utf8') }); } catch (e) { if (e.code !== 'ENOENT') throw e; }
   }
   for (const id of assessment.requiredVerifiers) {
@@ -75,7 +77,7 @@ export async function verifySecurity({ workspace, sbi, assessment, policy, confi
       const patterns = adapter.kind === 'secret' ? policy.secretPatterns : adapter.kind === 'pii-log' ? policy.piiLogPatterns : policy.forbiddenPatterns;
       const findings = [];
       for (const file of content) {
-        if (adapter.kind === 'secret' && hasSecret(file.text)) findings.push({path:file.path,code:'credential_value'});
+        if (adapter.kind === 'secret' && hasTrackedCredential(file.path, file.text)) findings.push({path:file.path,code:'credential_value'});
         for (let i=0;i<patterns.length;i++) if (new RegExp(patterns[i],'im').test(file.text)) findings.push({path:file.path,code:adapter.kind,patternIndex:i});
       }
       violations.push(...findings.map(f=>({...f,verifier:id})));
