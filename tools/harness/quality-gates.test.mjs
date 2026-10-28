@@ -32,6 +32,17 @@ describe('Application and trusted acceptance boundary', () => {
       assert.equal(run.iterations[0].verification.checks.find(c=>c.id==='sample-bdd').trust,'acceptance');
     }));
   });
+  describe('given a trusted acceptance script importing the shared helper in .harness/verification/lib',()=>{
+    it('when the run verifies its isolated workspace then the helper loads and the acceptance passes',()=>fixture(async root=>{
+      await writeFile(join(root,'.harness/verification/uses-lib.mjs'),'import assert from "node:assert/strict"; import { hasCommand } from "./lib/commands.mjs"; assert.ok(hasCommand([["pnpm","run","check"]],["pnpm","run","check"])); console.log(JSON.stringify({acceptance:["LIB-1"]}));');
+      await update(root,'.harness/config/harness.json',c=>c.verifiers.push({id:'uses-lib',trust:'acceptance',trustedScript:'.harness/verification/uses-lib.mjs',directory:'.',planned:['shared helper'],commands:[],acceptanceIds:['LIB-1'],appliesTo:['^never/']}));
+      await update(root,sbiPath,s=>s.acceptanceCriteria.push({id:'LIB-1',description:'Shared helper is importable',verifier:'uses-lib'}));
+      const run=await runFixture({root,quiet:true,agent:async()=>({files:[{path:'greeting.mjs',content:good}]})});
+      const check=run.iterations[0].verification.checks.find(c=>c.id==='uses-lib');
+      assert.equal(check.status,'PASS',check.process?.stderr);
+      assert.ok(run.iterations[0].verification.acceptance.includes('LIB-1'));
+    }));
+  });
 });
 
 describe('Verifier applicability', () => {
