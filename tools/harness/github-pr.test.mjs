@@ -505,6 +505,24 @@ describe('GitHub PR Adapter', () => {
       const source = await verifySbiSource({ root: workspace, base: run.baselineSha, files, required: [`production:${home}`], repository: 'acme/app' });
       assert.equal(source.status, 'PASS', source.reasons.join('; '));
     })));
+    it('when the snapshot matches the ready Issue then the run is judged by its app change, not by where the snapshot is stored', () => fixture(root => withIssue(root, sbiIssue(), async () => {
+      const run = await start(root);
+      assert.equal(run.risk.level, 2, JSON.stringify(run.risk.reasons));
+      assert.ok(!run.risk.reasons.includes('harness_policy'));
+      assert.equal(run.securityAssessment.securitySensitive, false);
+    })));
+    it('when the Issue is edited after the run started then the snapshot is no longer verified and the run is LEVEL 3', () => fixture(root => withIssue(root, sbiIssue(), async ({ github }) => {
+      const run = await start(root);
+      await github.update(s => { s.issue.body += '\n追記'; });
+      const resumed = await resumeRun({ root, runId: run.id, quiet: true });
+      assert.equal(resumed.risk.level, 3);
+      assert.ok(resumed.risk.reasons.includes('harness_policy'));
+    })));
+    it('when the Issue cannot be read during the assessment then the snapshot is not verified and the run is LEVEL 3', () => fixture(root => withIssue(root, sbiIssue(), async ({ github }) => {
+      const run = await start(root);
+      await github.update(s => { s.issue.number = 99; });
+      assert.equal((await resumeRun({ root, runId: run.id, quiet: true })).risk.level, 3);
+    })));
     for (const labels of [['sbi', 'needs-review'], ['ready']]) {
       it(`when the Issue is labelled ${labels.join(' + ')} then no run, workspace or PR is created`, () => fixture(root => withIssue(root, sbiIssue(labels), async ({ github }) => {
         await assert.rejects(start(root), /ready|sbi label|needs-review/);
