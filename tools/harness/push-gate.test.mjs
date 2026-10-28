@@ -48,7 +48,7 @@ describe('Versioned pre-push quality gate',()=>{
         await chmod(join(temp,'pnpm'),0o755);
         const refs=`refs/heads/x ${sha('a')} refs/heads/x ${sha('b')}`;
         await hook({...process.env,PATH:`${temp}:${process.env.PATH}`,GATE_LOG:join(temp,'log')},`${refs}\n`);
-        assert.equal(await readFile(join(temp,'log'),'utf8'),`harness:check \nharness:push-gate ${refs}\n`);
+        assert.equal(await readFile(join(temp,'log'),'utf8'),`harness:check unset\nharness:push-gate ${refs}\n`);
       } finally { await rm(temp,{recursive:true,force:true}); }
     });
     it('when reading the hook then it names no verifier, because Impact Analysis in the Harness decides them',async()=>{
