@@ -431,6 +431,9 @@ Execution Harnessの実装前Gate・Merge Approvalとは別で、どちらの代
 承認済みOpenAPIのMock Serverは`pnpm api:mock <Issue URL>`で`127.0.0.1:4010`に起動する。承認済みProposalと`packages/api-schema/openapi.yaml`のdigestが一致するときだけ起動する。
 手順は[docs/workflows/api-mock.md](docs/workflows/api-mock.md)。
 
+`packages/api-schema/openapi.yaml`は`pnpm api:docs`でSwagger UIに表示できる（`http://127.0.0.1:8080`）。閲覧専用で、Try it outは無効にしてある。
+OpenAPIが契約（SSOT）、Swagger UIは契約を見るもの、Prismは契約からMock APIを提供するもの。手順は[docs/workflows/api-docs.md](docs/workflows/api-docs.md)。
+
 ## 変更範囲によるVerifier選択
 
 `.harness/config/harness.json`の`appliesTo`は正規表現の配列。実際のbaseline→HEAD差分から選ぶ。
