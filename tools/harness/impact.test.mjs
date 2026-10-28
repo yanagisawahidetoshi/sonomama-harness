@@ -123,6 +123,38 @@ describe('SBI Impact Analysis', () => {
       assert.equal(impact.fullGate, true);
     });
   });
+
+  describe('given a shared toolchain changes', () => {
+    const everyVerifier = ['admin', 'api-contract', 'expo', 'prototype-mobile', 'prototype-web', 'rails'];
+    for (const path of ['.node-version', 'package.json', 'pnpm-workspace.yaml', '.npmrc', '.tool-versions']) {
+      it(`when only ${path} changes then triggers the Full Gate and every application verifier with the toolchain path as the reason`, () => {
+        const impact = analyzeImpact({ config, sbis: [], files: files(path) });
+        assert.equal(impact.fullGate, true);
+        assert.deepEqual(impact.fullGateReasons, [`toolchain:${path}`]);
+        assert.deepEqual(required(impact), everyVerifier);
+        for (const id of everyVerifier) assert.ok(reasons(impact, id).includes(`toolchain:${path}`), `${id}: ${reasons(impact, id)}`);
+      });
+    }
+    it('when .node-version changes then the CI log names the toolchain path for the Full Gate and each verifier', () => {
+      const log = describeImpact(analyzeImpact({ config, sbis: [], files: files('.node-version') }));
+      assert.ok(log.includes('Full Gate: yes (toolchain:.node-version)'), log.join('\n'));
+      assert.ok(log.includes('Verifier rails: toolchain:.node-version'), log.join('\n'));
+    });
+    it('when an app changes together with .node-version then keeps the diff reason next to the toolchain reason', () => {
+      const impact = analyzeImpact({ config, sbis: [], files: files(touched.admin, '.node-version') });
+      assert.deepEqual(reasons(impact, 'admin'), [`diff:${touched.admin}`, 'toolchain:.node-version']);
+    });
+    it('when an app package.json changes then does not treat it as the root toolchain', () => {
+      const impact = analyzeImpact({ config, sbis: [], files: files('apps/admin/package.json') });
+      assert.equal(impact.fullGate, false);
+      assert.deepEqual(required(impact), ['admin']);
+    });
+    it('when an app dependency changes the lockfile then does not trigger the Full Gate', () => {
+      const impact = analyzeImpact({ config, sbis: [], files: files('apps/admin/package.json', 'pnpm-lock.yaml') });
+      assert.equal(impact.fullGate, false);
+      assert.ok(required(impact).includes('admin'));
+    });
+  });
 });
 
 describe('SBI requirement for Production changes', () => {

@@ -138,6 +138,12 @@ describe('Push gate execution',()=>{
         assert.equal(result.full,1);
       }));
     }
+    it('when only .node-version changes then runs the full Harness test for the toolchain',()=>fixture(async root=>{
+      const result=await gate(root,await branch(root,['.node-version']));
+      assert.equal(result.mode,'full');
+      assert.deepEqual(result.reasons,['toolchain:.node-version']);
+      assert.equal(result.full,1);
+    }));
     it('when the full Harness test fails then stops the push',()=>fixture(async root=>{
       const refs=await branch(root,['tools/harness/verifier.mjs']);
       const result=await runPushGate({root,refs,runFull:async()=>false,verifyOne:async()=>true});
