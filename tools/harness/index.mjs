@@ -369,6 +369,16 @@ export async function runHarness(options) {
   const root = await realpath(options.root);
   return withEvidenceProtection(root, async () => continueToPullRequest({...options,root}, await runProtected({...options,root})), { extensions: options.redactionExtensions || [] });
 }
+// Exit code of harness:run / approve / resume / pr / demo. 0: the run stopped where a human or GitHub CI takes over
+// (PR opened and waiting for CI or Review, MERGE_ALLOWED, a gate the Risk requires, or a DONE run that never publishes). 2: the run failed or needs recovery.
+// A run that could not open its PR throws, and the CLI exits 1.
+export function runExitCode(run) {
+  if (run.status === 'MERGE_ALLOWED') return 0;
+  if (run.executionStatus === 'PENDING') return run.gate?.state === 'WAITING_FOR_HUMAN_GATE' || run.designApproval?.state === 'WAITING_FOR_DESIGN_APPROVAL' ? 0 : 2;
+  if (run.executionStatus !== 'DONE' || (run.publish && !run.pullRequest)) return 2;
+  const waitingForCi = Boolean(run.pullRequest) && run.status === 'BLOCKED' && run.merge?.reasons?.length > 0 && run.merge.reasons.every(r => r === 'required_ci_not_passed');
+  return run.status === 'WAITING_FOR_HUMAN_REVIEW' || waitingForCi ? 0 : 2;
+}
 // An SBI Issue URL names the run that waits for this decision. More than one candidate is never guessed.
 async function waitingRun(root, issueUrl, purpose) {
   const { url } = parseIssueUrl(issueUrl);

@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { check, runHarness, resumeRun, cleanupRun, openPullRequest, approveRun } from './index.mjs';
+import { check, runHarness, resumeRun, cleanupRun, openPullRequest, approveRun, runExitCode } from './index.mjs';
 import { withEvidenceProtection, redactText } from './evidence-protection.mjs';
 import { exportRun } from './review-export.mjs';
 import { planIssue } from './planner.mjs';
@@ -132,7 +132,7 @@ try {
     const run = await openPullRequest({ root, runId: options['--run'] });
     console.log(`Pull request: ${run.pullRequest.url} (tested SHA ${run.headSha})`);
     console.log(`Evidence: ${run.runDir}/github-state.json`);
-    process.exitCode = run.status === 'MERGE_ALLOWED' ? 0 : 2;
+    process.exitCode = runExitCode(run);
   } else if (command === 'cleanup') {
     if (!options['--run']) throw new Error('cleanup requires --run ID');
     await cleanupRun({root,runId:options['--run']});
@@ -150,7 +150,7 @@ try {
     console.log(`Recorded ${decision}; run ${run.id}: ${run.status}`);
     printPullRequest(run);
     console.log(`Evidence: ${run.runDir}/summary.json`);
-    process.exitCode = run.status === 'MERGE_ALLOWED' ? 0 : 2;
+    process.exitCode = runExitCode(run);
   } else {
     if (command === 'resume' && !options['--run']) throw new Error('resume requires --run ID');
     const run = command === 'resume' ? await resumeRun({ root, runId: options['--run'] })
@@ -158,7 +158,7 @@ try {
     printPullRequest(run);
     if (run.gate?.state === 'WAITING_FOR_HUMAN_GATE' || run.designApproval?.state === 'WAITING_FOR_DESIGN_APPROVAL') console.log(`Human Gate: pnpm harness:approve ${run.sbiIssue?.url ?? `--run ${run.id}`} --phase ${run.designApproval?.state === 'WAITING_FOR_DESIGN_APPROVAL' ? 'design' : 'gate'}`);
     console.log(`Evidence: ${run.runDir}/summary.json`);
-    process.exitCode = run.status === 'MERGE_ALLOWED' || (command === 'demo' && run.executionStatus === 'DONE' && run.status === 'WAITING_FOR_HUMAN_REVIEW') ? 0 : 2;
+    process.exitCode = runExitCode(run);
   }
 } catch (error) { console.error(redactText(error.message)); process.exitCode = 1; }
 }).catch(() => { console.error('Evidence protection initialization failed'); process.exitCode = 1; });

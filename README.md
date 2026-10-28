@@ -46,8 +46,9 @@ SBI → 意図的な誤実装 → Verifier FAIL
     → Risk Classifier: LEVEL 2 → WAITING_FOR_HUMAN_REVIEW
 ```
 
-デモは実装完了とリスク判定まで確認してexit 0。通常のrun/resumeはMERGE_ALLOWEDでexit 0、
-承認待ち・停止はexit 2、入力やCLI操作のエラーはexit 1。
+run/approve/resume/pr/demoは、人間かGitHub CIへ引き継いだ状態ならexit 0。PR作成済みでCI待ち・Review待ち、
+MERGE_ALLOWED、Riskが要求するHuman Gate・Design Approval待ち、PRを作らないrun（デモ等）のDONEが該当する。
+FAILED・ESCALATED・REJECTED・CI以外の理由のBLOCKEDはexit 2、PR作成失敗・入力やCLI操作のエラーはexit 1。
 **Execution DONEはマージ承認ではない。** このサンプルはruntime変更のため既定LEVEL 2。
 承認を自動生成せず、実際のmergeも行わない。
 
