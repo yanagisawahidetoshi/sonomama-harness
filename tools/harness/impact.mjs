@@ -112,7 +112,7 @@ export async function runCompletionJudge({ root, base, all = false, needs, repos
     missing.push(...sbi.acceptanceCriteria.filter(a => !result.acceptance.includes(a.id)).map(a => a.id));
   }
   const acceptance = { status: !sbis.length || (checksPassed(checks) && !missing.length) ? 'PASS' : 'FAIL', missing };
-  const source = await verifySbiSource({ root, base, files, required: impact.sbiRequiredReasons, repository, github });
+  const source = await verifySbiSource({ root, base, files, required: impact.sbiRequiredReasons, config, repository, github });
   return { impact, acceptance, checks, source, ...judgeCi({ impact, needs, acceptance, source }) };
 }
 
