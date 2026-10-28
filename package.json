@@ -10,6 +10,9 @@
   },
   "scripts": {
     "harness:check": "node tools/harness/cli.mjs check",
+    "harness:impact": "node tools/harness/cli.mjs impact",
+    "harness:verify": "node tools/harness/cli.mjs verify",
+    "harness:judge": "node tools/harness/cli.mjs judge",
     "harness:demo": "node tools/harness/cli.mjs demo",
     "harness:run": "node tools/harness/cli.mjs run",
     "planner:sbi": "node tools/harness/cli.mjs plan",

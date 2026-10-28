@@ -135,6 +135,9 @@
       ],
       "lanes": [
         "production"
+      ],
+      "areas": [
+        "api"
       ]
     },
     {
@@ -175,6 +178,30 @@
       ],
       "trust": "acceptance",
       "trustedScript": ".harness/verification/api-env.mjs"
+    },
+    {
+      "id": "api-contract",
+      "directory": "packages/api-schema",
+      "marker": "openapi.yaml",
+      "planned": [
+        "OpenAPI 3.1 validation",
+        "Breaking change detection against the base branch"
+      ],
+      "commands": [
+        [
+          "node",
+          "../../tools/harness/api-contract.mjs"
+        ]
+      ],
+      "appliesTo": [
+        "^packages/api-schema/"
+      ],
+      "lanes": [
+        "production"
+      ],
+      "areas": [
+        "api-contract"
+      ]
     },
     {
       "id": "expo",
@@ -234,6 +261,9 @@
       ],
       "lanes": [
         "production"
+      ],
+      "areas": [
+        "mobile"
       ]
     },
     {
@@ -370,6 +400,9 @@
       ],
       "lanes": [
         "production"
+      ],
+      "areas": [
+        "admin"
       ]
     },
     {
@@ -496,6 +529,9 @@
           "node_modules/.harness/storybook-static",
           "--quiet"
         ]
+      ],
+      "areas": [
+        "prototype-web"
       ]
     },
     {
@@ -570,6 +606,9 @@
           "run",
           "doctor"
         ]
+      ],
+      "areas": [
+        "prototype-mobile"
       ]
     },
     {
@@ -643,5 +682,29 @@
   ],
   "semanticReview": {
     "enabled": false
+  },
+  "impact": {
+    "crossLayer": [
+      {
+        "all": [
+          "api"
+        ],
+        "any": [
+          "mobile",
+          "admin"
+        ],
+        "add": [
+          "api-contract"
+        ]
+      }
+    ],
+    "fullGate": [
+      "^tools/harness/",
+      "^\\.harness/(config|verification|rules|skills)/",
+      "^\\.github/",
+      "^\\.githooks/",
+      "^AGENTS\\.md$",
+      "^package\\.json$"
+    ]
   }
 }
