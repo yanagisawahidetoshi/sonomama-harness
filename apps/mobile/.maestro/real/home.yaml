@@ -1,0 +1,7 @@
+# validation SBI: the app talks to Rails and the database
+appId: com.sonomama.student.dev
+---
+- runFlow: ../common/open-development-build.yaml
+- assertVisible:
+    id: home-title
+- assertVisible: SONOMAMA

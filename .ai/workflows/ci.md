@@ -7,7 +7,7 @@
 | `impact` | `pnpm harness:impact` でrequired verifierとFull Gateの要否を決め、理由をログに出す |
 | `verifiers` | required verifierごとのmatrix。`pnpm harness:verify --verifier <id>` を並列に実行する（`fail-fast: false`） |
 | `harness-test` / `harness-demo` | Full Gateのときだけ、`harness:test` と `harness:demo --full` を並列に実行する |
-| `maestro` | `impact` の `maestro` が空でないときだけ、Android EmulatorでMaestroを実行する（job本体は未実装。下記） |
+| `maestro` | `impact` の `maestro` が空でないときだけ、Android EmulatorでMaestroを実行する（下記）。mainへのpushではDevelopment BuildのAPK cacheだけを作る |
 | `harness` | Completion Judge。変更されたSBIのTrusted AcceptanceとSecurity Verifierを実行し、各jobの結果を集約する。必須チェック名なのでjob idを変えない |
 
 ## Maestro（mobile E2E）
@@ -21,7 +21,9 @@ Maestroは通常の`expo` Verifierに入れない。Impact Analysisの`maestro`�
 
 SBIの無いmobileの変更ではMaestroを実行しない。laneがあるとき、Completion Judgeは`maestro` jobの成功と、laneごとの結果ファイル（`HARNESS_MAESTRO_RESULTS/<lane>.json`、`node tools/harness/maestro.mjs`がMaestroのJUnit reportから作る）を求める。
 jobが無い・失敗・skip、結果ファイルが無い・読めない・別のlaneや別のcommitのもの、flowが0件、失敗したflowがある、ログやスクリーンショットのartifactが無い、のどれかでFAILする。
-`maestro` jobはまだworkflowに無い。そのため現時点では、Maestroが必要なSBIのPRはCIで必ずFAILする（fail-closed）。
+`maestro` jobは、`tools/harness/maestro-build.sh` でDevelopment Build（`expo-dev-client` のdebug APK）を作り、`tools/harness/maestro-ci.sh` でlaneごとにPrism（mock）かRails + DB（real）とMetroを起動して、`apps/mobile/.maestro/<lane>/` を実行する。
+APKはExpoのnative fingerprintをkeyにcacheし、fingerprintが同じなら作り直さない。cacheを保存するのはmainへのpushだけ。結果ファイルは `maestro-results`、JUnit report・ログ・スクリーンショットは `maestro-evidence` のartifactになり、harness jobが `maestro-results` をダウンロードしてCompletion Judgeに渡す。
+mock laneは `packages/api-schema/openapi.yaml` が無いと起動できず、FAILする。この jobはDocker隔離の例外で、条件は[threat-model](../../docs/security/threat-model.md)にある。
 
 ## Verifierの選び方
 
