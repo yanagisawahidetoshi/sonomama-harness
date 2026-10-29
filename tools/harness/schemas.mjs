@@ -232,7 +232,12 @@ export const runIterationSchema = z.strictObject({
   review: result, semanticReview: z.looseObject({ enabled: z.boolean(), status: text }), completion: z.boolean(), headSha: gitSha.optional(), error: z.string().optional(),
 });
 export const runStateSchema = z.strictObject({
-  id: text, runDir: text, sbi: text, sbiPath: relativePath, provider: z.enum(['fake', 'codex', 'claude']), fullVerification: z.boolean(),
+  id: text, runDir: text, sbi: text, sbiPath: relativePath.nullable(), provider: z.enum(['fake', 'codex', 'claude']), fullVerification: z.boolean(),
+  // A run from an SBI Issue (harness:run SBI_URL) has no SBI file; its source is the Issue its snapshot came from.
+  sbiIssue: z.strictObject({ repo: text.regex(/^[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+$/), number: z.number().int().positive(), url: z.url() }).optional(),
+  // harness:run opens the PR itself only for an SBI it was given and a provider other than fake.
+  publish: z.boolean(),
+  snapshotVerification: z.looseObject({ verified: z.boolean(), reasons: z.array(z.string()) }).optional(),
   status: z.enum([...new Set(Object.values(states).flat())]), executionStatus: z.enum(states.execution), reason: z.string().nullable(),
   consecutiveFailures: z.number().int().min(0), iterations: z.array(runIterationSchema),
   events: z.array(z.strictObject({ status: text, phase: z.enum(['execution', 'implementation-gate', 'design-approval', 'merge', 'pull-request']), detail: z.string(), at: text })),
@@ -243,9 +248,11 @@ export const runStateSchema = z.strictObject({
     failure: z.strictObject({ code: z.enum(escalationCodes), retryable: z.boolean(), detail: z.string() }).optional() }),
   lane: z.looseObject({ name: z.enum(['prototype', 'production']) }).optional(),
   securityAssessment: z.looseObject({ matchedRules: z.array(text), requiredVerifiers: z.array(text) }).optional(),
+  // The security assessment of the execution, kept so that each merge assessment combines it with the snapshot view of that moment.
+  executionSecurityAssessment: z.looseObject({ matchedRules: z.array(text), requiredVerifiers: z.array(text) }).optional(),
   riskPreflight: z.looseObject({ level: z.union([z.literal(1), z.literal(2), z.literal(3)]) }).optional(),
   risk: z.looseObject({ level: z.union([z.literal(1), z.literal(2), z.literal(3)]) }).optional(),
   escalation: z.strictObject({ code: z.enum(escalationCodes), detail: z.string() }).optional(),
   pullRequest: z.strictObject({ number: z.number().int().positive(), url: z.url(), branch: text, base: text, repository: text }).optional(),
   startedAt: text, executionFinishedAt: text.optional(), cleanedAt: text.optional(),
-});
+}).refine(s => (s.sbiPath === null) === (s.sbiIssue !== undefined), 'a run has either sbiPath or sbiIssue');

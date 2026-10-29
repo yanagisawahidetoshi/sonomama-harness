@@ -106,6 +106,30 @@ export async function verifySbiSource({ root, base, files, required, config, rep
   return { ...source, status: source.reasons.length ? 'FAIL' : 'PASS' };
 }
 
+// The Run snapshot is stored under .harness/ by contract, and its JSON keys (requiredSecurityRules) read like security configuration.
+// Only the Run's own snapshot, exactly as the Harness wrote it and verified against the ready SBI Issue, is read by its values instead:
+// its location stops matching harness_policy and its key names stop matching patterns. Everything it says about the SBI still counts.
+export const snapshotFilePattern = /^\.harness\/state\/sbi-\d+\.json$/;
+const leaves = value => Array.isArray(value) ? value.flatMap(leaves) : value && typeof value === 'object' ? Object.values(value).flatMap(leaves) : [String(value)];
+export function riskView(files, { snapshot, verified }) {
+  if (!verified || !snapshot) return files;
+  const path = snapshotPath(snapshot), expected = JSON.stringify(snapshot);
+  const same = text => { try { return JSON.stringify(JSON.parse(text)) === expected; } catch { return false; } };
+  return files.map(f => f.path === path && snapshotFilePattern.test(f.path) && f.status === 'A' && !f.deleted && same(f.added)
+    ? { ...f, added: leaves(snapshot).join('\n'), verifiedSbiSnapshot: true } : f);
+}
+// Verified means: the committed file is the snapshot the Harness wrote, and the CI SBI source check passes for it against GitHub now
+// with the Issue unedited since the Run started. Any other outcome, including a GitHub read failure, is unverified (fail closed).
+// config is the harness.json the Run started with; its Trusted Acceptance registrations rebuild the SBI as at the start of the Run.
+export async function snapshotVerified({ workspace, base, files, snapshot, config, github = githubCli }) {
+  try {
+    const text = await readFile(join(workspace, snapshotPath(snapshot)), 'utf8');
+    if (JSON.stringify(JSON.parse(text)) !== JSON.stringify(snapshot)) return { verified: false, reasons: ['snapshot differs from the one the Harness wrote'] };
+    const source = await verifySbiSource({ root: workspace, base, files, required: ['sbi-snapshot'], config, repository: snapshot.source.repo, github });
+    return { verified: source.status === 'PASS' && source.sources.length === 1, reasons: source.reasons };
+  } catch (error) { return { verified: false, reasons: [error.message] }; }
+}
+
 export function describeSbiSource(source) {
   if (!source.required.length) return ['SBI source: not required'];
   return [

@@ -11,7 +11,10 @@ import { analyzeImpact, describeImpact, judgeCi, runCompletionJudge } from './im
 import { renderSbiBody } from './planner.mjs';
 import { sbiSnapshotSchema } from './schemas.mjs';
 import { sbiFromIssue } from './sbi-issue.mjs';
-import { describeSbiSource, judgeSbiSource, snapshotFromIssue, snapshotPath, verifySbiSource } from './sbi-source.mjs';
+import { describeSbiSource, judgeSbiSource, riskView, snapshotFromIssue, snapshotPath, verifySbiSource } from './sbi-source.mjs';
+import { assessRisk } from './risk-classifier.mjs';
+import { classifySecurity } from './security-enforcement.mjs';
+import { readFileSync } from 'node:fs';
 
 const sha256 = text => createHash('sha256').update(text).digest('hex');
 const ref = { owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' };
@@ -332,5 +335,45 @@ describe('CI Completion Judge for the source SBI Issue', () => {
       assert.equal(judged.status, 'FAIL');
       assert.ok(judged.reasons.some(r => r.includes('needs-review')));
     })));
+  });
+});
+
+// The Run snapshot sits under .harness/ only because #71 put it there. Once it is verified against the ready SBI Issue, its location
+// (harness_policy) and its key names (requiredSecurityRules) stop counting; what it says about the SBI still counts.
+describe('Risk view of a verified SBI snapshot', () => {
+  const policy = JSON.parse(readFileSync(new URL('../../.harness/rules/pr-risk.json', import.meta.url), 'utf8'));
+  const securityPolicy = JSON.parse(readFileSync(new URL('../../.harness/rules/security.json', import.meta.url), 'utf8'));
+  const app = { path: admin, status: 'A', added: 'export const home = 1;', deleted: '', binary: false };
+  const stored = (s = snapshot(), path = snapshotPath(s)) => ({ path, status: 'A', added: JSON.stringify(s, null, 2), deleted: '', binary: false });
+  const level = files => assessRisk({ files, metadata: {}, humanGate: false }, policy);
+  it('when the snapshot is verified then its location no longer raises the change to LEVEL 3', () => {
+    const view = riskView([app, stored()], { snapshot: snapshot(), verified: true });
+    assert.equal(level(view).level, 2);
+    assert.ok(!level(view).reasons.includes('harness_policy'));
+  });
+  it('when the snapshot is not verified then it stays LEVEL 3 through harness_policy', () => {
+    assert.equal(level(riskView([app, stored()], { snapshot: snapshot(), verified: false })).level, 3);
+  });
+  for (const path of ['.harness/state/sbi-7.json.bak', '.harness/state/sbi-x.json', '.harness/state/other.json', '.harness/state/sub/sbi-7.json', '.harness/state/sbi-8.json', '.harness/rules/pr-risk.json']) {
+    it(`when ${path} changes next to a verified snapshot then it stays LEVEL 3`, () => {
+      const view = riskView([app, stored(), stored(snapshot(), path)], { snapshot: snapshot(), verified: true });
+      assert.equal(level(view).level, 3);
+      assert.ok(level(view).matches.some(m => m.reason === 'harness_policy' && m.path === path));
+    });
+  }
+  it('when a verified snapshot only carries the requiredSecurityRules key then it is not security-sensitive, while the raw file is', () => {
+    assert.equal(classifySecurity({ files: [app, stored()] }, securityPolicy).securitySensitive, true, 'the key name alone matches the lane securityPatterns');
+    assert.equal(classifySecurity({ files: riskView([app, stored()], { snapshot: snapshot(), verified: true }) }, securityPolicy).securitySensitive, false);
+  });
+  it('when the verified snapshot describes security-sensitive work then the change stays security-sensitive at LEVEL 3', () => {
+    const sensitive = snapshot({ sbi: { ...sbi, issueUrl: ref.url, description: 'security_rule を書き換える' } });
+    const view = riskView([app, stored(sensitive)], { snapshot: sensitive, verified: true });
+    const assessment = classifySecurity({ files: view }, securityPolicy);
+    assert.equal(assessment.securitySensitive, true);
+    assert.equal(assessRisk({ files: view, metadata: {}, humanGate: false, securityAssessment: assessment }, policy).level, 3);
+  });
+  it('when the committed snapshot differs from what the Harness wrote then it is not read as the verified snapshot', () => {
+    const edited = { ...stored(), added: stored().added.replace('ホームを表示する', '手で書き換えた') };
+    assert.equal(level(riskView([app, edited], { snapshot: snapshot(), verified: true })).level, 3);
   });
 });

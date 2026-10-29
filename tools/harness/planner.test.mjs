@@ -131,6 +131,16 @@ describe('PBI → SBI Planner', () => {
       await assert.rejects(plan(root, { agent: async () => ({ sbis: [], escalation: 'PBIが曖昧です' }) }), /PBIが曖昧です/);
       assert.equal((await github.state()).created.length, 0);
     })));
+    it('when no --provider is given then decomposes the PBI with Claude', () => fixture(root => mockGitHub({}, async () => {
+      const used = [];
+      await plan(root, { provider: undefined, agent: async ({ provider }) => { used.push(provider); return { sbis: validPlan(), escalation: null }; } });
+      assert.deepEqual(used, ['claude']);
+    })));
+    it('when --provider codex is given then decomposes the PBI with Codex instead', () => fixture(root => mockGitHub({}, async () => {
+      const used = [];
+      await plan(root, { provider: 'codex', agent: async ({ provider }) => { used.push(provider); return { sbis: validPlan(), escalation: null }; } });
+      assert.deepEqual(used, ['codex']);
+    })));
     it('when the provider is fake then refuses to publish to GitHub', () => fixture(root => mockGitHub({}, async github => {
       await assert.rejects(plan(root, { provider: 'fake' }), /provider/);
       assert.deepEqual(await github.calls(), []);

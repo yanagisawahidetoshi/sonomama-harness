@@ -18,6 +18,8 @@ export function assessRisk({ files = [], metadata = {}, humanGate = false, aiRis
   for (const file of files) {
     for (const path of [file.path, file.previousPath].filter(Boolean)) {
       for (const rule of policy.pathRules) {
+        // A verified Run snapshot is under .harness/ by contract; only that location match is dropped (see sbi-source riskView).
+        if (file.verifiedSbiSnapshot && rule.id === 'harness_policy') continue;
         if (new RegExp(rule.pattern, 'i').test(path)) match(rule.minimumLevel, rule.id, 'path', path);
       }
     }

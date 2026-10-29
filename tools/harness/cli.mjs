@@ -1,6 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { check, runHarness, resumeRun, cleanupRun, openPullRequest } from './index.mjs';
-import { recordDecision } from './human-approvals.mjs';
+import { check, runHarness, resumeRun, cleanupRun, openPullRequest, approveRun, runExitCode } from './index.mjs';
 import { withEvidenceProtection, redactText } from './evidence-protection.mjs';
 import { exportRun } from './review-export.mjs';
 import { planIssue } from './planner.mjs';
@@ -15,6 +14,24 @@ import { describeSbiSource } from './sbi-source.mjs';
 import { appendFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 const root = fileURLToPath(new URL('../../', import.meta.url));
+// The normal flow is planner:sbi → harness:run → (only at a Human Gate) harness:approve. The rest serves CI, recovery and Harness maintenance.
+const usage = `Usage:
+User-facing:
+  pnpm planner:sbi PBI_URL [--provider codex]        PBIをSBI Issueへ分割する（既定はClaude）
+  pnpm harness:run SBI_URL [--provider codex] [--full]
+                                                     readyのSBI Issueから実装・ローカル検証・PR作成まで進める（既定はClaude）
+  pnpm harness:approve SBI_URL --phase gate|design [--decision approve|revoke|request-changes]
+                                                     Human Gateを承認し、そのままrunを再開してPRを作成する
+API design (API契約を設計するときだけ):
+  pnpm planner:api-schema ISSUE_URL [--provider codex] | pnpm planner:api-schema-approve ISSUE_URL [--decision approve|revoke|request-changes]
+  pnpm api:mock ISSUE_URL [--dynamic] | pnpm api:docs [--port PORT]
+Internal/Maintenance (CI・障害復旧・Harness保守用):
+  pnpm harness:resume --run RUN_ID | pnpm harness:pr --run RUN_ID | pnpm harness:approve --run RUN_ID --phase gate|design|merge
+  pnpm harness:run --sbi PATH [--provider fake|codex|claude]（Harness自己テスト・fixture用のSBI JSON）
+  pnpm harness:impact --base REF|--all | pnpm harness:verify --verifier ID --base REF|--all | pnpm harness:judge --base REF|--all
+  pnpm harness:check | pnpm harness:test | pnpm harness:demo [--full] | pnpm harness:push-gate
+  pnpm harness:export --run RUN_ID [--out PATH] | pnpm harness:cleanup --run RUN_ID | pnpm planner:api-schema-status ISSUE_URL`;
+const printPullRequest = run => { if (run.pullRequest) console.log(`Pull request: ${run.pullRequest.url} (tested SHA ${run.headSha})`); };
 async function printVerifier({ root: workspace = root, base, all, id }) {
   const { impact, result, passed } = await runVerifier({ root: workspace, base, all, id });
   const selection = impact.verifiers.find(v => v.id === id);
@@ -29,9 +46,9 @@ await withEvidenceProtection(root, async () => {
 try {
   const [command, ...args] = process.argv.slice(2);
   const allowed = { check: ['--sbi'], demo: ['--sbi', '--full'], run: ['--provider', '--sbi', '--full'], plan: ['--provider'], 'api-schema': ['--provider'], 'api-schema-approve': ['--decision'], 'api-schema-status': [], 'api-mock': ['--dynamic'], 'api-docs': ['--port'], cleanup:['--run'], impact: ['--base', '--all'], verify: ['--base', '--all', '--verifier'], judge: ['--base', '--all'], 'push-gate': [], resume: ['--run'], pr: ['--run'], approve: ['--run', '--phase', '--decision'], export: ['--run','--out'] };
-  if (!allowed[command]) throw new Error('Usage: check | demo [--full] | run [--full] | plan ISSUE_URL [--provider codex|claude] | api-schema ISSUE_URL [--provider codex|claude] | api-schema-approve ISSUE_URL [--decision approve|revoke|request-changes] | api-schema-status ISSUE_URL | api-mock ISSUE_URL [--dynamic] | api-docs [--port PORT] | impact --base REF|--all | verify --verifier ID --base REF|--all | judge --base REF|--all | push-gate | cleanup --run ID | resume --run ID | pr --run ID | approve --run ID --phase gate|design|merge [--decision approve|revoke|request-changes]');
+  if (!allowed[command]) throw new Error(usage);
   const options = {};
-  const positional = ['plan', 'api-schema', 'api-schema-approve', 'api-schema-status', 'api-mock'].includes(command) && args.length && !args[0].startsWith('--') ? args.shift() : null;
+  const positional = ['plan', 'api-schema', 'api-schema-approve', 'api-schema-status', 'api-mock', 'run', 'approve'].includes(command) && args.length && !args[0].startsWith('--') ? args.shift() : null;
   for (let i = 0; i < args.length; i += 2) {
     if (['--full', '--dynamic', '--all'].includes(args[i]) && allowed[command].includes(args[i]) && !options[args[i]]) { options[args[i]]=true; i--; continue; }
     if (!allowed[command].includes(args[i]) || !args[i + 1] || args[i + 1].startsWith('--') || options[args[i]]) throw new Error(`Invalid arguments for ${command}`);
@@ -115,7 +132,7 @@ try {
     const run = await openPullRequest({ root, runId: options['--run'] });
     console.log(`Pull request: ${run.pullRequest.url} (tested SHA ${run.headSha})`);
     console.log(`Evidence: ${run.runDir}/github-state.json`);
-    process.exitCode = run.status === 'MERGE_ALLOWED' ? 0 : 2;
+    process.exitCode = runExitCode(run);
   } else if (command === 'cleanup') {
     if (!options['--run']) throw new Error('cleanup requires --run ID');
     await cleanupRun({root,runId:options['--run']});
@@ -125,19 +142,23 @@ try {
     const output = await exportRun({root,runId:options['--run'],out:options['--out']});
     console.log(`Review ZIP: ${output.path} (${output.included} files; ${output.excluded} excluded)`);
   } else if (command === 'approve') {
-    if (!options['--run'] || !['gate', 'design', 'merge'].includes(options['--phase'])) throw new Error('approve requires --run ID --phase gate|design|merge');
+    if (Boolean(options['--run']) === Boolean(positional) || !['gate', 'design', 'merge'].includes(options['--phase'])) throw new Error('approve requires SBI_URL or --run ID, and --phase gate|design|merge');
     const decisions = { approve: 'APPROVE', revoke: 'REVOKE', 'request-changes': 'REQUEST_CHANGES' };
     const decision = decisions[options['--decision'] || 'approve'];
     if (!decision) throw new Error('Unknown approval decision');
-    const approval = await recordDecision({ root, runId: options['--run'], purpose: options['--phase'] === 'design' ? 'design-approval' : options['--phase'] === 'gate' ? 'implementation-gate' : 'merge', decision });
-    console.log(`${approval.purpose}: ${approval.decision} by ${approval.reviewer}, SHA=${approval.commitSha}`);
-    console.log('記録しました。harness:resume --run IDで判定を更新してください。');
+    const run = await approveRun({ root, runId: options['--run'], issueUrl: positional, purpose: options['--phase'] === 'design' ? 'design-approval' : options['--phase'] === 'gate' ? 'implementation-gate' : 'merge', decision });
+    console.log(`Recorded ${decision}; run ${run.id}: ${run.status}`);
+    printPullRequest(run);
+    console.log(`Evidence: ${run.runDir}/summary.json`);
+    process.exitCode = runExitCode(run);
   } else {
     if (command === 'resume' && !options['--run']) throw new Error('resume requires --run ID');
     const run = command === 'resume' ? await resumeRun({ root, runId: options['--run'] })
-      : await runHarness({ root, provider: command === 'demo' ? 'fake' : options['--provider'], sbiPath: options['--sbi'], full:options['--full'] === true });
+      : await runHarness({ root, provider: command === 'demo' ? 'fake' : options['--provider'], sbiPath: options['--sbi'], issueUrl: positional, full:options['--full'] === true, publish: command === 'run' });
+    printPullRequest(run);
+    if (run.gate?.state === 'WAITING_FOR_HUMAN_GATE' || run.designApproval?.state === 'WAITING_FOR_DESIGN_APPROVAL') console.log(`Human Gate: pnpm harness:approve ${run.sbiIssue?.url ?? `--run ${run.id}`} --phase ${run.designApproval?.state === 'WAITING_FOR_DESIGN_APPROVAL' ? 'design' : 'gate'}`);
     console.log(`Evidence: ${run.runDir}/summary.json`);
-    process.exitCode = run.status === 'MERGE_ALLOWED' || (command === 'demo' && run.executionStatus === 'DONE' && run.status === 'WAITING_FOR_HUMAN_REVIEW') ? 0 : 2;
+    process.exitCode = runExitCode(run);
   }
 } catch (error) { console.error(redactText(error.message)); process.exitCode = 1; }
 }).catch(() => { console.error('Evidence protection initialization failed'); process.exitCode = 1; });

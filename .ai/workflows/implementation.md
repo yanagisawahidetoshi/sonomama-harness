@@ -7,13 +7,12 @@
 3. pnpm harness:demoまたはpnpm harness:runを実行する。
 4. WAITING_FOR_HUMAN_GATEなら、人間が設計・作業範囲を確認し、approve --phase gateを実行する。
    WAITING_FOR_DESIGN_APPROVALなら、試作採用の設計を確認し、approve --phase designを実行する。
-5. resume --run IDで着手する。失敗は修正→再検証。連続3回失敗などはESCALATED。
-6. executionStatus=DONE後、risk-assessmentとHEADの差分を人間が確認する。
-7. GitHubで共有するなら`harness:pr --run ID`でPRを作り、GitHub Reviewで承認する（[pull-request.md](pull-request.md)）。
+5. approveの記録後、Harnessがrunを再開する。失敗は修正→再検証。連続3回失敗などはESCALATED。
+6. executionStatus=DONEになると、Harnessがtested SHAでPRを作る（fake providerを除く）。GitHub Reviewで承認する（[pull-request.md](pull-request.md)）。
    PRを作らないLocal modeでは、LEVEL 2は1人、LEVEL 3は異なる2人以上がapprove --phase mergeで承認する。
-8. resume --run IDで再評価し、MERGE_ALLOWEDとautoMergeEligibleを確認する。
+7. 判定の更新が要るときだけ、保守用のresume --run IDでMERGE_ALLOWEDとautoMergeEligibleを確認する。
    merge判定の一時エラーはRETRYABLE（executionStatusはDONEのまま）。原因を解消してresumeし直す。
-9. 実際のmergeは人間または別の将来adapterが行う。このHarnessはmergeしない。
+8. 実際のmergeは人間または別の将来adapterが行う。このHarnessはmergeしない。
 
 ゲート承認とマージ承認は別purpose・別context。使い回せない。
 証跡approvals.jsonを編集しても承認にならない。人間用CLIの署名付き台帳を使う。
@@ -45,6 +44,6 @@ Productionはapps・packages。試作から本番へ採用するときは新し�
 ## SBIとacceptance verifier
 
 SBIの項目は人間向けのdocs/product/sbi-template.md、実行用JSONの例は.harness/state/sample-sbi.json。
-acceptance verifierは、組み込みのsample-bddと、harness.jsonで`trust: acceptance`と`trustedScript`（.harness/verification/*.mjs）を指定したもの。
+acceptance verifierは、組み込みのsample-bddと、harness.jsonで`trust: acceptance`と`trustedScript`（.harness/verification/*.mjs）を指定したもの、SBI Issueごとの`.harness/acceptance/sbi-<番号>.json`に登録したもの。
 別のSBIを実行する前に、信頼する検証adapterとACの対応を追加する。
 SBIのSecurity metadata（securityImpact・requiredSecurityRules・requiredVerifiers・preImplementationGate・minimumRiskLevel）は強制ルールを弱められない（[security-rules.md](../security-rules.md)）。
