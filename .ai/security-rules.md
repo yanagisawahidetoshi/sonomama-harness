@@ -8,6 +8,7 @@
 - Security RequirementsのSSOTはdocs/security・docs/product・ADR。Harness内で業務権限・PII定義・retention期間・匿名化要件を決めない。未決事項をAIが推測して確定しない。
 - Security rule IDを文書・security.json・human-gates.jsonで対応させる。harness:checkはIDと文書参照の整合性だけを検証し、意味の妥当性は人間がレビューする。
 - Security-sensitiveは事前Gate、最低LEVEL 3、必須Verifierを強制する。matched ruleが要求する検証は、SBI側で省略しても強制される。
+- security.jsonでappliesToを持つ実装Verifier（rails-authz-test等）は、ルールに一致したファイルがappliesToに入るとき、またはSBIがそのルールを宣言したときだけ必須にする。docs・ADRだけの変更でもGate・LEVEL 3・承認人数は変わらない。
 - required Security VerifierのFAIL/SKIP/NOT_CONFIGURED、rule violation、未承認GateではDONEもMERGE_ALLOWEDも禁止。NOT_CONFIGUREDはFAIL/SKIPと区別し、必須なら停止する。
 - Semantic Reviewや承認人数だけで検証失敗を上書きしない。
 - 新しいSecurity影響と秘密値の提案は、workspaceへ適用する前に止める。

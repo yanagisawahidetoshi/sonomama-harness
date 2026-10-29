@@ -371,6 +371,9 @@
       "id": "authn-test",
       "kind": "command",
       "directory": ".",
+      "appliesTo": [
+        "^(apps|packages|prototypes)/"
+      ],
       "commands": []
     },
     {
@@ -389,12 +392,18 @@
       "id": "rails-authz-test",
       "kind": "command",
       "directory": "apps/api",
+      "appliesTo": [
+        "^apps/api/"
+      ],
       "commands": []
     },
     {
       "id": "rails-rls-test",
       "kind": "command",
       "directory": "apps/api",
+      "appliesTo": [
+        "^apps/api/"
+      ],
       "commands": []
     },
     {
@@ -413,6 +422,11 @@
       "id": "migration-safety",
       "kind": "command",
       "directory": ".",
+      "appliesTo": [
+        "^(apps|packages|prototypes)/",
+        "(^|/)(migrate|migrations)(/|$)",
+        "(^|/)(schema\\.(rb|sql|prisma)|structure\\.sql)$"
+      ],
       "commands": []
     },
     {
@@ -431,6 +445,9 @@
       "id": "data-lifecycle-test",
       "kind": "command",
       "directory": ".",
+      "appliesTo": [
+        "^(apps|packages|prototypes)/"
+      ],
       "commands": []
     }
   ],
