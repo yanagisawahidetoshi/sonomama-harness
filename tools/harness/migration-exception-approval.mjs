@@ -4,19 +4,20 @@ import { git } from './workspace.mjs';
 import { canMerge, githubPrCli, isBot } from './github-pr.mjs';
 import { exceptionDigest, exceptionPath, exceptionPattern, parseException } from './migration-exception.mjs';
 // The human half of a destructive migration exception: two people with write access post the text migration-exception.mjs renders
-// as a review on the tested commit. GitHub authenticates them; the line names the purpose, so a merge review alone never counts.
+// as a COMMENTED review on the tested commit. GitHub authenticates them. An APPROVED review is the merge approval (ADR-0001), so it never
+// counts here, and one review never serves both purposes.
 const requiredApprovals = 2;
 const approveLine = digest => new RegExp(`^harness-migration-exception: ${digest}\\s*$`, 'm');
 const revokeLine = digest => new RegExp(`^harness-migration-exception-revoke: ${digest}\\s*$`, 'm');
 
-// Latest wins per person: a later revoke line withdraws the approval, a dismissed review never counts.
+// Latest wins per person: a later revoke line withdraws the approval. Only COMMENTED reviews carry this purpose, so a dismissed or merge review never counts.
 export function exceptionApprovals({ reviews, headSha, author, permissions, digest }) {
   const state = new Map();
   for (const review of [...reviews].sort((a, b) => a.id - b.id)) {
     const login = review.user?.login, body = review.body ?? '';
-    if (!login || isBot(review.user) || login === author) continue;
+    if (!login || isBot(review.user) || login === author || review.state !== 'COMMENTED') continue;
     if (revokeLine(digest).test(body)) state.set(login, false);
-    else if (review.state !== 'DISMISSED' && review.commit_id === headSha && approveLine(digest).test(body)) state.set(login, true);
+    else if (review.commit_id === headSha && approveLine(digest).test(body)) state.set(login, true);
   }
   const approvers = [...state].filter(([login, approved]) => approved && canMerge(permissions[login])).map(([login]) => login).sort();
   return { approved: approvers.length >= requiredApprovals, approvers, required: requiredApprovals };

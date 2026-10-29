@@ -30,7 +30,8 @@ function validate(value) {
   need(safePath(value?.migration), 'migration', 'migrationのpathが必要です');
   need(Array.isArray(value?.operations) && value.operations.length > 0 && value.operations.every(o => only(o, ['line', 'operation']) && Number.isInteger(o.line) && o.line > 0 && filled(o.operation)), 'operations', '{ line, operation } が1件以上必要です');
   need(only(value?.expand, ['migration', 'commit']) && safePath(value.expand.migration) && /^[0-9a-f]{40}$/.test(value.expand.commit ?? ''), 'expand', '{ migration, commit（40桁のSHA） } が必要です');
-  need(Array.isArray(value?.removes) && value.removes.length > 0 && value.removes.every(r => only(r, ['table', 'column']) && columnName(r.table) && (r.column === undefined || columnName(r.column))), 'removes', '{ table, column? } が1件以上必要です');
+  // Columns only: a model constant (Probe) can reach a dropped table without naming it, which the reference check cannot see yet.
+  need(Array.isArray(value?.removes) && value.removes.length > 0 && value.removes.every(r => only(r, ['table', 'column']) && columnName(r.table) && columnName(r.column)), 'removes', '{ table, column } が1件以上必要です（テーブル単位の削除はまだ例外にできません）');
   // migration-safety rolls every migration back to VERSION=0, so an irreversible contract step cannot pass anyway.
   need(only(value?.rollback, ['possible', 'procedure']) && value.rollback.possible === true && filled(value.rollback.procedure), 'rollback', 'possible: true と procedure が必要です');
   need(only(value?.dataBackup, ['taken', 'location']) && typeof value.dataBackup.taken === 'boolean' && (value.dataBackup.location === undefined || filled(value.dataBackup.location)), 'dataBackup', '{ taken, location? } が必要です');
@@ -60,8 +61,8 @@ export async function checkException({ root, path, migration, request, findings,
   else if (!(await git(root, ['cat-file', '-e', `${commit}:${expandMigration}`], true)).ok) errors.push(`${path}: expand migration ${expandMigration} が expand commit ${commit.slice(0, 12)} にありません`);
   // The application, its configuration and the API contract must no longer name what is removed; ignored_columns is the expand step itself.
   const listedFiles = (await git(root, ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', 'apps/api/app', 'apps/api/lib', 'apps/api/config', 'packages/api-schema'])).stdout.split('\0').filter(Boolean);
-  for (const { table, column } of request.removes) {
-    const name = column ?? table, word = new RegExp(`\\b${name}\\b`);
+  for (const { column } of request.removes) {
+    const name = column, word = new RegExp(`\\b${name}\\b`);
     for (const file of listedFiles) {
       const lines = (await readFile(join(root, file), 'utf8').catch(() => '')).split('\n');
       lines.forEach((text, index) => { if (word.test(text) && !text.includes('ignored_columns')) errors.push(`${path}: ${name} がまだ ${file}:${index + 1} から参照されています`); });
@@ -74,11 +75,11 @@ export function renderExceptionReview({ migration, source, request }) {
   const production = request.productionState.state === 'deployed'
     ? `deployed（${request.productionState.deploymentRef}、${request.productionState.deployedAt}、確認: ${request.productionState.confirmedBy}）` : 'not_provisioned（本番環境はまだ無い）';
   return [
-    '破壊的Migrationの例外を承認する（承認を取り消すときは最後の行の exception を exception-revoke に変えて投稿する）', '',
+    '破壊的Migrationの例外を承認する。Review は Comment で投稿する（Approve は merge の承認なので数えない）。取り消すときは、最後の行の exception を exception-revoke に変えて Comment で投稿する', '',
     `- migration: ${migration}`,
     `- operations: ${request.operations.map(o => `${o.operation}（${o.line}行目）`).join(', ')}`,
     `- expand: ${request.expand.migration} @ ${request.expand.commit}`,
-    `- removes: ${request.removes.map(r => r.column ? `${r.table}.${r.column}` : r.table).join(', ')}`,
+    `- removes: ${request.removes.map(r => `${r.table}.${r.column}`).join(', ')}`,
     `- rollback: ${request.rollback.procedure}`,
     `- dataBackup: ${request.dataBackup.taken ? `あり（${request.dataBackup.location ?? '場所未記載'}）` : 'なし'}`,
     `- productionState: ${production}`, '',

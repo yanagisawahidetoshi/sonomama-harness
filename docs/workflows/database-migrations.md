@@ -32,7 +32,8 @@ contractのマイグレーションの隣に、`apps/api/db/migrate/exceptions/<
 
 - `operations`が、マイグレーションの破壊的な操作と行番号まで一致する。後から操作を足すと一致しなくなる。
 - `expand.commit`がmainにmerge済みで、そのcommitに`expand.migration`がある。
-- `removes`の列名（列が無ければテーブル名）が、`apps/api/app`・`apps/api/lib`・`apps/api/config`・`packages/api-schema`のどこにも残っていない。`ignored_columns`の行だけは数えない。単語で探すだけなので、別の意味で同じ名前を使っていても失敗になる。
+- `removes`の列名が、`apps/api/app`・`apps/api/lib`・`apps/api/config`・`packages/api-schema`のどこにも残っていない。`ignored_columns`の行だけは数えない。単語で探すだけなので、別の意味で同じ名前を使っていても失敗になる。
+- `removes`には列だけを書ける。テーブルの削除は、モデルの定数（`Probe`など）からテーブル名を書かずに参照できてしまい、この検査では見つけられないため、まだ例外にできない。
 - `rollback.possible`は`true`だけを受け付ける。`migration-safety`は全マイグレーションを`VERSION=0`まで戻すので、戻せないマイグレーション（`drop_table`だけ、`up`だけなど）はどのみち失敗する。
 - `productionState`は次の2つのどちらか。mainへのmergeを本番への反映とはみなさない。
   - `deployed`: expandを本番へ反映した。`deploymentRef`・`deployedAt`（ISO 8601、UTC）・`confirmedBy`が必要。
@@ -43,10 +44,10 @@ contractのマイグレーションの隣に、`apps/api/db/migrate/exceptions/<
 ### 承認
 
 1. `node tools/harness/migration-exception.mjs apps/api/db/migrate/exceptions/<version>.json`で、承認用の文面を出す。最後の行が`harness-migration-exception: <digest>`。このコマンドは何も投稿しない。
-2. write以上の権限を持つ2人が、それぞれ自分のGitHubアカウントで、その文面をPRのReviewとして投稿する（Commentでも Approveでもよい）。PRの作成者、botは数えない。
+2. write以上の権限を持つ2人が、それぞれ自分のGitHubアカウントで、その文面をPRのReviewとして**Comment**で投稿する。ApproveのReviewはmergeの承認なので、この承認には数えない。PRの作成者、botも数えない。
 3. CIのCompletion Judgeが、Harnessが検証したcommit（PRのhead）へのReviewであること、digestが今のマイグレーションと申請の内容に一致することを確かめる。
 
 digestは、マイグレーションファイルの内容と申請の全項目（操作、expandのcommit、rollback、データの退避、productionState）から計算する。どれかが変われば、それまでの承認は数えない。
-headが変わったときも、新しいcommitへのReviewが必要になる。承認を取り消すには、最後の行を`harness-migration-exception-revoke: <digest>`にしたReviewを投稿する。dismissされたReviewも数えない。
+headが変わったときも、新しいcommitへのReviewが必要になる。承認を取り消すには、最後の行を`harness-migration-exception-revoke: <digest>`にしたReviewをCommentで投稿する。dismissされたReviewも数えない。
 
-この承認は、mergeの承認（[ADR-0001](../adr/0001-github-review-merge-approval.md)）とは別の目的として扱う。mergeにはLEVEL 3の通常のReviewも必要になる。
+この承認は、mergeの承認（[ADR-0001](../adr/0001-github-review-merge-approval.md)）とは別の目的として扱い、1つのReviewを両方に使わない。mergeにはLEVEL 3のApprove Reviewが別に必要になる。
