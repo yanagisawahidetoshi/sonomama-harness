@@ -62,3 +62,4 @@ Provider固有SDK・login画面・token管理・route guardは導入していな
 
 `.harness/config/harness.json` の `admin` verifierが `typecheck` / `check` / `test` / `build` を実行する。
 受け入れ条件は `.harness/verification/admin-env.mjs` で検証する。
+
