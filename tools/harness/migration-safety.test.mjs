@@ -150,8 +150,9 @@ describe('migration-safety in the execution loop', () => {
   const prepare = async (root, content) => {
     await update(root, '.harness/state/sample-sbi.json', s => { s.allowedFiles.push(migrationPath); s.securityImpact = ['Migration']; });
     await update(root, '.harness/config/harness.json', c => {
-      c.verifiers.find(v => v.id === 'rails').commands = [[process.execPath, '-e', 'process.exit(0)']];
-      c.securityVerifiers.find(v => v.id === 'migration-safety').commands = [[process.execPath, script]];
+      // Verifier commands run in a container (or, for Harness scripts, as a trusted host process); the host node path does not exist there.
+      Object.assign(c.verifiers.find(v => v.id === 'rails'), { isolation: 'container', commands: [['node', '-e', 'process.exit(0)']] });
+      c.securityVerifiers.find(v => v.id === 'migration-safety').commands = [['node', script]];
     });
     const greeting = 'export function greet(name) { return `こんにちは、${name?.trim() || "ゲスト"}さん`; }';
     return async () => ({ files: [{ path: 'greeting.mjs', content: greeting }, { path: migrationPath, content }] });
@@ -189,7 +190,7 @@ describe('migration-safety in the execution loop', () => {
 
 describe('migration-safety in the CI verifier matrix', () => {
   // The CI matrix job runs `harness:verify --verifier migration-safety`; the database commands are replaced with the static step to stay hermetic.
-  const pullRequest = async (root, content, commands = [[process.execPath, script]]) => {
+  const pullRequest = async (root, content, commands = [['node', script]]) => {
     await update(root, '.harness/config/harness.json', c => { c.securityVerifiers.find(v => v.id === 'migration-safety').commands = commands; });
     await commitFixture(root);
     await mkdir(join(root, 'apps/api/db/migrate'), { recursive: true });
