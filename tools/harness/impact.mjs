@@ -4,7 +4,7 @@ import { isSafeEnvTemplate } from './evidence-protection.mjs';
 import { verifyEngineeringSource } from './engineering-source.mjs';
 import { readJson } from './io.mjs';
 import { isProductionPath } from './lanes.mjs';
-import { readSbiFiles, verifySbiSource } from './sbi-source.mjs';
+import { claimsSbiSource, readSbiFiles, verifySbiSource } from './sbi-source.mjs';
 import { configSchema, securityPolicySchema } from './schemas.mjs';
 import { classifySecurity, combineSecurity, securityPassed, verifySecurity } from './security-enforcement.mjs';
 import { checksPassed, verify } from './verifier.mjs';
@@ -56,7 +56,8 @@ export function analyzeImpact({ config, sbis = [], files = [], all = false }) {
   }
   const fullGatePath = firstMatch(config.impact?.fullGate, files);
   const fullGateReasons = all ? ['all'] : [...fullGatePath ? [`diff:${fullGatePath}`] : [], ...toolchainPath ? [`toolchain:${toolchainPath}`] : []];
-  // Production changes need an approved source. Product implementation uses an SBI Run snapshot; engineering/maintenance changes may use a ready Engineering Issue.
+  // Production work needs an approved source: an SBI Run for Product implementation, a ready Engineering Issue for engineering changes.
+  // Prototypes, docs and Harness maintenance stay outside lanes.json productionPaths.
   const sbiRequiredReasons = files.filter(f => isProductionPath(f.path)).slice(0, 1).map(f => `production:${f.path}`);
   const selected = [...verifiers.values()].sort((a, b) => a.id.localeCompare(b.id));
   return {
@@ -106,10 +107,10 @@ export async function changedSbis(root, files) {
 
 export async function loadImpact({ root, base, all = false }) {
   const files = all ? [] : await changedFiles(root, base);
-  const { sbis, snapshots, invalid } = await readSbiFiles(root, files);
+  const { sbis, snapshots } = await readSbiFiles(root, files);
   // Each Run snapshot brings the Trusted Acceptance of its own SBI Issue only (.harness/acceptance/sbi-<N>.json).
   const config = await withAcceptance(root, configSchema.parse(await readJson(join(root, '.harness/config/harness.json'))), snapshots.map(s => s.snapshot.source.number));
-  return { config, files, sbis, snapshots, invalid, impact: analyzeImpact({ config, sbis, files, all }) };
+  return { config, files, sbis, impact: analyzeImpact({ config, sbis, files, all }) };
 }
 
 // The matrix job: one verifier, mandatory only when an SBI asked for it, so a cross-layer contract without a document stays a placeholder SKIP.
@@ -144,7 +145,7 @@ async function changedContent(root, files) {
 // Completion Judge: trusted acceptance of every changed SBI and the Harness Security Policy run here. Production changes must be backed by either
 // a ready SBI Run snapshot or, for engineering/maintenance work, a ready Engineering Issue linked from a commit trailer.
 export async function runCompletionJudge({ root, base, all = false, needs, repository, github }) {
-  const { config, files, sbis, snapshots, invalid, impact } = await loadImpact({ root, base, all });
+  const { config, files, sbis, impact } = await loadImpact({ root, base, all });
   const missing = [], checks = [];
   for (const sbi of sbis) {
     const result = await verify({ root, workspace: root, config, sbi, files, only: new Set(sbi.acceptanceCriteria.map(a => a.verifier)) });
@@ -158,8 +159,9 @@ export async function runCompletionJudge({ root, base, all = false, needs, repos
   const matrix = impact.requiredVerifiers.map(id => ({ id, status: needs.verifiers?.result === 'success' ? 'PASS' : 'FAIL', reason: `verifier matrix: ${needs.verifiers?.result ?? 'missing'}` }));
   const headSha = (await git(root, ['rev-parse', 'HEAD'])).stdout.trim();
   const security = await verifySecurity({ workspace: root, sbi: {}, assessment, policy, config, headSha, verification: { checks: [...checks, ...matrix] }, changed: await changedContent(root, files) });
-  // A present or malformed SBI snapshot always takes the SBI path; an Engineering Issue cannot be used to bypass a broken snapshot.
-  const source = snapshots.length || invalid.length
+  // Anything that claims an SBI (a changed, broken or deleted snapshot, or the Run trailers) is judged as an SBI, so an Engineering Issue
+  // cannot stand in for a missing or broken Run.
+  const source = await claimsSbiSource(root, base, files)
     ? await verifySbiSource({ root, base, files, required: impact.sbiRequiredReasons, config, repository, github })
     : await verifyEngineeringSource({ root, base, required: impact.sbiRequiredReasons, repository, github });
   return { impact, acceptance, checks, security, source, ...judgeCi({ impact, needs, acceptance, security, source }) };

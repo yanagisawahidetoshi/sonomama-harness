@@ -14,26 +14,33 @@ Engineering changeでもVerifier、Security、Risk、Human Reviewは通常どお
 
 ## Engineering Issue
 
-Engineering Issueは、Issue本文に次の節を持つ。
+Engineering changeとして扱うかは、人がIssueのlabelで決める。PR本文・commit message・Issue本文に「engineering」と書いても通らない。
 
-```md
-## 種類
-engineering
-```
-
-さらにIssueは次を満たす必要がある。
-
-- open
-- `ready` labelあり
-- `needs-review` labelなし
-- `sbi` labelなし
-
-PRのcommitのどれかに、次のtrailerを入れる。
+1. 変更内容を書いたIssueを作る（例: #123 Sparkle Design導入）。
+2. 人が内容を確認し、`engineering` と `ready` のlabelを付ける。labelを付けられるのはtriage以上の権限を持つ人だけ。
+3. PRのcommitのどれかに、次のtrailerを入れる。
 
 ```text
 Engineering-Issue: https://github.com/<owner>/<repo>/issues/<number>
 ```
 
-Completion JudgeはGitHub APIでIssueを読み、上の条件を確認する。読めない・別repository・複数Issue・条件不一致の場合はfail-closedで停止する。
+Completion JudgeはGitHub APIでIssueを読み、次をすべて満たすときだけ通す。1つでも欠ける、またはIssueを読めないときはFAILする（fail-closed）。
 
-Engineering IssueはProduct implementationをSBIから逃がすための経路ではない。プロダクト仕様・ユーザー挙動を変更する場合は従来どおりSBIを使う。曖昧な場合はSBIを選ぶ。
+| 確認 | 内容 |
+| --- | --- |
+| リンク | PRのcommit trailerで、このリポジトリのIssueを1件だけ指す。別のIssueを複数指すとFAIL |
+| Issueであること | open。Pull Requestの番号ではない（PRが自分自身を承認できないようにする） |
+| label | `engineering` と `ready` がある。`needs-review` と `sbi` がない |
+
+## SBIの主張がある場合
+
+次のどれかがあるPRは、Engineering Issueがあっても必ずSBIとして判定する。壊れたSBI snapshotや、snapshotの無いRunをEngineering Issueで通すことはできない。
+
+- `.harness/state/sbi-*.json` の追加・変更・削除
+- commit messageの `Harness-Run:` または `SBI-Issue:`（trailerとして読めない位置にあっても数える）
+
+## 判断に迷ったら
+
+HarnessはIssueの内容から、Product implementationかEngineering changeかを判定できない。`engineering` labelを付ける人とPRのHuman Reviewが判断する。プロダクト仕様・ユーザー挙動を変える場合や、迷う場合はSBIを使う。
+
+判定結果はharness jobのログの `Engineering source check:` 行に出る。

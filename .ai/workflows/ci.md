@@ -29,7 +29,7 @@ Production（`apps/`・`packages/`と`.harness/config/lanes.json`の`productionP
 | 種類 | 例 | 必須の起点 |
 | --- | --- | --- |
 | Product implementation | 新機能、仕様変更、ユーザー挙動の変更 | 承認済みSBI Issueを起点にしたHarness Run + snapshot |
-| Engineering change | dependency、refactor、tooling、Storybook、build設定、Design System導入など、プロダクト仕様を直接変更しない技術変更 | open・`ready`のEngineering Issue + commit trailer |
+| Engineering change | dependency、refactor、tooling、Storybook、build設定、Design System導入など、プロダクト仕様を直接変更しない技術変更 | `engineering`・`ready` labelのIssue + commit trailer |
 
 Engineering changeでもVerifier・Security・Risk・Human Reviewは通常どおり行う。免除されるのはSBI Run snapshotだけ。どちらか曖昧ならProduct implementationとしてSBIを使う。
 
@@ -51,25 +51,18 @@ source Issueを持たない手書きの `sbi-*.json`（`sbi-admin-env.json` な�
 
 ### Engineering change: Engineering Issue
 
-SBIに分ける必要のない技術変更は、Issue本文に次を置く。
-
-```md
-## 種類
-engineering
-```
-
-Issueはこのリポジトリのもので、open・`ready`あり・`needs-review`なし・`sbi`なしであること。PRのcommitのどれかに次のtrailerを入れる。
+人がIssueに `engineering` と `ready` のlabelを付けて承認する。PRのcommitのどれかに次のtrailerを入れる。PR本文・commit message・Issue本文での自己申告は根拠にならない。
 
 ```text
 Engineering-Issue: https://github.com/<owner>/<repo>/issues/<number>
 ```
 
-Completion Judgeはcommit trailerからIssueを1件だけ特定し、GitHub APIで現在のIssueを読む。Issueを読めない、別repository、複数のEngineering Issue、`ready`なし、`needs-review`あり、`sbi`あり、`## 種類 / engineering`が無い場合はFAILする。
-SBI snapshotがPRに存在する、または壊れたsnapshotが存在する場合は必ずSBI側の検証を行い、Engineering Issueへフォールバックしない。壊れたSBI sourceをEngineering経路で回避することはできない。
+Completion Judgeはcommit trailerからIssueを1件だけ特定し、GitHub APIで現在のIssueを読む。Issueを読めない、別repository、複数のIssue、Pull Requestの番号、closed、`engineering`なし、`ready`なし、`needs-review`あり、`sbi`ありのどれかでFAILする。
+`.harness/state/sbi-*.json` の追加・変更・削除か、commit messageの `Harness-Run:` / `SBI-Issue:` があるPRは必ずSBI側で判定し、Engineering Issueへフォールバックしない。
 詳細は [docs/workflows/engineering-changes.md](../../docs/workflows/engineering-changes.md)。
 
 それ以外（`prototypes/`、docs、Harness本体など）だけを変更するPRはProduction sourceなしで通り、Verifierは差分だけで選ぶ。mainへのpushでもsource確認は行わない。
-判定理由はimpact jobとharness jobに出る。互換性のためimpactログのフィールド名は当面 `SBI required:` のままだが、意味は「Production source required」。harness jobはIssueを読むため `issues: read` と `GH_TOKEN` を持つ。
+判定理由はimpact jobとharness jobのログの `SBI required:` 行（意味は「Production source required」）と、harness jobの `SBI source check:` / `Engineering source check:` 行に出る。harness jobはIssueを読むため `issues: read` と `GH_TOKEN` を持つ。
 
 `impact.fullGate` のパス（`tools/harness/`、`.harness/config|verification|rules|skills/`、`.github/`、`.githooks/`、`AGENTS.md`、`.ai/`）が変わったときはFull Gateも実行する。
 `impact.toolchain` のパス（`.node-version`、`.tool-versions`、root の `package.json`、`pnpm-workspace.yaml`、`.npmrc`）が変わったときは、全Application VerifierとFull Gateを実行する。ログの理由は`toolchain:<path>`になる。workflowはこの判定の出力を使うだけで、pathを持たない。
