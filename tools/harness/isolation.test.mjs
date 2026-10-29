@@ -118,6 +118,19 @@ describe('Verifier isolation', () => {
       await verify({ root, workspace: root, config, sbi, files: [{ path: 'apps/admin/src/a.ts' }] });
       assert.match(run(await calls()).args.join(' '), /--network bridge/);
     })));
+    it('when a gated command does not apply to the change then the container never executes it and the skip stays in evidence', () => fixture(async root => fakeDocker(async ({ docker, calls }) => {
+      const { config } = await check(root);
+      config.isolation = { docker };
+      const doctor = ['pnpm', 'run', 'doctor'];
+      Object.assign(config.verifiers.find(v => v.id === 'expo'), { commands: [['node', '-e', 'process.exit(0)'], doctor], gatedCommands: [{ command: doctor, appliesTo: ['^apps/mobile/package\\.json$'] }] });
+      const result = await verify({ root, workspace: root, config, sbi, files: [{ path: 'apps/mobile/src/app/index.tsx' }] });
+      const checked = result.checks.find(c => c.id === 'expo');
+      assert.equal(checked.status, 'PASS');
+      assert.deepEqual(checked.skippedCommands.map(c => c.command), [doctor.join(' ')]);
+      const executed = (await calls()).filter(c => c.args[0] === 'exec' && !c.args.includes('-u'));
+      assert.equal(executed.length, 1);
+      assert.ok(!executed.some(c => c.args.slice(-3).join(' ') === doctor.join(' ')), 'the gated command is not run');
+    })));
     it('when a security verifier runs then it uses the same isolated container', () => fakeDocker(async ({ docker, calls }) => {
       const workspace = await mkdtemp(join(tmpdir(), 'harness-isolated-security-'));
       try {
