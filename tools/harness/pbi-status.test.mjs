@@ -330,6 +330,16 @@ describe('PBI Status: display', () => {
       assert.match(text, /Blocking Bugs\n.*none/);
       assert.match(text, /Reason:\n- PBI Human Acceptance Gate/);
     });
+    it('when the Maestro E2E Evidence is not connected then each SBI line says so instead of showing no E2E target', async () => {
+      const text = renderPbiStatus(await status({ evidence: maestroEvidenceNotConnected })).join('\n');
+      assert.match(text, /SBI-001 implementation .*E2E 未接続/);
+      assert.match(text, /SBI-003 validation .*E2E 未接続/);
+      assert.doesNotMatch(text, /E2E none/);
+    });
+    it('when the evidence of an SBI cannot be read then its line says it is unreadable', async () => {
+      const text = renderPbiStatus(await status({ evidence: { async read() { throw new Error('artifact expired'); } } })).join('\n');
+      assert.match(text, /SBI-001 implementation .*E2E unreadable/);
+    });
     it('when the PBI is DONE then no reason is listed', async () => {
       const text = renderPbiStatus(await status()).join('\n');
       assert.match(text, /^Status: DONE$/m);
