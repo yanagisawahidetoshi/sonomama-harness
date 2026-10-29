@@ -186,10 +186,11 @@ requiredな検証はすべてPASSが必要。FAIL・SKIP・NOT_CONFIGURED、未�
 Completion JudgeもMerge Policy Judgeも拒否する。未設定の必須検証は修正ループで解決できないため即Escalation。
 
 組み込みはsecret-scan / forbidden-pattern-check / pii-log-check。
-Rails Brakeman / bundler-audit / authz / RLS / OpenAPI security、dependency-audit、
+Rails Brakeman / bundler-audit / RLS / OpenAPI security、dependency-audit、
 authz-ui-test、sensitive-storage-check、data-lifecycle-testは接続用placeholderを用意する。
 migration-safetyはharness.jsonのsecurityVerifiersで接続済み。apps/api/db/migrateの静的検査（drop_table・remove_column・rename・change_column・execute等はFAIL、許可マーカーなし）と、
 ローカルtest DB（Compose内の専用DB、RAILS_ENV=test）へのdb:migrate → VERSION=0までのrollback → 再適用を行う。
+rails-authz-testも接続済み。apps/api/spec/authorizationの*_spec.rbをローカルtest DBで実行する。specが無い、exampleが0件、skip・pending・focusがある場合はFAIL。
 必要になったplaceholderはSKIPにせずNOT_CONFIGUREDにする。
 harness.jsonのsecurityVerifiersにid、workspace内directory、信頼するcommandsを登録して接続する。
 組み込みの必須検査は置き換えられない。実ツール本体の導入・本番の権限検証はまだ行っていない。
