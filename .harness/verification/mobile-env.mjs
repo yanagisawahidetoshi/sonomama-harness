@@ -95,7 +95,7 @@ try {
       const config = JSON.parse(read('.harness/config/harness.json'));
       for (const v of config.verifiers) for (const c of v.commands) assert.doesNotMatch(c.join(' '), /maestro/i, v.id);
       forbids(/maestro/i, 'Maestro is an external CLI');
-      assert.match(read('tools/harness/impact.mjs'), /maestro: maestroLanes\(sbis\)/, 'Impact Analysis selects the Maestro lanes from the SBIs');
+      assert.match(read('tools/harness/impact.mjs'), /maestro: maestroLanes\(runSbis\)/, 'Impact Analysis selects the Maestro lanes from the SBIs');
     }],
     ['MOBILE-AC-17', 'Given the app, When listing dependencies, Then no auth provider SDK is installed', () => {
       forbids(/amplify|cognito|firebase|google-auth|@react-oauth|oidc|auth0|@clerk|supabase|expo-auth-session/i, 'Auth provider SDK must not be installed');

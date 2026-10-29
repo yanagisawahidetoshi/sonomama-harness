@@ -20,7 +20,7 @@ const sorted = values => [...new Set(values)].sort();
 const applicationVerifiers = config => config.verifiers.filter(v => (v.trust || 'application') === 'application');
 const firstMatch = (patterns = [], files) => files.find(f => patterns.some(p => new RegExp(p).test(f.path)))?.path;
 
-export function analyzeImpact({ config, sbis = [], files = [], all = false }) {
+export function analyzeImpact({ config, sbis = [], runSbis = [], files = [], all = false }) {
   const verifiers = new Map();
   const select = (id, reason, mandatory) => {
     const entry = verifiers.get(id) ?? { id, mandatory: false, reasons: [] };
@@ -73,8 +73,9 @@ export function analyzeImpact({ config, sbis = [], files = [], all = false }) {
     acceptanceVerifiers: sorted(sbis.flatMap(s => s.acceptanceCriteria.map(a => a.verifier))),
     fullGate: fullGateReasons.length > 0,
     fullGateReasons,
-    // Maestro runs only for mobile SBIs that ask for E2E (#68), never for every mobile PR.
-    maestro: maestroLanes(sbis),
+    // Maestro runs only for mobile SBIs that ask for E2E (#68), never for every mobile PR. Only a Run snapshot (from an approved SBI Issue)
+    // picks a lane; hand-written SBI JSON has no provenance and must not add a required job.
+    maestro: maestroLanes(runSbis),
     sbiRequired: sbiRequiredReasons.length > 0,
     sbiRequiredReasons,
   };
@@ -121,7 +122,7 @@ export async function loadImpact({ root, base, all = false }) {
   const { sbis, snapshots } = await readSbiFiles(root, files);
   // Each Run snapshot brings the Trusted Acceptance of its own SBI Issue only (.harness/acceptance/sbi-<N>.json).
   const config = await withAcceptance(root, configSchema.parse(await readJson(join(root, '.harness/config/harness.json'))), snapshots.map(s => s.snapshot.source.number));
-  return { config, files, sbis, snapshots, impact: analyzeImpact({ config, sbis, files, all }) };
+  return { config, files, sbis, snapshots, impact: analyzeImpact({ config, sbis, runSbis: snapshots.map(s => s.snapshot.sbi), files, all }) };
 }
 
 // The matrix job: one verifier, mandatory only when an SBI asked for it, so a cross-layer contract without a document stays a placeholder SKIP.
