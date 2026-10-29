@@ -2,7 +2,7 @@
   "id": "SBI-MOBILE-ENV",
   "title": "受講生アプリ用React Native Expo開発環境を apps/mobile に構築する",
   "description": "Issue #22。apps/mobileにExpo SDK 58 + React Native + TypeScriptの開発環境を構築し、Expo Router、TanStack Query、Axios、React Hook Form + Zod、Biome、jest-expo + RNTL、Maestro smoke flowを用意する。業務画面・認証・未使用native libraryは導入しない。",
-  "gherkin": "Feature: 受講生アプリの開発環境\n  Scenario: 後続SBIが機能を追加できる\n    Given apps/mobileにExpo SDK 58環境がある\n    When pnpm --filter mobile の typecheck / check / test / doctor を実行する\n    Then すべてPASSする\n  Scenario: ローカルでsmoke E2Eを実行できる\n    Given development buildがSimulatorにインストールされている\n    When maestro test apps/mobile/.maestro/smoke.yaml を実行する\n    Then 初期画面のtestIDが表示される\n  Scenario: 未決定の技術を固定しない\n    Given 認証ProviderとDesign Systemが未決定である\n    When 依存関係を確認する\n    Then 認証Provider SDK・UI component library・未使用native library・ESLint・Prettierは存在しない",
+  "gherkin": "Feature: 受講生アプリの開発環境\n  Scenario: 後続SBIが機能を追加できる\n    Given apps/mobileにExpo SDK 58環境がある\n    When pnpm --filter mobile の typecheck / check / test / doctor を実行する\n    Then すべてPASSする\n  Scenario: ローカルでsmoke E2Eを実行できる\n    Given development buildがSimulatorにインストールされている\n    When maestro test apps/mobile/.maestro/smoke.yaml を実行する\n    Then 初期画面のtestIDが表示される\n  Scenario: 未決定の技術を固定しない\n    Given 認証ProviderとDesign Systemが未決定である\n    When 依存関係を確認する\n    Then 認証Provider SDK・UI component library・未使用native library・ESLint・Prettierは存在しない\n  Scenario: 通常開発はExpo Goで行う\n    Given expo-dev-clientを初期依存に入れていない\n    When pnpm --filter mobile start を実行する\n    Then Expo Goを対象にdev serverが起動する\n  Scenario: Integration / E2EはMaestroで検証する\n    Given development buildがSimulatorにインストールされている\n    When Mock APIまたは実API + Rails + DBへ接続してMaestroを実行する\n    Then Mobileのユーザーフローを検証できる",
   "acceptanceCriteria": [
     {
       "id": "MOBILE-AC-1",
@@ -102,6 +102,46 @@
     {
       "id": "MOBILE-AC-20",
       "description": "READMEに開発手順が記載されている",
+      "verifier": "mobile-acceptance"
+    },
+    {
+      "id": "MOBILE-AC-21",
+      "description": "pnpm --filter mobile startがExpo Goを明示して起動する",
+      "verifier": "mobile-acceptance"
+    },
+    {
+      "id": "MOBILE-AC-22",
+      "description": "READMEで通常開発の主対象がExpo Goと明記されている",
+      "verifier": "mobile-acceptance"
+    },
+    {
+      "id": "MOBILE-AC-23",
+      "description": "MaestroがMobile Integration / E2Eの必須ツールとして明記されている",
+      "verifier": "mobile-acceptance"
+    },
+    {
+      "id": "MOBILE-AC-24",
+      "description": "Mobile IntegrationはMock API + Maestroを標準とする",
+      "verifier": "mobile-acceptance"
+    },
+    {
+      "id": "MOBILE-AC-25",
+      "description": "Mobile E2EはDevelopment Build + 実API + Rails + DB + Maestroを標準とする",
+      "verifier": "mobile-acceptance"
+    },
+    {
+      "id": "MOBILE-AC-26",
+      "description": "Unit / Component testはJest + RNTLを維持する",
+      "verifier": "mobile-acceptance"
+    },
+    {
+      "id": "MOBILE-AC-27",
+      "description": "Development BuildはMaestro/native機能用として残り、expo run:ios / expo run:androidの手順が消えていない",
+      "verifier": "mobile-acceptance"
+    },
+    {
+      "id": "MOBILE-AC-28",
+      "description": "Expo Goを阻害するexpo-dev-clientを初期依存として追加しない",
       "verifier": "mobile-acceptance"
     }
   ],

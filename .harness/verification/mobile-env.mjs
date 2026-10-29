@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { hasCommand } from './lib/commands.mjs';
-// Trusted acceptance for SBI-MOBILE-ENV (#22). Reads the worktree only; the expo application verifier runs the commands.
+// Trusted acceptance for SBI-MOBILE-ENV (#22, #135). Reads the worktree only; the expo application verifier runs the commands.
 const root = process.argv[2];
 const app = join(root, 'apps/mobile');
 const read = path => readFileSync(join(root, path), 'utf8');
@@ -18,6 +18,8 @@ const source = () => files(join(app, 'src')).filter(p => /\.(ts|tsx)$/.test(p)).
 const pkg = () => JSON.parse(read('apps/mobile/package.json'));
 const deps = () => ({ ...pkg().dependencies, ...pkg().devDependencies });
 const hasDeps = names => { const all = deps(); for (const name of names) assert.ok(all[name], `missing dependency ${name}`); };
+const tokens = script => script.split(/\s+/);
+const tableRow = (markdown, name) => markdown.split('\n').find(line => line.split('|')[1]?.trim() === name) ?? '';
 const forbids = (pattern, label) => {
   for (const name of Object.keys(deps())) assert.doesNotMatch(name, pattern, `${label}: ${name}`);
 };
@@ -109,6 +111,44 @@ try {
       for (const term of ['Node', 'pnpm install', 'SDK 58', 'pnpm --filter mobile start', 'pnpm --filter mobile ios', 'pnpm --filter mobile android',
         'pnpm --filter mobile test', 'pnpm --filter mobile check', 'pnpm --filter mobile typecheck', 'expo-doctor', 'brew install', 'EXPO_PUBLIC_API_BASE_URL',
         'pnpm api:mock', '10.0.2.2', 'LAN', '未決定']) assert.ok(readme.includes(term), term);
+    }],
+    ['MOBILE-AC-21', 'Given the package, When starting daily development, Then expo start targets Expo Go explicitly', () => {
+      const start = tokens(pkg().scripts.start);
+      assert.deepEqual(start.slice(0, 2), ['expo', 'start']);
+      assert.ok(start.includes('--go') || start.includes('-g'), 'start must pass --go');
+      assert.ok(!start.includes('--dev-client') && !start.includes('-d'), 'start must not target a development build');
+    }],
+    ['MOBILE-AC-22', 'Given the README, When onboarding, Then Expo Go is the primary target for daily development', () => {
+      const readme = read('apps/mobile/README.md');
+      assert.match(readme, /通常開発はExpo Goを主対象にする/);
+      assert.doesNotMatch(readme, /Expo Goではなく/);
+    }],
+    ['MOBILE-AC-23', 'Given the README, When choosing integration and E2E tools, Then Maestro is required', () => {
+      assert.match(read('apps/mobile/README.md'), /MaestroはMobile Integration \/ E2Eの必須ツール/);
+    }],
+    ['MOBILE-AC-24', 'Given the test layers, When running Mobile Integration, Then Maestro runs against a Mock API on a development build', () => {
+      const row = tableRow(read('apps/mobile/README.md'), 'Mobile Integration');
+      for (const term of ['Maestro', 'Mock API', 'development build']) assert.ok(row.includes(term), term);
+    }],
+    ['MOBILE-AC-25', 'Given the test layers, When running Mobile E2E, Then Maestro runs against the real API, Rails and DB on a development build', () => {
+      const row = tableRow(read('apps/mobile/README.md'), 'Mobile E2E');
+      for (const term of ['Maestro', '実API', 'Rails', 'DB', 'development build']) assert.ok(row.includes(term), term);
+      assert.ok(!row.includes('Mock API'), 'E2E must not use the Mock API');
+    }],
+    ['MOBILE-AC-26', 'Given the test layers, When testing units and components, Then Jest + React Native Testing Library is kept', () => {
+      hasDeps(['jest', '@testing-library/react-native']);
+      const row = tableRow(read('apps/mobile/README.md'), 'Unit / Component');
+      for (const term of ['Jest', 'React Native Testing Library']) assert.ok(row.includes(term), term);
+      assert.ok(!row.includes('Maestro'), 'Unit / Component must not depend on Maestro');
+    }],
+    ['MOBILE-AC-27', 'Given the package, When Maestro or native features need it, Then the development build commands remain', () => {
+      const scripts = pkg().scripts;
+      assert.match(scripts.ios, /\bexpo run:ios\b/);
+      assert.match(scripts.android, /\bexpo run:android\b/);
+      assert.match(read('apps/mobile/README.md'), /development buildはMaestroのIntegration \/ E2Eと、Expo Goで扱えないnative機能/);
+    }],
+    ['MOBILE-AC-28', 'Given the app, When listing dependencies, Then expo-dev-client is not installed so Expo Go keeps working', () => {
+      forbids(/^expo-dev-client$/, 'expo-dev-client must not be an initial dependency');
     }],
   ];
   const acceptance = [];
