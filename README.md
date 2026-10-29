@@ -458,8 +458,9 @@ Plannerは`needs-review`のSBIをExecution Harnessへ投入しない。人間が
 API契約の新規作成・変更が要るPBIでは、`planner:sbi`が`packages/api-schema`だけを変えるOpenAPI Schema SBIを1件作り、
 同じPBIの他のSBIをそれに依存させる（SBI Quality Judgeが検査する）。Schema SBIも通常のSBIと同じく、レビューして`ready`にし、`pnpm harness:run <SBI Issue URL>`で実行する。
 api-contract VerifierがOpenAPI 3.1の検証と破壊的変更の検出を行い、続けてrun workspaceのOpenAPIからPrism Mockを起動して、
-security要件のないGET endpointが記載した2xxとJSONを返すことを確認する。path parameterと必須query parameterの値はOpenAPIのexample・enum・型から作り、
-作れないendpointは理由つきで呼ばない。1件もrequestできなければFAIL。どれかがFAILならPRは作らない。
+GET endpointが記載した2xxとJSONを返し、responseがschemaと一致する（Prismの`sl-violations`が無い）ことを確認する。path parameterと必須query parameterの値はOpenAPIのexample・enum・型から作り、
+作れないendpointは理由つきで呼ばない。認証付きendpointは、http bearer・oauth2・openIdConnectで満たせるときだけ固定のdummy Bearer（`sonomama-harness-dummy-bearer`）で呼ぶ。
+apiKey・Basicなどdummy Bearerで満たせないものは呼ばない。Prismには実Credentialを渡さない（環境変数はPATHだけ）。1件もrequestできなければFAIL。どれかがFAILならPRは作らない。
 PR本文には元PBI、Schema SBI、breaking / non-breakingのcontract diff、Prismで確認したendpointと呼ばなかったendpoint（理由）を載せる。
 依存SBIは、そのIssueがclosed / completedで、かつ`Closes #<番号>`と`SBI-Issue:` trailerを持つHarness PRがmainへmergeされていることをGitHub APIで確認できたときだけ完了とみなす。
 Issueを手で閉じただけでは完了にならず、GitHubを読めないときも`harness:run`は開始しない。
