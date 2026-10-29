@@ -2,15 +2,15 @@
 
 受講生向けスマホアプリ。Expo SDK 58 + React Native 0.88 + TypeScript。業務画面は後続SBIで追加する。
 
-| 用途          | ライブラリ                                                                     |
-| ------------- | ------------------------------------------------------------------------------ |
-| Routing       | Expo Router (`src/app`)                                                        |
-| Server state  | TanStack Query (staleTime 5分 / gcTime 10分 / 4xxはretryなし・その他は最大3回) |
-| HTTP          | Axios (`src/shared/api`)                                                       |
-| Form          | React Hook Form + Zod (`@hookform/resolvers`)                                  |
-| Lint / Format | Biome (ESLint / Prettierは使わない)                                            |
-| Test          | Jest (`jest-expo`) + React Native Testing Library                              |
-| E2E           | Maestro (外部CLI、development build対象)                                       |
+| 用途              | ライブラリ                                                                     |
+| ----------------- | ------------------------------------------------------------------------------ |
+| Routing           | Expo Router (`src/app`)                                                        |
+| Server state      | TanStack Query (staleTime 5分 / gcTime 10分 / 4xxはretryなし・その他は最大3回) |
+| HTTP              | Axios (`src/shared/api`)                                                       |
+| Form              | React Hook Form + Zod (`@hookform/resolvers`)                                  |
+| Lint / Format     | Biome (ESLint / Prettierは使わない)                                            |
+| Test              | Jest (`jest-expo`) + React Native Testing Library                              |
+| Integration / E2E | Maestro (必須。外部CLI、development build対象)                                 |
 
 UI component library・認証・Push通知・AsyncStorage / SecureStore・Analyticsは要件が決まるまで導入しない。
 React / React Nativeのversionは`npx expo install`が解決したものを使い、手動でずらさない。
@@ -18,9 +18,10 @@ React / React Nativeのversionは`npx expo install`が解決したものを使�
 ## 前提
 
 - Node 22 (`.node-version`)、pnpm 8 (root `package.json` の `packageManager`)
+- 通常開発: Simulator / Emulator または実機にExpo Goを入れる
 - iOS: Xcode と iOS Simulator
 - Android: Android Studio と Android Emulator
-- Maestro CLI 2.x (E2Eを実行する場合)。iOS 26系のSimulatorでは、1.x系だとアプリの画面要素を取得できない。2.12.0で確認済み。
+- Maestro CLI 2.x (Integration / E2Eを実行する場合)。iOS 26系のSimulatorでは、1.x系だとアプリの画面要素を取得できない。2.12.0で確認済み。
 
 ## セットアップ
 
@@ -34,7 +35,7 @@ cp apps/mobile/.env.example apps/mobile/.env.local
 ## コマンド
 
 ```sh
-pnpm --filter mobile start         # Expo dev server (development buildから接続)
+pnpm --filter mobile start         # expo start --go — Expo Goで開く (通常開発)
 pnpm --filter mobile ios           # expo run:ios — development buildを作成してSimulatorへインストール・起動
 pnpm --filter mobile android       # expo run:android — 同上 (Emulator)
 pnpm --filter mobile typecheck
@@ -47,9 +48,13 @@ pnpm --filter mobile doctor        # expo-doctor (Expo依存の整合確認)
 
 `npx expo-doctor` を `apps/mobile` で直接実行しても同じ。
 
-## development build
+## Expo Go と development build
 
-Expo Goではなく、ローカルでビルドしたdevelopment buildを主対象にする。
+通常開発はExpo Goを主対象にする。`pnpm --filter mobile start` は `expo start --go` で起動し、`i` / `a` でSimulator / EmulatorのExpo Goを開く。
+`expo-dev-client` は初期フェーズでは不要なので依存に入れない。入れると `expo start` の既定がdevelopment buildになるが、`start` scriptは `--go` でExpo Goを明示している。
+
+development buildはMaestroのIntegration / E2Eと、Expo Goで扱えないnative機能の確認に使う。
+native moduleが必要になった時点で、Expo Goを続けるかを判断し直す。
 
 ```sh
 pnpm --filter mobile ios       # 初回は ios/ を生成してビルド (数分かかる)
@@ -59,8 +64,25 @@ pnpm --filter mobile android   # 初回は android/ を生成してビルド
 `ios` scriptは `EXPO_USE_PRECOMPILED_MODULES=0` でExpo modulesをsourceからbuildする。SDK 58.0.19時点のprecompiled `ExpoFileSystem` が `ExpoModulesCore` 58.0.26 と合わず、起動時に `Symbol not found` で落ちるため。
 `npx expo run:ios` を直接使う場合も同じ環境変数を付ける。解消したらこの指定を外す。
 
-`ios/` と `android/` は生成物なのでGit管理しない。2回目以降はインストール済みのアプリを開き、`pnpm --filter mobile start` に接続する。
+`ios/` と `android/` は生成物なのでGit管理しない。2回目以降はインストール済みのアプリを開き、`pnpm --filter mobile start` のMetroに接続する。`--go` 指定時に `i` / `a` を押すとExpo Goが開くので、development buildはSimulator / Emulator上のアプリから直接起動する。
 bundle identifier / application id は暫定で `com.sonomama.student.dev`。
+
+## テストレイヤー
+
+MaestroはMobile Integration / E2Eの必須ツールとする。通常のmobile Verifier（`expo`）には入れず、Maestroが必要なSBIでだけ専用のrequired VerifierとしてCIで実行する。全Mobile PRで無条件には実行しない。専用Verifierは #68 で実装する（未実装）。
+
+- implementation SBI: Mock API + Maestro
+- validation SBI: 実API + Rails + DB + Maestro
+- CI: GitHub ActionsのUbuntu + Android Emulator。development buildのAPKはartifact / cacheを再利用し、native fingerprintが変わったときだけ作り直す。iOSのCIは対象外
+
+| レイヤー                 | 主なツール                                    | 実行環境                           |
+| ------------------------ | --------------------------------------------- | ---------------------------------- |
+| Unit / Component         | Jest + React Native Testing Library           | Node (`pnpm --filter mobile test`) |
+| Mobile Integration       | Maestro + Mock API (Approved OpenAPI / Prism) | development build                  |
+| Mobile E2E               | Maestro + 実API + Rails + DB                  | development build                  |
+| 日常の画面開発・動作確認 | Expo Go                                       | Expo Go                            |
+
+Rails側のRequest Specなど、backend内部のIntegration TestはMaestroへ置き換えない。Maestroは受講生アプリ側のユーザーフローを担当する。
 
 ## Maestro smoke test
 
@@ -77,7 +99,7 @@ maestro test apps/mobile/.maestro/smoke.yaml   # repo rootから
 ```
 
 `smoke.yaml` はアプリを起動し、初期画面の `testID="home-title"` と `SONOMAMA` が表示されることだけを確認する。
-Harness / CIのrequired checkには含めない。
+通常のmobile Verifier（`expo`）では実行しない。
 
 ### Android Emulator
 
