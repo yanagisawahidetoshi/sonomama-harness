@@ -66,8 +66,23 @@ export function judgePlan(sbis, { securityCategories = null } = {}) {
   }
   judgeKinds(sbis, add);
   judgeGranularity(sbis, add);
+  judgeSchemaSbi(sbis, add);
   for (const cycle of dependencyCycles(sbis)) add(cycle[0], 'dependency-cycle', `依存SBIが循環しています: ${cycle.join(' → ')}`);
   return { status: findings.length ? 'FAIL' : 'PASS', findings };
+}
+
+// An API contract change is one OpenAPI Schema SBI that changes packages/api-schema only. Every other SBI of the PBI depends on it,
+// so the Rails and frontend SBIs start only after the Schema PR is merged (harness:run checks that the Harness PR of the dependency was merged).
+const isSchemaArea = area => /^packages\/api-schema(\/|$)/.test(area.trim());
+function judgeSchemaSbi(sbis, add) {
+  // A validation SBI spans the whole PBI for its E2E, so only an implementation SBI can be the Schema SBI.
+  const schemas = sbis.filter(s => s.kind !== 'validation' && s.changeAreas.some(isSchemaArea));
+  for (const sbi of schemas) if (sbi.changeAreas.some(area => !isSchemaArea(area))) add(sbi.id, 'schema-sbi', 'OpenAPI Schemaの変更は実装と分け、packages/api-schemaだけを変える1件のSBIにしてください');
+  for (const sbi of schemas.slice(1)) add(sbi.id, 'schema-sbi', `OpenAPI Schema SBIは1件にしてください（${schemas.map(s => s.id).join(', ')}）`);
+  if (schemas.length !== 1) return;
+  const [schema] = schemas;
+  const reaches = (id, seen = new Set()) => { if (seen.has(id)) return false; seen.add(id); const deps = sbis.find(s => s.id === id)?.dependsOn ?? []; return deps.includes(schema.id) || deps.some(d => reaches(d, seen)); };
+  for (const sbi of sbis.filter(s => s !== schema && !reaches(s.id))) add(sbi.id, 'schema-sbi', `OpenAPI Schema SBI（${schema.id}）に依存させてください`);
 }
 
 // A PBI is implementation SBIs, then at most one validation SBI when it needs Integration / E2E. Human acceptance is a PBI Gate, not an SBI.

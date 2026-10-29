@@ -27,7 +27,8 @@ export async function verify({ root, workspace, config, sbi, files = sbi.allowed
     if (adapter.allowMissing === false) reasons.push('configured-required');
     if (selected.get(adapter.id) === true) reasons.push('impact-required');
     const mandatory = reasons.length > 0;
-    const matchesLane = !adapter.lanes || adapter.lanes.includes(lane.name);
+    // The Trusted Acceptance of one SBI Issue asserts that Issue's change only; it runs when that SBI requires it, never by path or --full.
+    const matchesLane = (!adapter.lanes || adapter.lanes.includes(lane.name)) && (adapter.sbiIssue === undefined || needed.has(adapter.id));
     const pathMatch = adapter.kind !== 'sample-bdd' && matchesLane && (!adapter.appliesTo || files.some(f=>adapter.appliesTo.some(p=>new RegExp(p).test(f.path))));
     if (pathMatch) reasons.push('changed-path');
     if (selected.get(adapter.id) === false) reasons.push('impact-selected');

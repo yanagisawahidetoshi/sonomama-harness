@@ -131,6 +131,16 @@ describe('PBI → SBI Planner', () => {
       await assert.rejects(plan(root, { agent: async () => ({ sbis: [], escalation: 'PBIが曖昧です' }) }), /PBIが曖昧です/);
       assert.equal((await github.state()).created.length, 0);
     })));
+    it('when no --provider is given then decomposes the PBI with Claude', () => fixture(root => mockGitHub({}, async () => {
+      const used = [];
+      await plan(root, { provider: undefined, agent: async ({ provider }) => { used.push(provider); return { sbis: validPlan(), escalation: null }; } });
+      assert.deepEqual(used, ['claude']);
+    })));
+    it('when --provider codex is given then decomposes the PBI with Codex instead', () => fixture(root => mockGitHub({}, async () => {
+      const used = [];
+      await plan(root, { provider: 'codex', agent: async ({ provider }) => { used.push(provider); return { sbis: validPlan(), escalation: null }; } });
+      assert.deepEqual(used, ['codex']);
+    })));
     it('when the provider is fake then refuses to publish to GitHub', () => fixture(root => mockGitHub({}, async github => {
       await assert.rejects(plan(root, { provider: 'fake' }), /provider/);
       assert.deepEqual(await github.calls(), []);
@@ -236,6 +246,29 @@ describe('SBI Quality Judge', () => {
     it('when every SBI is small, verifiable and acyclic then passes', () => {
       assert.deepEqual(judgePlan(validPlan()), { status: 'PASS', findings: [] });
     });
+    // A PBI that needs an API contract change gets one OpenAPI Schema SBI; the Rails and frontend SBIs depend on it.
+    it('when an OpenAPI Schema SBI changes only packages/api-schema and the implementation SBIs depend on it then passes', () => {
+      const plan = [sbi('SBI-001', { changeAreas: ['packages/api-schema'] }), sbi('SBI-002', { changeAreas: ['apps/api'], dependsOn: ['SBI-001'] }), sbi('SBI-003', { changeAreas: ['apps/admin'], dependsOn: ['SBI-001'] })];
+      assert.deepEqual(judgePlan(plan), { status: 'PASS', findings: [] });
+    });
+    it('when the OpenAPI Schema change is mixed into an implementation SBI then fails and asks for a separate Schema SBI', () => {
+      const result = judgePlan([sbi('SBI-001', { changeAreas: ['packages/api-schema', 'apps/api'] })]);
+      assert.equal(result.status, 'FAIL');
+      assert.ok(result.findings.some(f => f.sbi === 'SBI-001' && f.rule === 'schema-sbi' && /OpenAPI Schema/.test(f.reason)));
+    });
+    it('when an implementation SBI does not depend on the OpenAPI Schema SBI of the same PBI then fails', () => {
+      const result = judgePlan([sbi('SBI-001', { changeAreas: ['packages/api-schema'] }), sbi('SBI-002', { changeAreas: ['apps/api'] })]);
+      assert.ok(result.findings.some(f => f.sbi === 'SBI-002' && f.rule === 'schema-sbi' && /SBI-001/.test(f.reason)));
+    });
+    it('when an implementation SBI that seems not to use the API does not depend on the OpenAPI Schema SBI then still fails', () => {
+      const result = judgePlan([sbi('SBI-001', { changeAreas: ['packages/api-schema'] }), sbi('SBI-002', { changeAreas: ['apps/mobile'], layers: ['FE state hook'] })]);
+      assert.equal(result.status, 'FAIL');
+      assert.ok(result.findings.some(f => f.sbi === 'SBI-002' && f.rule === 'schema-sbi' && /SBI-001/.test(f.reason)), JSON.stringify(result.findings));
+    });
+    it('when a PBI has two OpenAPI Schema SBIs then fails', () => {
+      const result = judgePlan([sbi('SBI-001', { changeAreas: ['packages/api-schema'] }), sbi('SBI-002', { changeAreas: ['packages/api-schema/'], dependsOn: ['SBI-001'] })]);
+      assert.ok(result.findings.some(f => f.rule === 'schema-sbi'));
+    });
     it('when dependencies form a DAG then orders creation so that dependencies come first', () => {
       assert.deepEqual(creationOrder([sbi('SBI-003', { dependsOn: ['SBI-001', 'SBI-002'] }), sbi('SBI-002', { dependsOn: ['SBI-001'] }), sbi('SBI-001')]), ['SBI-001', 'SBI-002', 'SBI-003']);
     });
@@ -336,7 +369,8 @@ describe('SBI Quality Judge', () => {
         layered('SBI-002', 'Rails Model', ['apps/api'], 'RSpec Model Spec: Student', { dependsOn: ['SBI-001'] }),
         layered('SBI-003', 'Rails Controller / Request', ['apps/api'], 'RSpec Request Spec: GET /students', { dependsOn: ['SBI-002'] }),
         layered('SBI-004', 'FE API Hook', ['apps/mobile'], 'Vitest Hook test with API mock: useStudents', { dependsOn: ['SBI-001'] }),
-        layered('SBI-005', 'FE state hook', ['apps/mobile'], 'Vitest Hook test: useStudentFilter'),
+        // The Schema SBI rule of the PBI applies to every implementation SBI, including one that does not call the API.
+        layered('SBI-005', 'FE state hook', ['apps/mobile'], 'Vitest Hook test: useStudentFilter', { dependsOn: ['SBI-001'] }),
         layered('SBI-006', '画面Component', ['apps/mobile', 'packages/ui'], 'RNTL Component test: StudentList', { dependsOn: ['SBI-004', 'SBI-005'] }),
         layered('SBI-007', 'Integration', ['apps/mobile'], 'Maestro E2E against the mock API: 受講生一覧', { dependsOn: ['SBI-006'] }),
       );

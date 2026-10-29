@@ -16,6 +16,7 @@ import { parse } from 'yaml';
 
 const config = await readJson(new URL('../../.harness/config/harness.json', import.meta.url));
 const workflow = parse(await readFile(new URL('../../.github/workflows/harness.yml', import.meta.url), 'utf8'));
+const compose = parse(await readFile(new URL('../../compose.yaml', import.meta.url), 'utf8'));
 const sbi = (affectedAreas, extra = {}) => ({ id: 'SBI-X', acceptanceCriteria: [{ id: 'X-AC-1', verifier: 'admin-acceptance' }], requiredVerifiers: [], affectedAreas, ...extra });
 const files = (...paths) => paths.map(path => ({ path }));
 const touched = { api: 'apps/api/app/models/lesson.rb', mobile: 'apps/mobile/src/features/home/index.ts', admin: 'apps/admin/src/features/home/index.ts' };
@@ -127,6 +128,38 @@ describe('SBI Impact Analysis', () => {
       const impact = analyzeImpact({ config, sbis: [], files: [], all: true });
       assert.deepEqual(required(impact), ['admin', 'api-contract', 'expo', 'prototype-mobile', 'prototype-web', 'rails']);
       assert.equal(impact.fullGate, true);
+    });
+  });
+
+  describe('given a shared toolchain changes', () => {
+    const everyVerifier = ['admin', 'api-contract', 'expo', 'prototype-mobile', 'prototype-web', 'rails'];
+    for (const path of ['.node-version', 'package.json', 'pnpm-workspace.yaml', '.npmrc', '.tool-versions']) {
+      it(`when only ${path} changes then triggers the Full Gate and every application verifier with the toolchain path as the reason`, () => {
+        const impact = analyzeImpact({ config, sbis: [], files: files(path) });
+        assert.equal(impact.fullGate, true);
+        assert.deepEqual(impact.fullGateReasons, [`toolchain:${path}`]);
+        assert.deepEqual(required(impact), everyVerifier);
+        for (const id of everyVerifier) assert.ok(reasons(impact, id).includes(`toolchain:${path}`), `${id}: ${reasons(impact, id)}`);
+      });
+    }
+    it('when .node-version changes then the CI log names the toolchain path for the Full Gate and each verifier', () => {
+      const log = describeImpact(analyzeImpact({ config, sbis: [], files: files('.node-version') }));
+      assert.ok(log.includes('Full Gate: yes (toolchain:.node-version)'), log.join('\n'));
+      assert.ok(log.includes('Verifier rails: toolchain:.node-version'), log.join('\n'));
+    });
+    it('when an app changes together with .node-version then keeps the diff reason next to the toolchain reason', () => {
+      const impact = analyzeImpact({ config, sbis: [], files: files(touched.admin, '.node-version') });
+      assert.deepEqual(reasons(impact, 'admin'), [`diff:${touched.admin}`, 'toolchain:.node-version']);
+    });
+    it('when an app package.json changes then does not treat it as the root toolchain', () => {
+      const impact = analyzeImpact({ config, sbis: [], files: files('apps/admin/package.json') });
+      assert.equal(impact.fullGate, false);
+      assert.deepEqual(required(impact), ['admin']);
+    });
+    it('when an app dependency changes the lockfile then does not trigger the Full Gate', () => {
+      const impact = analyzeImpact({ config, sbis: [], files: files('apps/admin/package.json', 'pnpm-lock.yaml') });
+      assert.equal(impact.fullGate, false);
+      assert.ok(required(impact).includes('admin'));
     });
   });
 });
@@ -429,6 +462,53 @@ describe('CI workflow setup', () => {
         assert.equal(nodeCache(job), 'pnpm');
       });
     }
+  });
+
+  describe('given jobs that build the API image', () => {
+    // Under apps/api/tmp: ignored by Git and Docker, hidden from the container, and inside every building verifier's working directory, which bake's filesystem entitlement requires.
+    const cacheDir = 'apps/api/tmp/buildkit-cache';
+    const stepIndex = (job, prefix) => workflow.jobs[job].steps.findIndex(s => s.uses?.startsWith(prefix));
+
+    it('when verifiers set up then restores the BuildKit layer cache keyed on every Dockerfile and Gemfile.lock before installing', () => {
+      const cache = workflow.jobs.verifiers.steps[stepIndex('verifiers', 'actions/cache@')];
+      assert.ok(cache, 'actions/cache step');
+      assert.ok(stepIndex('verifiers', 'actions/cache@') < stepIndex('verifiers', 'pnpm/action-setup@'));
+      assert.equal(cache.with.path, cacheDir);
+      assert.match(cache.with.key, /hashFiles\('\*\*\/Dockerfile', '\*\*\/Gemfile\.lock'\)/);
+    });
+
+    it('when verifiers build through compose then import and export that cache by absolute path', () => {
+      assert.equal(workflow.jobs.verifiers.env.HARNESS_BUILD_CACHE_FROM, `type=local,src=\${{ github.workspace }}/${cacheDir}`);
+      assert.equal(workflow.jobs.verifiers.env.HARNESS_BUILD_CACHE_TO, `type=local,dest=\${{ github.workspace }}/${cacheDir},mode=max`);
+    });
+
+    it('when any job builds then keeps the bake filesystem entitlement check', () => {
+      for (const [name, job] of Object.entries(workflow.jobs)) {
+        assert.equal(job.env?.BUILDX_BAKE_ENTITLEMENTS_FS, undefined, name);
+        for (const step of job.steps) assert.equal(step.env?.BUILDX_BAKE_ENTITLEMENTS_FS, undefined, name);
+      }
+      assert.doesNotMatch(JSON.stringify(workflow), /--allow|ENTITLEMENTS/);
+    });
+
+    // harness-demo builds inside run worktrees, outside the checkout that holds the cache, so bake would refuse it there.
+    for (const job of ['impact', 'harness-test', 'harness-demo', 'harness']) {
+      it(`when ${job} sets up then restores no build cache`, () => {
+        assert.equal(stepIndex(job, 'actions/cache@'), -1);
+        assert.equal(workflow.jobs[job].env?.HARNESS_BUILD_CACHE_FROM, undefined);
+      });
+    }
+
+    it('when compose builds the API image without the CI variables then it reads a missing cache and writes only an inline one', () => {
+      const build = compose.services.api.build;
+      assert.equal(build.context, './apps/api');
+      assert.deepEqual(build.cache_from, ['${HARNESS_BUILD_CACHE_FROM:-type=local,src=.no-build-cache}']);
+      assert.deepEqual(build.cache_to, ['${HARNESS_BUILD_CACHE_TO:-type=inline}']);
+    });
+
+    it('when the base image tag moves to a new digest then the Dockerfile and therefore the cache key change', async () => {
+      const dockerfile = await readFile(new URL('../../apps/api/Dockerfile', import.meta.url), 'utf8');
+      assert.match(dockerfile, /^FROM ruby:3\.4\.\d+-slim@sha256:[0-9a-f]{64}$/m);
+    });
   });
 
   describe('given a faster setup', () => {

@@ -30,7 +30,7 @@ export async function saveRun(root, summary) {
   // Sign exactly what is written: the redacted JSON form.
   const state = JSON.parse(JSON.stringify(redact(summary)));
   const parsed = runStateSchema.safeParse(state);
-  if (!parsed.success) throw new Error(`run state schema invalid: ${parsed.error.issues.map(i => i.path.join('.')).join(', ')}`);
+  if (!parsed.success) throw new Error(`run state schema invalid: ${parsed.error.issues.map(i => i.path.join('.') || i.message).join(', ')}`);
   await json(paths.summary, { ...state, integrity: { version: 1, signature: runStateSignature(await signingKey(root, true), state) } });
   await json(join(paths.directory, 'health-metrics.json'), healthMetrics(summary));
   await json(join(root, '.harness/state/runs', `${summary.id}.json`), summary);
@@ -41,7 +41,7 @@ export async function readRunState(root, runId) {
   try { key = await signingKey(root); } catch (error) { if (error.code !== 'ENOENT') throw error; }
   if (integrity?.version !== 1 || !key || !equal(integrity.signature, runStateSignature(key, state))) throw new Error('run state integrity check failed; summary.json was not written by the Harness. Start a new run');
   const parsed = runStateSchema.safeParse(state);
-  if (!parsed.success) throw new Error(`run state schema invalid: ${parsed.error.issues.map(i => i.path.join('.')).join(', ')}`);
+  if (!parsed.success) throw new Error(`run state schema invalid: ${parsed.error.issues.map(i => i.path.join('.') || i.message).join(', ')}`);
   if (state.id !== runId) throw new Error('run ID mismatch');
   return state;
 }
@@ -54,7 +54,8 @@ export async function loadRun(root, runId) {
   await assertWorktreeOwner(root, paths.workspace, summary.baselineSha);
   const inputs = await readJson(join(paths.directory, 'inputs.json'));
   if (digest(inputs) !== summary.inputsDigest) throw new Error('input snapshot changed');
-  const current = await check(root, summary.sbiPath);
+  // A run from an SBI Issue keeps its snapshot; later edits of the Issue do not change the run.
+  const current = await check(root, summary.sbiPath, summary.sbiIssue ? inputs.sbi : undefined, { sbiIssue: summary.sbiIssue?.number ?? null });
   for (const key of ['config', 'rules', 'sbi', 'riskPolicy', 'securityPolicy', 'humanGates', 'securityDocuments', 'lanePolicy']) {
     if (digest(current[key]) !== digest(inputs[key])) throw new Error(`${key} snapshot changed; start a new run`);
   }

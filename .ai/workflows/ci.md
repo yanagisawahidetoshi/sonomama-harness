@@ -40,7 +40,9 @@ source Issueを持たない手書きの `sbi-*.json`（`sbi-admin-env.json` な�
 それ以外（`prototypes/`、docs、Harness本体など）だけを変更するPRはSBIなしで通り、Verifierは差分だけで選ぶ。mainへのpushでも確認しない。
 判定理由はimpact jobとharness jobのログの `SBI required:` 行と、harness jobの `SBI source` 行に出る。harness jobはIssueを読むため `issues: read` と `GH_TOKEN` を持つ。
 
-`impact.fullGate` のパス（`tools/harness/`、`.harness/config|verification|rules|skills/`、`.github/`、`.githooks/`、`AGENTS.md`、`.ai/`、root の `package.json`）が変わったときはFull Gateも実行する。mainへのpushでは全Verifierを実行し、Full Gateも実行する。
+`impact.fullGate` のパス（`tools/harness/`、`.harness/config|verification|rules|skills/`、`.github/`、`.githooks/`、`AGENTS.md`、`.ai/`）が変わったときはFull Gateも実行する。
+`impact.toolchain` のパス（`.node-version`、`.tool-versions`、root の `package.json`、`pnpm-workspace.yaml`、`.npmrc`）が変わったときは、全Application VerifierとFull Gateを実行する。ログの理由は`toolchain:<path>`になる。workflowはこの判定の出力を使うだけで、pathを持たない。
+mainへのpushでは全Verifierを実行し、Full Gateも実行する。
 
 ## Completion Judgeの判定
 
@@ -78,3 +80,16 @@ Railsのrouteも照合する。Railsを起動せず、`apps/api/config/routes.ma
 pnpm harness:impact --base origin/main
 pnpm harness:verify --verifier admin --base origin/main
 ```
+
+## pre-pushとの分担
+
+`.githooks/pre-push`は`harness:check`と`harness:push-gate`を呼ぶだけで、Verifierの一覧を持たない。`harness:push-gate`がgitから渡されたpush先のcommitをbaseに`harness:impact`と同じ判定を行い、required verifierを順に実行する。新しいbranchは`origin/main`と比べる。
+
+検証はcheckoutのworking treeではなく、pushするcommitのdetached worktree（OSの一時ディレクトリ）で行う。未commitの修正でworking treeだけがPASSしても、壊れたcommitはpushできない。worktreeでは`pnpm install --frozen-lockfile --prefer-offline`を先に実行する。検証後は`git worktree remove`（forceなし）で消し、検証が未追跡ファイルを残して消せなかったときはパスをログに出して残す。
+
+次の場合はFull Gateとして`harness:test`全件を実行する。
+
+- `impact.fullGate`か`impact.toolchain`のパスが変わった
+- 複数のrefを同時にpushした（pushするcommitごとに実行）、push先のcommitが手元に無い、比較するbaseが無い、refを読めない（HEADのcommitで実行）
+
+hookはローカルの早期検出用で、回避できる。SBI必須・Trusted Acceptance・Security・`harness:demo --full`はCIのCompletion Judgeが最終判定する。

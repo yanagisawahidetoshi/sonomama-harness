@@ -18,7 +18,7 @@ export const sbiSchema = z.strictObject({
   requiredVerifiers: z.array(text).default([]), affectedAreas: z.array(text).default([]), preImplementationGate: z.boolean().default(false),
   promotion: z.strictObject({ source: relativePath.refine(p => /^prototypes\/(web|mobile)(\/|$)/.test(p)), designApproval: z.null().optional() }).optional(),
   minimumRiskLevel: z.union([z.literal(2), z.literal(3)]).default(2),
-  issueUrl: z.url().optional(),
+  issueUrl: z.url().optional(), pbiUrl: z.url().optional(),
 }).refine(s => new Set(s.acceptanceCriteria.map(a => a.id)).size === s.acceptanceCriteria.length, 'duplicate acceptance criteria')
   .refine(s => s.allowedFiles.length + s.allowedDirs.length > 0, 'allowedFiles or allowedDirs required');
 // Run IDs name directories and refs; the same pattern guards run-store paths.
@@ -55,11 +55,13 @@ export const configSchema = z.strictObject({
     sbiIssue: z.number().int().positive().optional(),
     areas: z.array(text).default([]),
   })).min(1),
-  // SBI Impact Analysis: cross-layer contracts added when areas meet, and paths whose change runs the Full Gate.
+  // SBI Impact Analysis: cross-layer contracts added when areas meet, paths whose change runs the Full Gate,
+  // and shared toolchain paths whose change runs the Full Gate and every application verifier.
   impact: z.strictObject({
     crossLayer: z.array(z.strictObject({ all: z.array(text).min(1), any: z.array(text).min(1), add: z.array(text).min(1) })).default([]),
     fullGate: z.array(text).default([]),
-  }).default({ crossLayer: [], fullGate: [] }),
+    toolchain: z.array(text).default([]),
+  }).default({ crossLayer: [], fullGate: [], toolchain: [] }),
 }).refine(c => new Set(c.verifiers.map(v => v.id)).size === c.verifiers.length && !c.verifiers.some(v => v.id === 'sample-bdd'), 'duplicate or reserved verifier');
 export const rulesSchema = z.strictObject({
   humanGate: z.array(z.enum(['AuthN', 'AuthZ', 'RLS', 'PII', 'Migration', 'ADR'])).length(6),
@@ -158,9 +160,14 @@ export const apiSchemaJsonSchema = object({
 // GitHub REST responses carry many more fields; only the ones the Planner relies on are validated.
 export const githubIssueSchema = z.object({
   number: z.number().int().positive(), title: z.string(), body: z.string().nullable().default(null), html_url: z.url(),
-  state: z.string().optional(), labels: z.array(z.object({ name: z.string() })).default([]), pull_request: z.unknown().optional(),
+  state: z.string().optional(), state_reason: z.string().nullable().optional(), labels: z.array(z.object({ name: z.string() })).default([]), pull_request: z.unknown().optional(),
 });
 export const githubIssueListSchema = z.array(githubIssueSchema);
+// Only the fields that decide whether a dependency SBI was merged through its Harness PR.
+export const githubTimelineSchema = z.array(z.object({ event: z.string().nullable().optional(),
+  source: z.object({ issue: z.object({ number: z.number().int().positive(), html_url: z.url(), pull_request: z.unknown().optional() }).optional() }).nullable().optional() }));
+export const githubPullSchema = z.object({ number: z.number().int().positive(), merged_at: z.string().nullable(), base: z.object({ ref: z.string() }), body: z.string().nullable().default(null) });
+export const githubPullCommitsSchema = z.array(z.object({ commit: z.object({ message: z.string() }) }));
 export const githubCommentSchema = z.object({ id: z.number().int().positive(), body: z.string().nullable().default(null), html_url: z.url() });
 export const githubCommentListSchema = z.array(githubCommentSchema);
 export const githubLabelListSchema = z.array(z.object({ name: z.string() }));
@@ -230,7 +237,12 @@ export const runIterationSchema = z.strictObject({
   review: result, semanticReview: z.looseObject({ enabled: z.boolean(), status: text }), completion: z.boolean(), headSha: gitSha.optional(), error: z.string().optional(),
 });
 export const runStateSchema = z.strictObject({
-  id: text, runDir: text, sbi: text, sbiPath: relativePath, provider: z.enum(['fake', 'codex', 'claude']), fullVerification: z.boolean(),
+  id: text, runDir: text, sbi: text, sbiPath: relativePath.nullable(), provider: z.enum(['fake', 'codex', 'claude']), fullVerification: z.boolean(),
+  // A run from an SBI Issue (harness:run SBI_URL) has no SBI file; its source is the Issue its snapshot came from.
+  sbiIssue: z.strictObject({ repo: text.regex(/^[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+$/), number: z.number().int().positive(), url: z.url() }).optional(),
+  // harness:run opens the PR itself only for an SBI it was given and a provider other than fake.
+  publish: z.boolean(),
+  snapshotVerification: z.looseObject({ verified: z.boolean(), reasons: z.array(z.string()) }).optional(),
   status: z.enum([...new Set(Object.values(states).flat())]), executionStatus: z.enum(states.execution), reason: z.string().nullable(),
   consecutiveFailures: z.number().int().min(0), iterations: z.array(runIterationSchema),
   events: z.array(z.strictObject({ status: text, phase: z.enum(['execution', 'implementation-gate', 'design-approval', 'merge', 'pull-request']), detail: z.string(), at: text })),
@@ -241,9 +253,11 @@ export const runStateSchema = z.strictObject({
     failure: z.strictObject({ code: z.enum(escalationCodes), retryable: z.boolean(), detail: z.string() }).optional() }),
   lane: z.looseObject({ name: z.enum(['prototype', 'production']) }).optional(),
   securityAssessment: z.looseObject({ matchedRules: z.array(text), requiredVerifiers: z.array(text) }).optional(),
+  // The security assessment of the execution, kept so that each merge assessment combines it with the snapshot view of that moment.
+  executionSecurityAssessment: z.looseObject({ matchedRules: z.array(text), requiredVerifiers: z.array(text) }).optional(),
   riskPreflight: z.looseObject({ level: z.union([z.literal(1), z.literal(2), z.literal(3)]) }).optional(),
   risk: z.looseObject({ level: z.union([z.literal(1), z.literal(2), z.literal(3)]) }).optional(),
   escalation: z.strictObject({ code: z.enum(escalationCodes), detail: z.string() }).optional(),
   pullRequest: z.strictObject({ number: z.number().int().positive(), url: z.url(), branch: text, base: text, repository: text }).optional(),
   startedAt: text, executionFinishedAt: text.optional(), cleanedAt: text.optional(),
-});
+}).refine(s => (s.sbiPath === null) === (s.sbiIssue !== undefined), 'a run has either sbiPath or sbiIssue');

@@ -112,14 +112,30 @@ export async function githubState({ github = githubPrCli, root, remote, reposito
   };
 }
 
+// The api-contract Verifier prints its findings with fixed prefixes (api-contract.mjs, api-mock-check.mjs); the PR of a Schema SBI lists them.
+const listed = (items, limit = 50) => [...items.slice(0, limit).map(item => `  - ${item}`), ...(items.length > limit ? [`  - ほか${items.length - limit}件（Evidenceを参照）`] : [])];
+function apiSchemaSection(checks) {
+  const check = checks.find(c => c.id === 'api-contract' && c.processes?.length);
+  if (!check) return [];
+  const lines = check.processes.flatMap(p => `${p.stdout ?? ''}\n${p.stderr ?? ''}`.split('\n'));
+  const after = prefix => lines.filter(l => l.startsWith(prefix)).map(l => l.slice(prefix.length).trim());
+  const group = (label, items) => [`- ${label}: ${items.length ? `${items.length}件` : 'なし'}`, ...listed(items)];
+  return ['## API Schema', `- api-contract Verifier: ${check.status}`,
+    ...group('breaking', after('BREAKING ')), ...group('non-breaking', after('CHANGE ')),
+    ...group('Prismで確認したendpoint', after('Prism Mock: PASS ')), ...group('Prismで呼び出していないendpoint（理由）', after('Prism Mock: SKIP ')),
+    ...(after('Prism Mock: FAIL ').length ? group('Prism Mockの失敗', after('Prism Mock: FAIL ')) : []), ''];
+}
 export function pullRequestBody({ summary, sbi }) {
   const last = summary.iterations.at(-1);
   const checks = (last?.verification?.checks ?? []).map(c => `  - ${c.id}: ${c.status}`);
   return [
     `<!-- sonomama-harness run=${summary.id} sha=${summary.headSha} -->`,
-    '## SBI', `- ${sbi.id}: ${sbi.title}`, `- Issue: ${sbi.issueUrl ?? '未設定'}`, '',
+    '## SBI', `- ${sbi.id}: ${sbi.title}`, `- Issue: ${sbi.issueUrl ?? '未設定'}`, ...(sbi.pbiUrl ? [`- 元PBI: ${sbi.pbiUrl}`] : []), '',
+    // Merging the PR closes the SBI Issue; harness:run of a dependent SBI waits for exactly that.
+    ...(summary.sbiIssue ? [`Closes #${summary.sbiIssue.number}`, ''] : []),
     '## 目的', sbi.description, '',
     '## 受け入れ要件', ...sbi.acceptanceCriteria.map(c => `- ${c.id}: ${c.description}`), '',
+    ...apiSchemaSection(last?.verification?.checks ?? []),
     '## Harness',
     `- Run ID: ${summary.id}`, `- tested SHA: ${summary.headSha}`,
     `- Verifier: ${last?.verification?.status ?? '-'}`, ...checks,

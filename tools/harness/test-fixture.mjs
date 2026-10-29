@@ -34,9 +34,10 @@ export async function commitFixture(root) {
   await git(root, ['add', '--all']);
   await git(root, ['commit', '--allow-empty', '-m', 'Fixture inputs']);
 }
+// The repository default provider is claude; fixtures use the fake agent unless a test chooses a provider.
 export async function runFixture(options) {
   await commitFixture(options.root);
-  return runHarness(options);
+  return runHarness({ provider: 'fake', ...options });
 }
 // Prototype SBI with an independent acceptance script; promotion=true targets apps/admin and requires Design Approval.
 export async function prototype(root,{promotion=false,failing=false}={}) {

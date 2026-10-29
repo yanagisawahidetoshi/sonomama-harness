@@ -37,6 +37,9 @@ export function analyzeImpact({ config, sbis = [], files = [], all = false }) {
     if (sbis.length && !fromSbi.has(v.id)) select(v.id, 'diff-not-in-sbi', false);
   }
   if (all) for (const v of apps) select(v.id, 'all', false);
+  // A shared runtime or package manager change can break any app, so it selects every application verifier and the Full Gate.
+  const toolchainPath = firstMatch(config.impact?.toolchain, files);
+  if (toolchainPath) for (const v of apps) select(v.id, `toolchain:${toolchainPath}`, false);
   // Areas come from the SBI and from what the diff touched, so a diff the SBI did not mention still brings its cross-layer contract.
   const areas = new Set([...sbiAreas, ...[...verifiers.keys()].flatMap(areasOf)]);
   for (const rule of config.impact?.crossLayer ?? []) {
@@ -46,7 +49,7 @@ export function analyzeImpact({ config, sbis = [], files = [], all = false }) {
     }
   }
   const fullGatePath = firstMatch(config.impact?.fullGate, files);
-  const fullGateReasons = all ? ['all'] : fullGatePath ? [`diff:${fullGatePath}`] : [];
+  const fullGateReasons = all ? ['all'] : [...fullGatePath ? [`diff:${fullGatePath}`] : [], ...toolchainPath ? [`toolchain:${toolchainPath}`] : []];
   // Production work goes through an SBI; prototypes, docs and Harness maintenance stay outside lanes.json productionPaths.
   const sbiRequiredReasons = files.filter(f => isProductionPath(f.path)).slice(0, 1).map(f => `production:${f.path}`);
   const selected = [...verifiers.values()].sort((a, b) => a.id.localeCompare(b.id));
