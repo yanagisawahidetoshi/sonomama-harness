@@ -227,11 +227,11 @@ describe('Re-verification of an existing PR after main moved', () => {
     it('when the resolution also changes a file outside the SBI scope then it stops before verification and pushes nothing', () => fixture(root => withPullRequestB(root, async ({ bare, b, pullUrl }) => {
       await mergeA(root, conflicting);
       await reverifyPullRequest({ root, pullUrl, quiet: true });
-      const resolved = await resolveOnBranch(bare, `harness/${b.id}`, { [home]: 'ホーム', 'apps/admin/src/other.txt': 'scope外' });
+      const resolved = await resolveOnBranch(bare, `harness/${b.id}`, { [home]: 'ホーム', 'docs/outside-scope.md': 'scope外' });
       const run = await reverifyPullRequest({ root, pullUrl, quiet: true });
       assert.equal(run.status, 'ESCALATED');
       assert.equal(run.escalation.code, 'SCOPE_VIOLATION');
-      assert.ok(run.reason.includes('apps/admin/src/other.txt'));
+      assert.ok(run.reason.includes('docs/outside-scope.md'));
       assert.equal(run.iterations.length, 0);
       assert.equal(await remoteSha(bare, `harness/${b.id}`), resolved);
     })));
