@@ -11,6 +11,7 @@
 - security.jsonでappliesToを持つ実装Verifier（rails-authz-test等）は、ルールに一致したファイルがappliesToに入るとき、またはSBIがそのルールを宣言したときだけ必須にする。docs・ADRだけの変更でもGate・LEVEL 3・承認人数は変わらない。
 - required Security VerifierのFAIL/SKIP/NOT_CONFIGURED、rule violation、未承認GateではDONEもMERGE_ALLOWEDも禁止。NOT_CONFIGUREDはFAIL/SKIPと区別し、必須なら停止する。
 - Semantic Reviewや承認人数だけで検証失敗を上書きしない。
+- 破壊的Migrationは、expand/contractのcontract段階で`apps/api/db/migrate/exceptions/<version>.json`を置き、2人の承認Reviewが揃ったときだけ通る（docs/workflows/database-migrations.md）。mainへのmergeを本番反映とみなさない。AIは承認Reviewを投稿しない。
 - 新しいSecurity影響と秘密値の提案は、workspaceへ適用する前に止める。
 - 秘密ファイルはworktree・export・Gitから除外する。trackedで検出した場合はcheckout前に停止する。実値をログや会話へ出さない。
 - ログ・prompt・JSON・例外はredactionを通す。workspace・prompt・ログ・レビューZIPの秘密情報保護はevidence-protection.mjsを経由する。レビューZIPはharness:exportで再検査して生成する。

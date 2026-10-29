@@ -6,7 +6,8 @@ import { fixture, update } from './test-fixture.mjs';
 import { git } from './workspace.mjs';
 import { execute } from './io.mjs';
 import { checkMigrations } from './migration-safety.mjs';
-import { exceptionApprovals, exceptionDigest, exceptionPath, renderExceptionReview, verifyMigrationExceptions } from './migration-exception.mjs';
+import { exceptionDigest, exceptionPath, renderExceptionReview } from './migration-exception.mjs';
+import { exceptionApprovals, verifyMigrationExceptions } from './migration-exception-approval.mjs';
 import { runCompletionJudge } from './impact.mjs';
 
 const create = 'apps/api/db/migrate/20261028000000_create_probes.rb';

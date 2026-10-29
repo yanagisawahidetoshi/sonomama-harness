@@ -15,6 +15,7 @@ PBI（プロダクトバックログの項目）を受け取ってからmergeす
 
 - [api-docs.md](api-docs.md): API仕様をブラウザで見る
 - [api-mock.md](api-mock.md): 承認済みのAPI仕様から、ローカルでモックサーバを起動する
+- [database-migrations.md](database-migrations.md): マイグレーションをexpand/contractで進め、破壊的な操作を例外承認で通す
 - [dependency-updates.md](dependency-updates.md): AdminとRails APIのdependency更新をRenovateのPRで受け取る
 - [github-ruleset.md](github-ruleset.md): mainのGitHub Rulesetを適用・確認する
 

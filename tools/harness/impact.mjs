@@ -6,6 +6,7 @@ import { isProductionPath } from './lanes.mjs';
 import { readSbiFiles, verifySbiSource } from './sbi-source.mjs';
 import { dependencyBotExemption } from './dependency-bot.mjs';
 import { githubCli } from './planner-github.mjs';
+import { verifyMigrationExceptions } from './migration-exception-approval.mjs';
 import { configSchema, dependencyBotPolicySchema, securityPolicySchema } from './schemas.mjs';
 import { classifySecurity, combineSecurity, securityPassed, verifySecurity } from './security-enforcement.mjs';
 import { checksPassed, verify } from './verifier.mjs';
@@ -74,7 +75,7 @@ export function analyzeImpact({ config, sbis = [], files = [], all = false }) {
 }
 
 // Required jobs must succeed; a job may be skipped only when the impact did not ask for it. Security that was not evaluated fails.
-export function judgeCi({ impact, needs, acceptance, security, source }) {
+export function judgeCi({ impact, needs, acceptance, security, source, migrationExceptions }) {
   const reasons = [];
   const expect = (job, wanted) => {
     const result = needs[job]?.result ?? 'missing';
@@ -82,6 +83,7 @@ export function judgeCi({ impact, needs, acceptance, security, source }) {
   };
   expect('impact', true);
   if (impact.sbiRequired && source?.status !== 'PASS') reasons.push(...(source?.reasons.length ? source.reasons : ['sbi source: not evaluated']));
+  if (migrationExceptions?.status === 'FAIL') reasons.push(...migrationExceptions.reasons);
   expect('verifiers', impact.requiredVerifiers.length > 0);
   expect('harness-test', impact.fullGate);
   expect('harness-demo', impact.fullGate);
@@ -144,7 +146,7 @@ async function changedContent(root, files) {
 
 // Completion Judge: trusted acceptance of every changed SBI and the Harness Security Policy run here, the source SBI Issue of a Production change
 // is read from GitHub, then the job results are checked against what the impact required.
-export async function runCompletionJudge({ root, base, all = false, needs, repository = process.env.GITHUB_REPOSITORY, pullNumber, github = githubCli }) {
+export async function runCompletionJudge({ root, base, all = false, needs, repository = process.env.GITHUB_REPOSITORY, pullNumber, github = githubCli, githubPr }) {
   const { config, files, sbis, impact } = await loadImpact({ root, base, all });
   const missing = [], checks = [];
   for (const sbi of sbis) {
@@ -164,15 +166,19 @@ export async function runCompletionJudge({ root, base, all = false, needs, repos
     ? await dependencyBotExemption({ policy: dependencyBotPolicySchema.parse(await readJson(join(root, '.harness/rules/dependency-bots.json'))), files, headSha, repository, pullNumber, github })
     : null;
   const source = { ...await verifySbiSource({ root, base, files, required: exemption?.exempt ? [] : impact.sbiRequiredReasons, config, repository, github }), ...(exemption ? { exemption } : {}) };
-  return { impact, acceptance, checks, security, source, ...judgeCi({ impact, needs, acceptance, security, source }) };
+  // A destructive migration that migration-safety let through as an exception request still needs two reviews on headSha.
+  const migrationExceptions = all ? { status: 'PASS', exceptions: [], reasons: [] }
+    : await verifyMigrationExceptions({ root, base, files, headSha, repository, pullNumber, ...(githubPr ? { githubPr } : {}) });
+  return { impact, acceptance, checks, security, source, migrationExceptions, ...judgeCi({ impact, needs, acceptance, security, source, migrationExceptions }) };
 }
 
-export function describeJudge({ needs, acceptance, checks, security }) {
+export function describeJudge({ needs, acceptance, checks, security, migrationExceptions }) {
   const list = items => items.length ? ` (${items.map(c => `${c.id}: ${c.status}`).join(', ')})` : ' (none)';
   return [
     `Application: ${Object.entries(needs).filter(([job]) => job !== 'impact').map(([job, value]) => `${job}=${value.result}`).join(' ') || '(no job results)'}`,
     `Acceptance: ${acceptance.status}${list(checks.filter(c => c.trust === 'acceptance'))}`,
     `Security: ${security.status}${list(security.checks.filter(c => c.required))}`,
+    ...(migrationExceptions?.exceptions.length || migrationExceptions?.status === 'FAIL' ? [`Migration exception: ${migrationExceptions.status}${migrationExceptions.exceptions.map(e => ` (${e.migration}: ${e.approvers.join(', ') || 'no approval'})`).join('')}`] : []),
   ];
 }
 

@@ -202,7 +202,7 @@ Completion JudgeもMerge Policy Judgeも拒否する。未設定の必須検証�
 組み込みはsecret-scan / forbidden-pattern-check / pii-log-check。
 Rails Brakeman / bundler-audit / authz / RLS / OpenAPI security、dependency-audit、
 authz-ui-test、sensitive-storage-check、data-lifecycle-testは接続用placeholderを用意する。
-migration-safetyはharness.jsonのsecurityVerifiersで接続済み。apps/api/db/migrateの静的検査（drop_table・remove_column・rename・change_column・execute等はFAIL、許可マーカーなし）と、
+migration-safetyはharness.jsonのsecurityVerifiersで接続済み。apps/api/db/migrateの静的検査（drop_table・remove_column・rename・change_column・execute等はFAIL、許可マーカーなし。expand/contractのcontract段階だけ、申請ファイルと2人の承認Reviewで通す。[手順](docs/workflows/database-migrations.md)）と、
 ローカルtest DB（Compose内の専用DB、RAILS_ENV=test）へのdb:migrate → VERSION=0までのrollback → 再適用を行う。
 必要になったplaceholderはSKIPにせずNOT_CONFIGUREDにする。
 harness.jsonのsecurityVerifiersにid、workspace内directory、信頼するcommandsを登録して接続する。
