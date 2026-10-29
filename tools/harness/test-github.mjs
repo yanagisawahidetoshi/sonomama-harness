@@ -8,7 +8,7 @@ export const githubMock = defaults => async (state, test) => {
   const dir = await mkdtemp(join(tmpdir(), 'harness-gh-'));
   const previous = { PATH: process.env.PATH, GH_MOCK_DIR: process.env.GH_MOCK_DIR, GITHUB_STEP_SUMMARY: process.env.GITHUB_STEP_SUMMARY };
   try {
-    await writeFile(join(dir, 'state.json'), JSON.stringify({ labels: [], created: [], comments: [], failOnCreate: null, pulls: [], reviews: {}, checkRuns: {}, rules: [], permissions: {}, viewer: 'harness-operator', bare: null, ...defaults, ...state }));
+    await writeFile(join(dir, 'state.json'), JSON.stringify({ labels: [], created: [], comments: [], failOnCreate: null, pulls: [], reviews: {}, checkRuns: {}, rules: [], permissions: {}, blockedBy: {}, viewer: 'harness-operator', bare: null, ...defaults, ...state }));
     await writeFile(join(dir, 'gh'), `#!${process.execPath}
       const fs = require('node:fs'), path = require('node:path');
       const dir = process.env.GH_MOCK_DIR, file = path.join(dir, 'state.json');
@@ -43,6 +43,8 @@ export const githubMock = defaults => async (state, test) => {
         const issue = issueByNumber(Number(m[1])), name = decodeURIComponent(m[2]);
         if (!issue || !issue.labels.some(l => l.name === name)) fail('gh: Label does not exist (HTTP 404)');
         issue.labels = issue.labels.filter(l => l.name !== name); process.stdout.write(JSON.stringify(issue.labels));
+      } else if (method === 'GET' && (m = endpoint.match(/^repos\\/acme\\/app\\/issues\\/(\\d+)\\/dependencies\\/blocked_by$/))) {
+        process.stdout.write(JSON.stringify(page(state.blockedBy[m[1]] || [])));
       } else if (method === 'GET' && (m = endpoint.match(/^repos\\/acme\\/app\\/issues\\/(\\d+)$/))) {
         if (Number(m[1]) !== state.issue.number) fail('gh: Not Found (HTTP 404)');
         process.stdout.write(JSON.stringify(state.issue));
