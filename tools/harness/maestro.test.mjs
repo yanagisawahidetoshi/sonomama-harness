@@ -22,7 +22,8 @@ const planned = (overrides = {}) => ({
 });
 const config = { verifiers: [{ id: 'issue-7-acceptance', trust: 'acceptance', trustedScript: '.harness/verification/issue-7.mjs', directory: '.', planned: ['ホーム'], commands: [], acceptanceIds: ['AC-1'], sbiIssue: 7 }] };
 const sbiOf = overrides => sbiFromIssue({ ref, issue: { number: 7, title: 'SBI-001 ホーム', body: renderSbiBody(planned(overrides), pbi), html_url: ref.url, state: 'open', labels: [] }, config });
-const lanesOf = (...sbis) => analyzeImpact({ config: { verifiers: [] }, sbis, files: [{ path: 'apps/mobile/src/features/home/index.tsx' }] }).maestro;
+// Only the SBI of a Harness Run snapshot (from an approved SBI Issue) picks a lane; hand-written SBI JSON never does.
+const lanesOf = (...sbis) => analyzeImpact({ config: { verifiers: [] }, sbis, runSbis: sbis, files: [{ path: 'apps/mobile/src/features/home/index.tsx' }] }).maestro;
 
 describe('E2E target of an SBI Issue', () => {
   it('when the Issue names a Maestro flow in its verification then the SBI carries that E2E line', () => {
@@ -50,6 +51,10 @@ describe('Maestro lanes from Impact Analysis', () => {
   ]) {
     it(`when ${name} then Maestro does not run`, () => assert.deepEqual(lanesOf(sbiOf(overrides)), []));
   }
+  it('when only a hand-written SBI JSON without a source Issue changes apps/mobile then Maestro does not run', () => {
+    const handWritten = { id: 'SBI-MOBILE-ENV', kind: 'implementation', allowedFiles: ['apps/mobile/package.json'], acceptanceCriteria: [] };
+    assert.deepEqual(analyzeImpact({ config: { verifiers: [] }, sbis: [handWritten], files: [{ path: 'apps/mobile/package.json' }] }).maestro, []);
+  });
   it('when a mobile change has no SBI then Maestro does not run, so ordinary mobile PRs stay fast', () => {
     assert.deepEqual(lanesOf(), []);
   });
