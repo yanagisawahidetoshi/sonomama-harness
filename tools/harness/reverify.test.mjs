@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fixture, update, human, commitFixture } from './test-fixture.mjs';
 import { githubMock } from './test-github.mjs';
-import { runHarness, resumeRun, approveRun, reverifyPullRequest } from './index.mjs';
+import { runHarness, resumeRun, approveRun, openPullRequest, reverifyPullRequest } from './index.mjs';
 import { githubPrCli } from './github-pr.mjs';
 import { readRunState } from './run-store.mjs';
 import { review } from './reviewer.mjs';
@@ -308,6 +308,13 @@ describe('Re-verification of an existing PR after main moved', () => {
       assert.equal(again.id, first.id);
       assert.equal(again.headSha, first.headSha);
       assert.deepEqual(await runs(root), before);
+      assert.equal((await github.state()).pulls.length, 1);
+    })));
+    it('when harness:pr is run for the re-verification run then it refuses, so no second branch or PR is created', () => fixture(root => withPullRequestB(root, async ({ bare, github, pullUrl }) => {
+      await mergeA(root);
+      const run = await reverifyPullRequest({ root, pullUrl, quiet: true });
+      await assert.rejects(openPullRequest({ root, runId: run.id, quiet: true }), /harness:reverify/);
+      assert.equal(await remoteSha(bare, `harness/${run.id}`), '');
       assert.equal((await github.state()).pulls.length, 1);
     })));
     it('when the push succeeded but updating the PR failed then the retry skips the push and finishes the PR update', () => fixture(root => withPullRequestB(root, async ({ bare, github, b, pullUrl }) => {
