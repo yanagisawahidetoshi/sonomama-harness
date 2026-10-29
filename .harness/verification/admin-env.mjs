@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { hasCommand } from './lib/commands.mjs';
 // Trusted acceptance for SBI-ADMIN-ENV (#20). Reads the worktree only; the admin application verifier runs the commands.
 const root = process.argv[2];
@@ -81,8 +81,16 @@ try {
     ['ADMIN-AC-14', 'Given the app, When listing dependencies, Then no auth provider SDK is installed', () => {
       forbids(/amplify|cognito|firebase|google-auth|@react-oauth|oidc|auth0|@clerk|supabase/i, 'Auth provider SDK must not be installed');
     }],
-    ['ADMIN-AC-15', 'Given the app, When listing dependencies, Then no UI component library is fixed', () => {
-      forbids(/^@mui\/|^@chakra-ui\/|^antd$|^@mantine\/|^@radix-ui\/|^react-bootstrap$|^@headlessui\/|^@nextui-org\/|^@heroui\//, 'UI component library must not be fixed');
+    // #123: Sparkle Design is the UI foundation, pinned exactly while it is a 2.x beta and used only through shared/components/ui wrappers.
+    ['ADMIN-AC-15', 'Given the app, When listing dependencies and imports, Then Sparkle Design is the only UI component library and is used through shared/components/ui', () => {
+      assert.match(pkg().dependencies?.['sparkle-design'] ?? '', /^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/, 'sparkle-design must be an exact-pinned dependency');
+      forbids(/^@mui\/|^@chakra-ui\/|^antd$|^@mantine\/|^@radix-ui\/|^react-bootstrap$|^@headlessui\/|^@nextui-org\/|^@heroui\//, 'UI component library other than Sparkle Design must not be installed');
+      const wrappers = join(app, 'src/shared/components/ui');
+      assert.ok(files(wrappers).some(p => /\/index\.tsx$/.test(p)), 'at least one wrapper in src/shared/components/ui');
+      const direct = /\bfrom\s+['"]sparkle-design(?:\/[^'"]*)?['"]|\bimport\s*\(\s*['"]sparkle-design(?:\/[^'"]*)?['"]|\bimport\s+['"]sparkle-design(?:\/[^'"]*)?['"]/;
+      for (const path of files(join(app, 'src')).filter(p => /\.(ts|tsx)$/.test(p) && !p.startsWith(`${wrappers}/`))) {
+        assert.doesNotMatch(readFileSync(path, 'utf8'), direct, `sparkle-design must be imported only from src/shared/components/ui: ${relative(root, path)}`);
+      }
     }],
     ['ADMIN-AC-16', 'Given the README, When onboarding, Then the development steps are documented', () => {
       const readme = read('apps/admin/README.md');
