@@ -5,6 +5,13 @@ import { hasSecret, hasTrackedCredential, isSecretPath } from './evidence-protec
 import { classifyLane } from './lanes.mjs';
 import { securityPolicySchema } from './schemas.mjs';
 const normalize = text => text.replace(/[^a-z0-9]/gi, '').toLowerCase();
+// Markdown that only cites a policy file or rule ID (e.g. docs/security/authorization.md, SEC-ROLE-001) is not a security change.
+const citationFree = (path, text) => /\.(md|mdx|markdown)$/i.test(path)
+  ? text.replace(/\]\([^)]*\)/g, ']').replace(/(?:[\w.-]+\/)+[\w-]+\.[a-z0-9]+\b|\b[\w-]+\.(?:md|mdx|markdown)\b/gi, '').replace(/\bSEC-[A-Z]+-\d+\b/g, '')
+  : text;
+// The classifier and its fixture must spell out what contentPatterns detect; path rules and verifiers still apply to them.
+const classifierSources = new Set(['tools/harness/security-enforcement.mjs', 'tools/harness/security-impact-classifier.test.mjs']);
+const classifierSource = f => [f.path, f.previousPath].filter(Boolean).every(path => classifierSources.has(path));
 export function classifySecurity({ files = [], sbi = {} }, rawPolicy) {
   const policy = securityPolicySchema.parse(rawPolicy);
   const impacts = new Set(), matchedRules = [], reasons = [];
@@ -21,7 +28,7 @@ export function classifySecurity({ files = [], sbi = {} }, rawPolicy) {
     if (rule.metadataPatterns.some(p => new RegExp(p,'i').test(metadata))) matches.push({ source: 'SBI/acceptance' });
     for (const f of files) {
       if ([f.path, f.previousPath].filter(Boolean).some(path => rule.pathPatterns.some(p => new RegExp(p,'i').test(path)))) matches.push({ source: 'path', path: f.path });
-      if (rule.contentPatterns.some(p => new RegExp(p,'im').test(`${f.added || ''}\n${f.deleted || ''}`))) matches.push({ source: 'changed-content', path: f.path });
+      if (!classifierSource(f) && rule.contentPatterns.some(p => new RegExp(p,'im').test(citationFree(f.path, `${f.added || ''}\n${f.deleted || ''}`)))) matches.push({ source: 'changed-content', path: f.path });
     }
     if (rule.categories.includes('SecurityConfig') && files.some(f => policy.forbiddenPatterns.some(p => new RegExp(p,'im').test(`${f.added || ''}\n${f.deleted || ''}`)))) matches.push({ source: 'forbidden-security-pattern' });
     if (rule.categories.includes('Secret') && files.some(f => f.excludedSecret === true || isSecretPath(f.path) || hasSecret(`${f.added || ''}\n${f.deleted || ''}`))) matches.push({ source: 'secret-file-or-content' });
