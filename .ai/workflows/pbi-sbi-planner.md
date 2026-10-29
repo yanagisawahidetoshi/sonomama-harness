@@ -21,7 +21,7 @@
 
 人間確認はコード変更も実テストも持たないので、SBIにしない。PBI Human Acceptance Gateとして扱い、
 すべての実装SBIが完了し、最終確認SBIがあればPASSした後に、そのEvidence digestに対する人間の`pbi-acceptance`承認で通る。
-PBIは、すべてのSBIが完了し、PBI Human Acceptance Gateが承認され、PBIをブロックする未解決バグがないときだけ完了する。判定は`pbi-judge.mjs`の`judgePbi`で行う。
+PBIは、すべてのSBIが完了し、PBI Human Acceptance Gateが承認され、PBIのblocker（GitHub issue dependenciesの`blocked by`）がすべてclosedのときだけ完了する。判定は`pbi-judge.mjs`の`judgePbi`で行う。
 `pbi-acceptance`はImplementation Gate・Design Approval・Merge Approval・API Schema Approvalとは別の承認で、どれの代わりにもならない。
 
 ### PBIの完了判定
@@ -39,7 +39,7 @@ pnpm harness:pbi-accept <PBI URL> --evidence <digest> [--decision approve|revoke
 | merge | 依存SBIの確認と同じ。mainへmergeされ、`Closes #N`と`SBI-Issue:` trailerを持つHarness PR。Issueを手で閉じただけでは数えない |
 | 必須Verifier | merged PRのhead SHAのcheck run。`github.requiredChecks`とmainのRulesetのrequired status checksがすべてsuccess |
 | E2E Evidence | Maestro E2E Evidence。実装SBIはモックAPI、最終確認SBIは実API + Rails + DBの結果だけを有効にする |
-| blocking bug | PBIのGitHub issue dependencies（blocked by）。closedでないものが1件でもあればNOT_DONE |
+| blocker | PBIのGitHub issue dependencies（blocked by）。labelは見ない。closedでないものが1件でもあればNOT_DONE |
 | Human Acceptance | `.harness/state/human/pbi-acceptance/`の署名付き台帳 |
 
 GitHub・Evidence・台帳のどれかを読めなければ、理由を出してNOT_DONEにする。
@@ -47,7 +47,7 @@ Maestro E2E Evidenceはまだ接続していない（結果ファイルの形式
 
 Evidence digestは、最終確認SBIがあればそのEvidenceのdigest、なければ実装SBIごとのIssue・PR・head SHA・merge commit・E2E結果のsha256。
 すべてのSBIが完了すると`harness:pbi-status`がdigestと`harness:pbi-accept`のコマンドを表示する。人間はEvidenceを確認してから記録する。
-APPROVEは、すべてのSBIが完了していて、`--evidence`が現在のdigestと一致するときだけ記録する。REQUEST_CHANGES / REVOKEはいつでも記録できる。
+APPROVEはPBIの最終Gateなので、すべてのSBIが完了し（最終確認SBIがあればPASS）、Evidenceを読めて`--evidence`が現在のdigestと一致し、openのblockerが無いときだけ記録する。blockerを読めないときも記録しない。REQUEST_CHANGES / REVOKEはいつでも記録できる。
 人ごとに最新の判断を使い、現在のdigestに対するAPPROVEが1件あればGateを通る。`--reviewer`は無く、OSのユーザーが記録者になる。
 
 ## SBI Issueの項目

@@ -9,7 +9,7 @@ import { pbiAcceptanceRecords, recordPbiAcceptance } from './pbi-acceptance.mjs'
 import { localHumanIdentity } from './human-approvals.mjs';
 
 // harness:pbi-status collects what judgePbi needs from trusted adapters only: GitHub (SBI Issues, merged Harness PRs, required checks on the
-// merged head, blocking Issues), the Maestro E2E Evidence and the signed pbi-acceptance ledger. Nothing comes from an agent or a PR body.
+// merged head, the Issues the PBI is blocked by), the Maestro E2E Evidence and the signed pbi-acceptance ledger. Nothing comes from an agent or a PR body.
 // An adapter that cannot answer adds a reason, and any reason keeps the PBI NOT_DONE; judgePbi itself stays adapter-independent.
 
 // The Maestro result files of #68 (PR #142) are not on main yet. Until they are connected, no SBI has E2E evidence, and that is never read
@@ -49,7 +49,7 @@ export async function collectPbiStatus({ root, pbiUrl, config, github = githubCl
   acceptanceRecords = url => pbiAcceptanceRecords(root, url) }) {
   const ref = parseIssueUrl(pbiUrl);
   config ??= (await check(root)).config;
-  const problems = [], output = { pbi: { url: ref.url, number: ref.number, title: null }, sbis: [], blockingBugs: [] };
+  const problems = [], output = { pbi: { url: ref.url, number: ref.number, title: null }, sbis: [], blockers: [] };
   const attempt = async (what, fn, fallback) => { try { return await fn(); } catch (error) { problems.push(`${what}をGitHubから読めません（${error.message}）`); return fallback; } };
 
   const issue = await attempt(`PBI ${ref.url}`, () => github.fetchIssue(ref), null);
@@ -89,14 +89,15 @@ export async function collectPbiStatus({ root, pbiUrl, config, github = githubCl
   // Without a validation SBI the human confirms the merged implementation evidence; the digest changes whenever any part of it does.
   const evidenceDigest = validations.length ? (sha256.test(results[validations[0].id]?.evidenceDigest ?? '') ? results[validations[0].id].evidenceDigest : null)
     : implementations.length && merged.length === implementations.length ? digestOf(merged) : null;
-  output.blockingBugs = issue && !issue.pull_request ? (await attempt('PBIをブロックしているIssue（blocked by）', () => github.blockedBy(ref), [])).map(i => ({ url: i.html_url, title: i.title, state: i.state ?? null })) : [];
+  output.blockers = issue && !issue.pull_request ? (await attempt('PBIをブロックしているIssue（blocked by）', () => github.blockedBy(ref), [])).map(i => ({ url: i.html_url, title: i.title, state: i.state ?? null })) : [];
   let records = [];
   try { records = await acceptanceRecords(ref.url); } catch (error) { problems.push(`PBI Human Acceptanceの台帳を読めません（${error.message}）`); }
 
   const judged = judgePbi({ pbiUrl: ref.url, sbis: sbis.map(({ id, kind, dependsOn }) => ({ id, kind, dependsOn })), results, evidenceDigest: evidenceDigest ?? undefined,
-    acceptanceRecords: records, blockingBugs: output.blockingBugs });
+    acceptanceRecords: records, blockers: output.blockers });
   for (const row of output.sbis) row.status = judged.sbis[row.id] ?? 'PENDING';
-  const ready = !problems.length && sbis.length > 0 && validations.length <= 1 && sbis.every(s => judged.sbis[s.id] === 'DONE') && evidenceDigest !== null;
+  const ready = !problems.length && sbis.length > 0 && validations.length <= 1 && sbis.every(s => judged.sbis[s.id] === 'DONE') && evidenceDigest !== null
+    && output.blockers.every(b => b.state === 'closed');
   return {
     status: judged.status === 'DONE' && !problems.length ? 'DONE' : 'NOT_DONE', ...output, acceptance: judged.acceptance,
     evidenceDigest, ready, reasons: [...problems, ...judged.reasons],
@@ -115,12 +116,12 @@ export function renderPbiStatus(result) {
     'Human Acceptance', `${mark(result.acceptance === 'APPROVED')} ${result.acceptance}`,
     ...(result.evidenceDigest ? [`Evidence digest: ${result.evidenceDigest}`] : []),
     ...(result.ready && result.acceptance !== 'APPROVED' ? [`確認後: pnpm harness:pbi-accept ${result.pbi.url} --evidence ${result.evidenceDigest} --decision approve`] : []), '',
-    'Blocking Bugs', ...(result.blockingBugs.length ? result.blockingBugs.map(b => `${mark(b.state === 'closed')} ${b.url} ${b.title} (${b.state})`) : ['✅ none']),
+    'Blockers', ...(result.blockers.length ? result.blockers.map(b => `${mark(b.state === 'closed')} ${b.url} ${b.title} (${b.state})`) : ['✅ none']),
     ...(result.reasons.length ? ['', 'Reason:', ...result.reasons.map(r => `- ${r}`)] : []),
   ];
 }
 
-// APPROVE binds the human to the evidence harness:pbi-status shows now, so it is recorded only once every SBI is done and the digest matches.
+// APPROVE is the last Gate of the PBI: it is recorded only once every SBI is done, the evidence was read, the digest matches and no blocker is open.
 // REQUEST_CHANGES and REVOKE withdraw, so they never wait for GitHub or the evidence.
 export async function acceptPbi({ root, pbiUrl, evidenceDigest, decision = 'APPROVE', identityProvider = localHumanIdentity, ...adapters }) {
   if (decision === 'APPROVE') {

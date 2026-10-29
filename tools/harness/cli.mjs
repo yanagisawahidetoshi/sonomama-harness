@@ -23,7 +23,7 @@ User-facing:
                                                      readyのSBI Issueから実装・ローカル検証・PR作成まで進める（既定はClaude）
   pnpm harness:approve SBI_URL --phase gate|design [--decision approve|revoke|request-changes]
                                                      Human Gateを承認し、そのままrunを再開してPRを作成する
-  pnpm harness:pbi-status PBI_URL [--json]          PBIのSBI・Evidence・受け入れ・blocking bugを集めてDONE / NOT_DONEと理由を表示する
+  pnpm harness:pbi-status PBI_URL [--json]          PBIのSBI・Evidence・受け入れ・blockerを集めてDONE / NOT_DONEと理由を表示する
   pnpm harness:pbi-accept PBI_URL --evidence DIGEST [--decision approve|revoke|request-changes]
                                                      pbi-statusが表示したEvidence digestに対するPBI Human Acceptanceを署名付き台帳へ記録する
 API design (API契約を設計するときだけ):
