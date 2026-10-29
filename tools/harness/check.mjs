@@ -5,7 +5,7 @@ import { classifySecurity } from './security-enforcement.mjs';
 import { verifierRegistry } from './verifier.mjs';
 import { assertWritablePath } from './workspace.mjs';
 import { acceptancePath, withAcceptance } from './acceptance-registry.mjs';
-import { configSchema, rulesSchema, sbiSchema, riskPolicySchema, relativePath, securityPolicySchema, humanGatesSchema, lanePolicySchema } from './schemas.mjs';
+import { configSchema, rulesSchema, sbiSchema, riskPolicySchema, relativePath, securityPolicySchema, humanGatesSchema, lanePolicySchema, dependencyBotPolicySchema } from './schemas.mjs';
 // sbi is the execution SBI built from a ready SBI Issue; without it the SBI JSON at sbiPath (or the configured sample) is read.
 // sbiIssue adds the Trusted Acceptance registered for that SBI Issue (.harness/acceptance/sbi-<N>.json) and nothing else.
 export async function check(root, sbiPath, sbiValue, { sbiIssue = null } = {}) {
@@ -27,6 +27,7 @@ export async function check(root, sbiPath, sbiValue, { sbiIssue = null } = {}) {
   for (const rule of [...riskPolicy.pathRules, ...riskPolicy.metadataRules, ...riskPolicy.safeRules]) new RegExp(rule.pattern);
   const securityPolicy = securityPolicySchema.parse(await readJson(join(root, '.harness/rules/security.json')));
   const humanGates = humanGatesSchema.parse(await readJson(join(root, '.harness/rules/human-gates.json')));
+  dependencyBotPolicySchema.parse(await readJson(join(root, '.harness/rules/dependency-bots.json')));
   const securityDocuments = {};
   for (const rule of securityPolicy.rules) {
     for (const pattern of [...rule.pathPatterns, ...rule.contentPatterns, ...rule.metadataPatterns]) new RegExp(pattern);

@@ -30,6 +30,7 @@ Production（`apps/`・`packages/`と`.harness/config/lanes.json`の`productionP
 | --- | --- | --- |
 | Product implementation | 新機能、仕様変更、ユーザー挙動の変更 | 承認済みSBI Issueを起点にしたHarness Run + snapshot |
 | Engineering change | dependency、refactor、tooling、Storybook、build設定、Design System導入など、プロダクト仕様を直接変更しない技術変更 | `engineering`・`ready` labelのIssue + commit trailer |
+| trusted dependency botの更新 | Renovateのdependency更新PR | 不要。GitHub APIで確かめたbot例外（下記） |
 
 Engineering changeでもVerifier・Security・Risk・Human Reviewは通常どおり行う。免除されるのはSBI Run snapshotだけ。どちらか曖昧ならProduct implementationとしてSBIを使う。
 
@@ -47,6 +48,7 @@ Completion Judge（`harness` job）が次をすべて確かめ、1つでも欠�
 snapshotとtrailerはHarnessがRunとPR作成のときに書く。人間はSBI JSONを書かない。snapshotのSBIは手書きのSBI JSONと同じくImpact AnalysisとTrusted Acceptanceに使う。Issue本文からSBIへの組み立ては `tools/harness/sbi-issue.mjs` の `sbiFromIssue` で、Runの開始とCIで同じ処理を使う。
 保証するのは「CIを実行した時点で、PRのsnapshotが承認済みSBI Issueの現在の内容と完全に一致し、snapshotが改変されていない」こと。Run開始後にIssueを編集した（チェックボックスを付けただけでも）PRはFAILする。編集を残すなら、そのIssueから新しいRunを始める。
 snapshotをHarnessが書いたことの暗号学的な証明ではない。Issueと完全に一致するsnapshotとtrailerを手で作ることはできる。防ぐにはGitHub ActionsのOIDCなどによるRunの実行attestationが要る（未実装）。
+trusted dependency botのPRは、作成者・全commitの作成者と署名・変更ファイル（`.harness/rules/dependency-bots.json`の許可パスだけ）・head SHA・head repositoryをGitHub APIで確かめられたときだけ、上の確認を外す（[dependency-updates.md](../../docs/workflows/dependency-updates.md)）。外すのはSBI Issueの要件だけで、Verifier・Security・Riskは通常どおり判定する。確かめられなければSBI必須のまま。ログの `SBI source` 行に結果が出る。
 source Issueを持たない手書きの `sbi-*.json`（`sbi-admin-env.json` など）はProduct implementationの根拠にならない。
 
 ### Engineering change: Engineering Issue

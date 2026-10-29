@@ -183,8 +183,21 @@ export const githubIssueListSchema = z.array(githubIssueSchema);
 // Only the fields that decide whether a dependency SBI was merged through its Harness PR.
 export const githubTimelineSchema = z.array(z.object({ event: z.string().nullable().optional(),
   source: z.object({ issue: z.object({ number: z.number().int().positive(), html_url: z.url(), pull_request: z.unknown().optional() }).optional() }).nullable().optional() }));
-export const githubPullSchema = z.object({ number: z.number().int().positive(), merged_at: z.string().nullable(), base: z.object({ ref: z.string() }), body: z.string().nullable().default(null) });
-export const githubPullCommitsSchema = z.array(z.object({ commit: z.object({ message: z.string() }) }));
+export const githubPullSchema = z.object({
+  number: z.number().int().positive(), merged_at: z.string().nullable(), base: z.object({ ref: z.string() }), body: z.string().nullable().default(null),
+  user: z.object({ login: z.string(), type: z.string() }).nullable().optional(),
+  head: z.object({ sha: z.string(), repo: z.object({ full_name: z.string() }).nullable() }).optional(),
+});
+export const githubPullCommitsSchema = z.array(z.object({
+  commit: z.object({ message: z.string(), verification: z.object({ verified: z.boolean() }).optional() }),
+  author: z.object({ login: z.string() }).nullable().optional(),
+}));
+// .harness/rules/dependency-bots.json: the bots whose dependency PRs need no SBI Issue, and the only files such a PR may change.
+export const dependencyBotPolicySchema = z.strictObject({
+  version: z.literal(1),
+  bots: z.array(z.strictObject({ login: text.regex(/\[bot\]$/), type: z.literal('Bot') })),
+  paths: z.array(relativePath),
+});
 export const githubCommentSchema = z.object({ id: z.number().int().positive(), body: z.string().nullable().default(null), html_url: z.url() });
 export const githubCommentListSchema = z.array(githubCommentSchema);
 export const githubLabelListSchema = z.array(z.object({ name: z.string() }));

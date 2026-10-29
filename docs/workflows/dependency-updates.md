@@ -36,6 +36,15 @@ RenovateのPRも通常のPRと同じHarnessのCIを通る。変更されたフ�
 - Adminの更新は`pnpm-lock.yaml`を変えるため、adminに加えてrails・expo・prototype-web・prototype-mobileのVerifierも選ばれる（api-contractも領域の組み合わせで加わる）。Adminの更新が他のworkspaceを壊していないかを、このVerifierで確かめる。
 - Rails APIの更新はrailsのVerifierだけが選ばれる。
 
+`apps/`を変えるPRには承認済みSBI Issueが必要だが、RenovateのPRはSBIを持たない。次をすべてGitHub APIで確かめられたときだけ、SBI Issueの要件を外す。Verifier・Security・Riskの判定と人のレビューはそのまま行う。
+
+- PRの作成者が`renovate[bot]`（type `Bot`）である。
+- PRのすべてのcommitの作成者が`renovate[bot]`で、GitHubの署名で検証済み（verified）である。`renovate.json`の`platformCommit: "enabled"`で、RenovateはGitHubのAPIからcommitを作り、GitHubが署名する。
+- 変更したファイルが`apps/admin/package.json`・`pnpm-lock.yaml`・`apps/api/Gemfile`・`apps/api/Gemfile.lock`だけである。
+- CIが検証したcommitがPRのheadで、PRのheadがこのリポジトリにある（forkではない）。
+
+人がPRのbranchにcommitを足した（Update branchを含む）、1ファイルでも範囲外を変えた、GitHubを読めなかった場合は、通常どおりSBI Issueが必要になり、CIはFAILする。信頼するbotと許可するファイルは`.harness/rules/dependency-bots.json`にある。
+
 ## 導入手順（人が行う）
 
 1. `renovate.json`がmainに入っていることを確認する。mainに設定が無い状態でインストールすると、Renovateは設定を足すonboarding PRを先に作る。
