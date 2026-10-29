@@ -152,16 +152,30 @@ export function validateCompose(workspace, file, text) {
     for (const port of service.ports || []) if (!(typeof port === 'string' ? port.startsWith('127.0.0.1:') : port.host_ip === '127.0.0.1')) bad(`services.${id}.ports must publish on 127.0.0.1 only`);
   }
 }
+// Loaded after the workspace Compose file, so it wins: every service built from the workspace runs as the host user, whatever the file says.
+// HOME points at the container /tmp because the host uid has no home there. Pulled images (postgres) keep the user their image chose.
+export function composeOverride(text) {
+  const services = Object.entries((YAML.parse(text) || {}).services || {}).filter(([, service]) => service?.build !== undefined);
+  const user = `${process.getuid()}:${process.getgid()}`;
+  return YAML.stringify({ services: Object.fromEntries(services.map(([id]) => [id, { user, environment: { HOME: '/tmp' } }])) });
+}
 async function compose({ workspace, commands, docker, cwd, timeoutMs }) {
   const temp = await mkdtemp(join(tmpdir(), 'sonomama-isolation-'));
   try {
     const empty = join(temp, 'empty');
     await writeFile(empty, '');
+    const overrides = new Map();
     for (const [, , , file] of commands.filter(isComposeCommand)) {
       const path = resolve(cwd, file);
       try {
         if (!inside(workspace, path)) throw new Error('Compose file must be inside the workspace');
-        validateCompose(workspace, path, await readFile(path, 'utf8'));
+        const text = await readFile(path, 'utf8');
+        validateCompose(workspace, path, text);
+        if (!overrides.has(file)) {
+          const override = join(temp, `${overrides.size}-harness-override.yaml`);
+          await writeFile(override, composeOverride(text));
+          overrides.set(file, override);
+        }
       } catch (error) { return unavailable(`Compose file rejected: ${error.message}`); }
     }
     const processes = [];
@@ -169,7 +183,8 @@ async function compose({ workspace, commands, docker, cwd, timeoutMs }) {
     // Harness scripts in the list (schema-checked) run on the host like isolation: harness.
     for (const command of commands) {
       const [name, sub, ...args] = command;
-      processes.push(isComposeCommand(command) ? await execute(docker, [sub, '--env-file', empty, ...args], { cwd, timeoutMs, env: { ...dockerCliEnv(), ...pick(['HARNESS_BUILD_CACHE_FROM', 'HARNESS_BUILD_CACHE_TO']) } })
+      const files = isComposeCommand(command) ? [args[0], args[1], '-f', overrides.get(args[1])] : [];
+      processes.push(isComposeCommand(command) ? await execute(docker, [sub, '--env-file', empty, ...files, ...args.slice(2)], { cwd, timeoutMs, env: { ...dockerCliEnv(), ...pick(['HARNESS_BUILD_CACHE_FROM', 'HARNESS_BUILD_CACHE_TO']) } })
         : await execute(name, [sub, ...args], { cwd, timeoutMs, env: harnessEnv() }));
     }
     return outcome(processes);
