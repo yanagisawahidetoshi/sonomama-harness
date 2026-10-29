@@ -14,4 +14,5 @@
 
 - 同じ内容を複数の層にコピーしない。人間の判断・背景はdocs、AIが守る短い制約は.ai、機械的に強制できるルールは.harnessに置く。
 - docs/は通常の実装では読まない。ADR・Security Requirements・人間の設計判断を確かめるときだけ参照する。
+- ADRは状態で扱いを変える。Acceptedだけを判断の根拠にし、Proposedを決まったものとして扱わない。Acceptedと矛盾する変更や、ADRの状態の変更をAIだけで行わない（[docs/adr/README.md](../../docs/adr/README.md)）。
 - docs/**を新規作成・大きく書き換えるときは、yomiyasuスキルで人間向けに推敲する。AI向けプロンプトとして最適化しない。

@@ -119,7 +119,7 @@ describe('Health metrics signal collection', () => {
       assert.equal(metrics.escalation, null);
     }));
     it('when a gated run is approved and resumed then execution duration excludes the human wait', () => fixture(async root => {
-      await update(root, '.harness/config/harness.json', c => c.securityVerifiers = [{ id: 'rails-rls-test', directory: 'apps/api', commands: [[process.execPath, '-e', 'require("node:assert/strict").ok(true)']] }]);
+      await update(root, '.harness/config/harness.json', c => c.securityVerifiers = [{ id: 'rails-rls-test', directory: 'apps/api', commands: [['node', '-e', 'require("node:assert/strict").ok(true)']] }]);
       await update(root, sbiPath, s => s.risks = ['RLS']);
       const run = await runHarness({ root, quiet: true });
       assert.equal(run.status, 'WAITING_FOR_HUMAN_GATE');

@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { exists, execute } from './io.mjs';
 import { classifyLane } from './lanes.mjs';
+import { runIsolated } from './isolation.mjs';
 export function checksPassed(checks) {
   return Array.isArray(checks) && checks.length > 0 && checks.every(c => c.status === 'PASS'
     || (c.status === 'SKIP' && c.required === false && ['missing app (placeholder)', 'not applicable to this change'].includes(c.reason)));
@@ -40,8 +41,9 @@ export async function verify({ root, workspace, config, sbi, files = sbi.allowed
     if (adapter.kind === 'sample-bdd' || adapter.trust === 'acceptance') {
       const script = join(root, adapter.kind === 'sample-bdd' ? 'tools/harness/sample-bdd.mjs' : adapter.trustedScript || '.harness/verification/NOT_CONFIGURED');
       if (!await exists(script)) { checks.push({...base,required:true,status:'NOT_CONFIGURED',reason:'trusted acceptance script missing'}); continue; }
-      // Shared helpers come from the protected root, never from the agent workspace.
-      const process = await execute(globalThis.process.execPath, ['--experimental-permission', `--allow-fs-read=${workspace}`, `--allow-fs-read=${script}`, `--allow-fs-read=${join(root, '.harness/verification/lib')}`, script, workspace], { cwd: workspace, timeoutMs: config.timeoutMs });
+      // Shared helpers come from the protected root, never from the agent workspace. Dependencies come from the trusted
+      // Harness installation; the run workspace's node_modules lives only in verifier containers.
+      const process = await execute(globalThis.process.execPath, ['--experimental-permission', `--allow-fs-read=${workspace}`, `--allow-fs-read=${script}`, `--allow-fs-read=${join(root, '.harness/verification/lib')}`, `--allow-fs-read=${join(root, 'node_modules')}`, script, workspace], { cwd: workspace, timeoutMs: config.timeoutMs, env: {} });
       const check = { ...base, required:true, status:process.ok?'PASS':'FAIL', cwd:workspace, process };
       if (process.ok) {
         try {
@@ -61,16 +63,18 @@ export async function verify({ root, workspace, config, sbi, files = sbi.allowed
     else if (!adapter.commands.length) checks.push({...base,required:true,status:'NOT_CONFIGURED',cwd,reason:'app exists but verifier commands are not configured'});
     else {
       // A gated command (expo-doctor follows the latest Expo release) runs only for a matching change; requiring the verifier, full and areas do not lift the gate.
+      // Only the selected commands reach the isolated runner.
       const gateOf = command => (adapter.gatedCommands ?? []).find(g => g.command.join('\0') === command.join('\0'));
-      const processes=[], skippedCommands=[];
-      for (const [command,...args] of adapter.commands) {
-        const gate = gateOf([command,...args]);
+      const commands=[], skippedCommands=[];
+      for (const command of adapter.commands) {
+        const gate = gateOf(command);
         if (gate && !files.some(f=>gate.appliesTo.some(p=>new RegExp(p).test(f.path)))) {
-          skippedCommands.push({command:[command,...args].join(' '),reason:'no dependency or native config change matches its appliesTo'}); continue;
+          skippedCommands.push({command:command.join(' '),reason:'no dependency or native config change matches its appliesTo'}); continue;
         }
-        processes.push(await execute(command,args,{cwd,timeoutMs:config.timeoutMs}));
+        commands.push(command);
       }
-      checks.push({...base,required:true,status:processes.every(p=>p.ok)?'PASS':'FAIL',cwd,processes,skippedCommands});
+      const {status,reason,processes}=await runIsolated({workspace,adapter,config,cwd,commands});
+      checks.push({...base,required:true,status,...(reason&&{reason}),cwd,isolation:adapter.isolation||'container',processes,skippedCommands});
     }
   }
   return {status:checksPassed(checks)?'PASS':'FAIL',acceptance:[...new Set(acceptance)],lane:lane.name,checks};

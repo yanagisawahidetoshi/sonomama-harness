@@ -267,7 +267,7 @@ describe('Single verifier execution', () => {
   describe('given the verifier selected by Impact Analysis', () => {
     it('when only one verifier is requested then evaluates that verifier alone', () => fixture(async root => {
       const { config: fixtureConfig, sbi: sample } = await check(root);
-      await update(root, '.harness/config/harness.json', c => { c.verifiers.find(v => v.id === 'admin').commands = [[process.execPath, '-e', 'process.exit(0)']]; });
+      await update(root, '.harness/config/harness.json', c => { c.verifiers.find(v => v.id === 'admin').commands = [['node', '-e', 'process.exit(0)']]; });
       await writeFile(join(root, 'apps/admin/package.json'), '{"private":true}');
       const current = await readJson(join(root, '.harness/config/harness.json'));
       const result = await verify({ root, workspace: root, config: current, sbi: { ...sample, acceptanceCriteria: [], requiredVerifiers: [] }, files: files(touched.admin), only: new Set(['admin']), selected: new Map([['admin', true]]) });

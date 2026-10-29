@@ -515,7 +515,7 @@ describe('GitHub PR Adapter', () => {
       await writeFile(join(root, '.harness/acceptance/sbi-7.json'), JSON.stringify({ version: 1, sbiIssue: 7, verifiers: [{ id: 'issue-7-acceptance', trustedScript: '.harness/verification/issue-7.mjs', planned: ['ホーム見出し'], acceptanceIds: ['AC-1', 'AC-2'] }] }));
       await update(root, '.harness/config/harness.json', c => {
         // The admin placeholder has no installable app in the fixture; its verifier stands in with a passing command.
-        c.verifiers.find(v => v.id === 'admin').commands = [[process.execPath, '-e', 'process.exit(0)']];
+        c.verifiers.find(v => v.id === 'admin').commands = [['node', '-e', 'process.exit(0)']];
       });
       await commitFixture(root);
     };

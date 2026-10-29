@@ -325,6 +325,64 @@ describe('CI Completion Judge for the source SBI Issue', () => {
       await commit(root, { [admin]: 'export const home = 1;' }, 'feat: home');
       const judged = await run(root);
       assert.equal(judged.status, 'FAIL');
+      assert.ok(judged.reasons.some(r => r.startsWith('production source missing')), judged.reasons.join('; '));
+    })));
+
+    // Engineering changes (dependency, tooling, Storybook, Design System) skip the SBI Run, not the Verifier, Security or Human Review.
+    const engineeringUrl = 'https://github.com/acme/app/issues/9';
+    const engineeringIssue = { number: 9, title: 'Sparkle Designを導入する', body: '## 背景\n技術基盤を更新する。\n', html_url: engineeringUrl, state: 'open', labels: labels('engineering', 'ready') };
+    const engineering = `\n\nEngineering-Issue: ${engineeringUrl}`;
+
+    it('when the Production change links a ready engineering Issue then the Judge passes without an SBI snapshot', () => mockGitHub({ issue: engineeringIssue }, () => fixture(async root => {
+      await prepare(root);
+      await commit(root, { [admin]: 'export const home = 1;' }, `chore: adopt design system${engineering}`);
+      const judged = await run(root);
+      assert.equal(judged.source.kind, 'engineering');
+      assert.deepEqual(judged.source.sources, [{ url: engineeringUrl }]);
+      assert.equal(judged.status, 'PASS', judged.reasons.join('; '));
+    })));
+
+    it('when an engineering change fails its Verifier matrix then the Judge still fails', () => mockGitHub({ issue: engineeringIssue }, () => fixture(async root => {
+      await prepare(root);
+      await commit(root, { [admin]: 'export const home = 1;' }, `chore: adopt design system${engineering}`);
+      const judged = await run(root, { needs: { ...needs, verifiers: { result: 'failure' } } });
+      assert.equal(judged.source.status, 'PASS', judged.source.reasons.join('; '));
+      assert.equal(judged.status, 'FAIL');
+    })));
+
+    it('when the linked Issue is only self-declared as engineering in its body then the Judge fails', () => mockGitHub({ issue: { ...engineeringIssue, body: '## 種類\nengineering\n', labels: labels('ready') } }, () => fixture(async root => {
+      await prepare(root);
+      await commit(root, { [admin]: 'export const home = 1;' }, `chore: adopt design system${engineering}`);
+      const judged = await run(root);
+      assert.equal(judged.status, 'FAIL');
+      assert.ok(judged.reasons.some(r => r.includes('no engineering label')), judged.reasons.join('; '));
+    })));
+
+    it('when a broken SBI snapshot sits next to an Engineering-Issue trailer then the Judge checks the snapshot and fails', () => mockGitHub({ issue: engineeringIssue }, () => fixture(async root => {
+      await prepare(root);
+      await commit(root, { [admin]: 'export const home = 1;', [snapshotPath(snapshot())]: '{ broken' }, `chore: adopt design system${engineering}`);
+      const judged = await run(root);
+      assert.notEqual(judged.source.kind, 'engineering');
+      assert.equal(judged.status, 'FAIL');
+      assert.ok(judged.reasons.some(r => r.startsWith('sbi source invalid')), judged.reasons.join('; '));
+    })));
+
+    it('when the PR deletes an SBI snapshot and links an Engineering Issue then the Judge stays on the SBI path and fails', () => mockGitHub({ issue: engineeringIssue }, () => fixture(async root => {
+      await writeFile(join(root, '.harness/state/sbi-7.json'), JSON.stringify(snapshot(), null, 2));
+      await prepare(root);
+      await git(root, ['rm', '--quiet', '.harness/state/sbi-7.json']);
+      await commit(root, { [admin]: 'export const home = 1;' }, `chore: adopt design system${engineering}`);
+      const judged = await run(root);
+      assert.notEqual(judged.source.kind, 'engineering');
+      assert.equal(judged.status, 'FAIL');
+    })));
+
+    it('when the PR carries the Run trailers of an SBI Issue but no snapshot then the Judge fails instead of taking the Engineering Issue', () => mockGitHub({ issue: engineeringIssue }, () => fixture(async root => {
+      await prepare(root);
+      await commit(root, { [admin]: 'export const home = 1;' }, `feat: home${trailers()}${engineering}`);
+      const judged = await run(root);
+      assert.notEqual(judged.source.kind, 'engineering');
+      assert.equal(judged.status, 'FAIL');
       assert.ok(judged.reasons.some(r => r.startsWith('sbi source missing')), judged.reasons.join('; '));
     })));
 

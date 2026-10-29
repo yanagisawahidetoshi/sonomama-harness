@@ -46,6 +46,16 @@ export async function runLinks(root, base) {
   return stdout.split('\0').map(block => ({ runId: value(block, 'Harness-Run'), url: value(block, 'SBI-Issue') })).filter(link => link.runId && link.url);
 }
 
+// Fail closed: a Run trailer anywhere in a commit message, even where Git does not parse it as a trailer, or a Git error counts as a claim,
+// so the stricter SBI check runs.
+export async function claimsSbiSource(root, base, files) {
+  if (files.some(f => sbiPattern.test(f.path))) return true;
+  try {
+    const { stdout } = await git(root, ['log', '--format=%B%x00', `${base}..HEAD`]);
+    return /^(Harness-Run|SBI-Issue):/m.test(stdout);
+  } catch { return true; }
+}
+
 // issue is null when it was not read because the snapshot points outside this repository.
 export function judgeSbiSource({ snapshot, issue, repository, runs }) {
   const { url } = snapshot.source, reasons = [];
@@ -131,7 +141,14 @@ export async function snapshotVerified({ workspace, base, files, snapshot, confi
 }
 
 export function describeSbiSource(source) {
-  if (!source.required.length) return ['SBI source: not required'];
+  const exemption = source.exemption?.exempt ? [`SBI source: exempted for the dependency update by ${source.exemption.bot}`]
+    : source.exemption ? [`SBI source exemption: not applied (${source.exemption.reasons.join('; ')})`] : [];
+  if (!source.required.length) return exemption.length ? exemption : ['SBI source: not required'];
+  if (exemption.length) return [...exemption, ...describeSbiSource({ ...source, exemption: undefined })];
+  if (source.kind === 'engineering') return [
+    ...source.sources.map(s => `Engineering source: ${s.url}`),
+    `Engineering source check: ${source.status}${source.reasons.length ? ` (${source.reasons.join('; ')})` : ''}`,
+  ];
   return [
     ...source.sources.map(s => `SBI source: ${s.url} run ${s.runId}`),
     `SBI source check: ${source.status}${source.reasons.length ? ` (${source.reasons.join('; ')})` : ''}`,
