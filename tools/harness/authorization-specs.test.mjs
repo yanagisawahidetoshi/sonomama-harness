@@ -103,7 +103,8 @@ describe('rails-authz-test Security Verifier configuration', () => {
     it('when its Rails commands run then the database is prepared before only the authorization specs run, failing on zero examples', () => {
       const tasks = railsAuthz.commands.filter(c => c[0] === 'docker' && c.includes('run')).map(c => c.slice(c.indexOf('api') + 1).join(' '));
       const prepare = tasks.indexOf('bin/rails db:prepare');
-      const rspec = tasks.indexOf('bundle exec rspec spec/authorization --fail-if-no-examples');
+      // RSpec has no CLI flag for fail_if_no_examples, so the verifier sets it through the runner.
+      const rspec = tasks.indexOf('bundle exec ruby -e require "rspec/core"; RSpec.configure { |c| c.fail_if_no_examples = true }; exit RSpec::Core::Runner.run(["spec/authorization"])');
       assert.ok(prepare >= 0 && rspec > prepare, tasks.join(' | '));
     });
     it('when its commands finish then the containers are stopped', () => {
