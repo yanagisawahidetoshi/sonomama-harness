@@ -391,6 +391,7 @@ async function resumeProtected({ root, runId, quiet = false, agent = runAgent, r
 async function publishProtected({ root, runId, quiet = false, github = githubPrCli }) {
   await withRunLock(root, runId, async () => {
     const { summary, inputs } = await loadRun(root, runId);
+    if (summary.kind === 'reverify') throw new Error(`run ${runId} re-verifies ${summary.pullRequest.url}; it updates that PR through pnpm harness:reverify and never opens another`);
     if (summary.executionStatus !== 'DONE' || summary.status === 'ESCALATED') throw new Error(`Execution must be DONE and not ESCALATED before opening a pull request (now ${summary.executionStatus}/${summary.status})`);
     const { workspace } = runPaths(root, runId);
     await workspaceIntegrity(workspace, summary.headSha);
