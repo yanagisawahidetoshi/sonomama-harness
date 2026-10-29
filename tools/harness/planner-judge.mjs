@@ -126,7 +126,7 @@ function judgeGranularity(sbis, add) {
 }
 
 // After implementation: a PR may exceed its estimate within limits.estimatedFiles, or stay within an estimate above it that the Planner justified.
-// Anything else, including a missing estimate, fails closed. Not wired into the Completion Judge or CI yet.
+// Anything else, including a missing estimate, fails closed. The CI Completion Judge applies it to each implementation SBI snapshot.
 export function judgeChangedFileCount({ estimatedFiles, changedPaths, limit = limits.estimatedFiles }) {
   const changedFiles = new Set(changedPaths).size;
   if (!Number.isInteger(estimatedFiles) || estimatedFiles < 0) return { status: 'FAIL', changedFiles, estimatedFiles: null, reason: 'SBIの想定変更ファイル数がないため、変更ファイル数を判定できません' };

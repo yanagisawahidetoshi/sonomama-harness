@@ -110,6 +110,34 @@ describe('Execution SBI from a ready SBI Issue', () => {
       });
     }
   });
+
+  describe('given the kind and the expected number of changed files the Planner wrote', () => {
+    it('when it is read then the SBI carries the expected number of changed files for the Completion Judge', () => {
+      assert.equal(sbiFromIssue({ ref, issue: issue(), config: config() }).estimatedFiles, 2);
+    });
+    it('when the Planner justified more than 10 files then the SBI carries that number', () => {
+      const sbi = sbiFromIssue({ ref, issue: issue({}, planned({ estimatedFiles: 14, oversizeReason: '生成コードを含むため分割できない' })), config: config() });
+      assert.equal(sbi.estimatedFiles, 14);
+    });
+    it('when the Issue was planned before the number was written then the SBI is built without it so the Completion Judge fails closed', () => {
+      const old = issue();
+      old.body = old.body.replace(/## 想定変更ファイル数\n\n2\n\n/, '');
+      const sbi = sbiFromIssue({ ref, issue: old, config: config() });
+      assert.equal(sbiSchema.safeParse(sbi).success, true);
+      assert.equal(sbi.estimatedFiles, null);
+    });
+    it('when the number is not an integer then the SBI is built without it', () => {
+      const edited = issue();
+      edited.body = edited.body.replace(/## 想定変更ファイル数\n\n2\n/, '## 想定変更ファイル数\n\n2〜3\n');
+      assert.equal(sbiFromIssue({ ref, issue: edited, config: config() }).estimatedFiles, null);
+    });
+    it('when it is a validation SBI then the SBI keeps that kind', () => {
+      assert.equal(sbiFromIssue({ ref, issue: issue({}, planned({ kind: 'validation' })), config: config() }).kind, 'validation');
+    });
+    it('when it is an implementation SBI then the SBI keeps that kind', () => {
+      assert.equal(sbiFromIssue({ ref, issue: issue(), config: config() }).kind, 'implementation');
+    });
+  });
 });
 
 describe('Scope of an execution SBI', () => {

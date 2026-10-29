@@ -4,7 +4,8 @@ import { isSafeEnvTemplate } from './evidence-protection.mjs';
 import { verifyEngineeringSource } from './engineering-source.mjs';
 import { readJson } from './io.mjs';
 import { isProductionPath } from './lanes.mjs';
-import { claimsSbiSource, readSbiFiles, verifySbiSource } from './sbi-source.mjs';
+import { claimsSbiSource, readSbiFiles, snapshotFilePattern, verifySbiSource } from './sbi-source.mjs';
+import { judgeChangedFileCount } from './planner-judge.mjs';
 import { dependencyBotExemption } from './dependency-bot.mjs';
 import { githubCli } from './planner-github.mjs';
 import { verifyMigrationExceptions } from './migration-exception-approval.mjs';
@@ -77,7 +78,7 @@ export function analyzeImpact({ config, sbis = [], files = [], all = false }) {
 }
 
 // Required jobs must succeed; a job may be skipped only when the impact did not ask for it. Security that was not evaluated fails.
-export function judgeCi({ impact, needs, acceptance, security, source, migrationExceptions }) {
+export function judgeCi({ impact, needs, acceptance, security, source, granularity, migrationExceptions }) {
   const reasons = [];
   const expect = (job, wanted) => {
     const result = needs[job]?.result ?? 'missing';
@@ -85,6 +86,7 @@ export function judgeCi({ impact, needs, acceptance, security, source, migration
   };
   expect('impact', true);
   if (impact.sbiRequired && source?.status !== 'PASS') reasons.push(...(source?.reasons.length ? source.reasons : ['sbi source: not evaluated']));
+  reasons.push(...(granularity ?? []).filter(g => g.status === 'FAIL').map(g => g.reason));
   if (migrationExceptions?.status === 'FAIL') reasons.push(...migrationExceptions.reasons);
   expect('verifiers', impact.requiredVerifiers.length > 0);
   expect('harness-test', impact.fullGate);
@@ -114,7 +116,7 @@ export async function loadImpact({ root, base, all = false }) {
   const { sbis, snapshots } = await readSbiFiles(root, files);
   // Each Run snapshot brings the Trusted Acceptance of its own SBI Issue only (.harness/acceptance/sbi-<N>.json).
   const config = await withAcceptance(root, configSchema.parse(await readJson(join(root, '.harness/config/harness.json'))), snapshots.map(s => s.snapshot.source.number));
-  return { config, files, sbis, impact: analyzeImpact({ config, sbis, files, all }) };
+  return { config, files, sbis, snapshots, impact: analyzeImpact({ config, sbis, files, all }) };
 }
 
 // The matrix job: one verifier, mandatory only when an SBI asked for it, so a cross-layer contract without a document stays a placeholder SKIP.
@@ -149,7 +151,7 @@ async function changedContent(root, files) {
 // Completion Judge: trusted acceptance of every changed SBI and the Harness Security Policy run here. Production changes must be backed by either
 // a ready SBI Run snapshot or, for engineering/maintenance work, a ready Engineering Issue linked from a commit trailer.
 export async function runCompletionJudge({ root, base, all = false, needs, repository = process.env.GITHUB_REPOSITORY, pullNumber, github = githubCli, githubPr }) {
-  const { config, files, sbis, impact } = await loadImpact({ root, base, all });
+  const { config, files, sbis, snapshots, impact } = await loadImpact({ root, base, all });
   const missing = [], checks = [];
   for (const sbi of sbis) {
     const result = await verify({ root, workspace: root, config, sbi, files, only: new Set(sbi.acceptanceCriteria.map(a => a.verifier)) });
@@ -177,15 +179,20 @@ export async function runCompletionJudge({ root, base, all = false, needs, repos
   // A destructive migration that migration-safety let through as an exception request still needs two reviews on headSha.
   const migrationExceptions = all ? { status: 'PASS', exceptions: [], reasons: [] }
     : await verifyMigrationExceptions({ root, base, files, headSha, repository, pullNumber, ...(githubPr ? { githubPr } : {}) });
-  return { impact, acceptance, checks, security, source, migrationExceptions, ...judgeCi({ impact, needs, acceptance, security, source, migrationExceptions }) };
+  // The Run snapshot is in every Harness PR, so only the files the implementation changed count against the SBI Issue's estimate.
+  const changedPaths = files.map(f => f.path).filter(path => !snapshotFilePattern.test(path));
+  const granularity = snapshots.filter(s => s.snapshot.sbi.kind === 'implementation')
+    .map(s => ({ sbi: s.snapshot.source.url, ...judgeChangedFileCount({ estimatedFiles: s.snapshot.sbi.estimatedFiles, changedPaths }) }));
+  return { impact, acceptance, checks, security, source, granularity, migrationExceptions, ...judgeCi({ impact, needs, acceptance, security, source, granularity, migrationExceptions }) };
 }
 
-export function describeJudge({ needs, acceptance, checks, security, migrationExceptions }) {
+export function describeJudge({ needs, acceptance, checks, security, granularity = [], migrationExceptions }) {
   const list = items => items.length ? ` (${items.map(c => `${c.id}: ${c.status}`).join(', ')})` : ' (none)';
   return [
     `Application: ${Object.entries(needs).filter(([job]) => job !== 'impact').map(([job, value]) => `${job}=${value.result}`).join(' ') || '(no job results)'}`,
     `Acceptance: ${acceptance.status}${list(checks.filter(c => c.trust === 'acceptance'))}`,
     `Security: ${security.status}${list(security.checks.filter(c => c.required))}`,
+    ...granularity.map(g => `Changed files: ${g.status} (${g.sbi}: ${g.changedFiles} changed, ${g.estimatedFiles ?? 'no'} expected)`),
     ...(migrationExceptions?.exceptions.length || migrationExceptions?.status === 'FAIL' ? [`Migration exception: ${migrationExceptions.status}${migrationExceptions.exceptions.map(e => ` (${e.migration}: ${e.approvers.join(', ') || 'no approval'})`).join('')}`] : []),
   ];
 }
