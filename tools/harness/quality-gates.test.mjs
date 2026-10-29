@@ -127,7 +127,7 @@ describe('Commands gated on dependency and native config changes', () => {
       assert.deepEqual(expoCheck(result).skippedCommands.map(c=>c.command),[doctor]);
       assert.match(expoCheck(result).skippedCommands[0].reason,/dependency or native config/);
     }));
-    for (const path of ['apps/mobile/package.json','pnpm-lock.yaml','apps/mobile/eas.json','.node-version']) {
+    for (const path of ['apps/mobile/package.json','prototypes/mobile/package.json','apps/mobile/eas.json','.node-version']) {
       it(`when ${path} changes then runs expo-doctor and its failure fails the verifier`, () => fixture(async root => {
         const {config,sbi}=await gated(root);
         const result=await verify({root,workspace:root,config,sbi,files:[{path}]});
@@ -148,16 +148,35 @@ describe('Commands gated on dependency and native config changes', () => {
       assert.equal(expoCheck(result).status,'PASS');
       assert.equal(expoCheck(result).skippedCommands.length,1);
     }));
-    it('when the SBI explicitly requires expo then runs expo-doctor even without a matching change', () => fixture(async root => {
+    it('when only the root pnpm-lock.yaml changes then skips expo-doctor because another importer may own the update', () => fixture(async root => {
+      const {config,sbi}=await gated(root);
+      const result=await verify({root,workspace:root,config,sbi,files:[{path:'pnpm-lock.yaml'}]});
+      assert.equal(expoCheck(result).status,'PASS');
+      assert.equal(expoCheck(result).skippedCommands.length,1);
+    }));
+    it('when the SBI requires expo then still skips expo-doctor without a matching change', () => fixture(async root => {
       const {config,sbi}=await gated(root);
       const result=await verify({root,workspace:root,config,sbi:{...sbi,requiredVerifiers:['expo']},files:[{path:'apps/mobile/src/app/index.tsx'}]});
+      assert.equal(expoCheck(result).status,'PASS');
+      assert.equal(expoCheck(result).skippedCommands.length,1);
+    }));
+    it('when Security requires expo then still skips expo-doctor without a matching change', () => fixture(async root => {
+      const {config,sbi}=await gated(root);
+      const result=await verify({root,workspace:root,config,sbi,files:[{path:'apps/mobile/src/app/index.tsx'}],requiredVerifiers:['expo']});
+      assert.equal(expoCheck(result).status,'PASS');
+      assert.equal(expoCheck(result).skippedCommands.length,1);
+    }));
+    it('when an acceptance criterion needs expo then still skips expo-doctor without a matching change', () => fixture(async root => {
+      const {config,sbi}=await gated(root);
+      const result=await verify({root,workspace:root,config,sbi,files:[{path:'apps/mobile/src/app/index.tsx'}],only:new Set(['expo']),selected:new Map([['expo',true]]),requiredVerifiers:['expo']});
+      assert.equal(expoCheck(result).status,'PASS');
+      assert.equal(expoCheck(result).skippedCommands.length,1);
+    }));
+    it('when the SBI requires expo and package.json changes then runs expo-doctor', () => fixture(async root => {
+      const {config,sbi}=await gated(root);
+      const result=await verify({root,workspace:root,config,sbi:{...sbi,requiredVerifiers:['expo']},files:[{path:'apps/mobile/package.json'}]});
       assert.equal(expoCheck(result).status,'FAIL');
       assert.deepEqual(expoCheck(result).skippedCommands,[]);
-    }));
-    it('when Security requires expo then runs expo-doctor even without a matching change', () => fixture(async root => {
-      const {config,sbi}=await gated(root);
-      const result=await verify({root,workspace:root,config,sbi,files:[],requiredVerifiers:['expo']});
-      assert.equal(expoCheck(result).status,'FAIL');
     }));
   });
   describe('given the prototype-mobile verifier with expo-doctor gated', () => {
@@ -193,11 +212,11 @@ describe('Commands gated on dependency and native config changes', () => {
       assert.equal(passed,true);
       assert.equal(result.checks[0].skippedCommands.length,1);
     }));
-    it('when the SBI lists expo in requiredVerifiers then the expo job runs expo-doctor', () => fixture(async root => {
+    it('when the SBI lists expo in requiredVerifiers but changes only source then the expo job skips expo-doctor', () => fixture(async root => {
       await branch(root,{requiredVerifiers:['expo']});
       const {result,passed}=await runVerifier({root,base:'HEAD~1',id:'expo'});
-      assert.equal(passed,false);
-      assert.deepEqual(result.checks[0].skippedCommands,[]);
+      assert.equal(passed,true);
+      assert.equal(result.checks[0].skippedCommands.length,1);
     }));
   });
 });
