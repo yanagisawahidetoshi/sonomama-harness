@@ -317,6 +317,20 @@ describe('Re-verification of an existing PR after main moved', () => {
       assert.equal(await remoteSha(bare, `harness/${run.id}`), '');
       assert.equal((await github.state()).pulls.length, 1);
     })));
+    it('when the push itself failed then the retry pushes the same verified candidate without verifying again', () => fixture(root => withPullRequestB(root, async ({ bare, b, pullUrl }) => {
+      await mergeA(root);
+      const offline = { ...githubPrCli, push: async () => { throw new Error('git push: Could not resolve host: github.com'); } };
+      await assert.rejects(reverifyPullRequest({ root, pullUrl, quiet: true, github: offline }), /Could not resolve host/);
+      assert.equal(await remoteSha(bare, `harness/${b.id}`), b.headSha);
+      const [stopped] = (await runs(root)).filter(id => id !== b.id);
+      const before = await readRunState(root, stopped);
+      assert.equal(before.reverify.publish, 'PUSHING');
+      const retried = await reverifyPullRequest({ root, pullUrl, quiet: true });
+      assert.equal(retried.id, stopped);
+      assert.equal(retried.iterations.length, 1, 'the candidate is not verified a second time');
+      assert.equal(await remoteSha(bare, `harness/${b.id}`), before.headSha);
+      assert.equal(retried.reverify.publish, 'PR_UPDATED');
+    })));
     it('when the push succeeded but updating the PR failed then the retry skips the push and finishes the PR update', () => fixture(root => withPullRequestB(root, async ({ bare, github, b, pullUrl }) => {
       await mergeA(root);
       const failing = { ...githubPrCli, updatePull: async () => { throw new Error('gh api PATCH repos/acme/app/pulls: HTTP 502'); } };
