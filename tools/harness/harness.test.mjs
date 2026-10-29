@@ -163,6 +163,21 @@ describe('CLI help', () => {
   });
 });
 
+describe('OpenAPI Schema as a normal SBI', () => {
+  describe('given the commands offered to developers', () => {
+    it('when the package scripts are read then the API Schema Planner and its approval are not human commands', async () => {
+      const { scripts } = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
+      assert.equal(scripts['planner:api-schema'], undefined);
+      assert.equal(scripts['planner:api-schema-approve'], undefined);
+      assert.ok(scripts['planner:sbi'] && scripts['harness:run']);
+    });
+    it('when the CLI usage is printed then it does not offer pnpm planner:api-schema or planner:api-schema-approve', async () => {
+      const { stderr } = await execute(process.execPath, [new URL('./cli.mjs', import.meta.url).pathname, 'unknown']);
+      assert.doesNotMatch(stderr, /pnpm planner:api-schema( |-approve)/);
+    });
+  });
+});
+
 // harness:run / approve / resume / pr exit 0 when the run stopped where a human or GitHub CI takes over, and 2 when the run itself failed.
 describe('Exit code of a run command', () => {
   const run = (overrides = {}) => ({ publish: true, executionStatus: 'DONE', status: 'BLOCKED', merge: { reasons: ['required_ci_not_passed'] }, gate: { state: 'NOT_REQUIRED' }, designApproval: { state: 'NOT_REQUIRED' },

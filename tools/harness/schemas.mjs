@@ -18,7 +18,7 @@ export const sbiSchema = z.strictObject({
   requiredVerifiers: z.array(text).default([]), affectedAreas: z.array(text).default([]), preImplementationGate: z.boolean().default(false),
   promotion: z.strictObject({ source: relativePath.refine(p => /^prototypes\/(web|mobile)(\/|$)/.test(p)), designApproval: z.null().optional() }).optional(),
   minimumRiskLevel: z.union([z.literal(2), z.literal(3)]).default(2),
-  issueUrl: z.url().optional(),
+  issueUrl: z.url().optional(), pbiUrl: z.url().optional(),
 }).refine(s => new Set(s.acceptanceCriteria.map(a => a.id)).size === s.acceptanceCriteria.length, 'duplicate acceptance criteria')
   .refine(s => s.allowedFiles.length + s.allowedDirs.length > 0, 'allowedFiles or allowedDirs required');
 // Run IDs name directories and refs; the same pattern guards run-store paths.
@@ -160,9 +160,14 @@ export const apiSchemaJsonSchema = object({
 // GitHub REST responses carry many more fields; only the ones the Planner relies on are validated.
 export const githubIssueSchema = z.object({
   number: z.number().int().positive(), title: z.string(), body: z.string().nullable().default(null), html_url: z.url(),
-  state: z.string().optional(), labels: z.array(z.object({ name: z.string() })).default([]), pull_request: z.unknown().optional(),
+  state: z.string().optional(), state_reason: z.string().nullable().optional(), labels: z.array(z.object({ name: z.string() })).default([]), pull_request: z.unknown().optional(),
 });
 export const githubIssueListSchema = z.array(githubIssueSchema);
+// Only the fields that decide whether a dependency SBI was merged through its Harness PR.
+export const githubTimelineSchema = z.array(z.object({ event: z.string().nullable().optional(),
+  source: z.object({ issue: z.object({ number: z.number().int().positive(), html_url: z.url(), pull_request: z.unknown().optional() }).optional() }).nullable().optional() }));
+export const githubPullSchema = z.object({ number: z.number().int().positive(), merged_at: z.string().nullable(), base: z.object({ ref: z.string() }), body: z.string().nullable().default(null) });
+export const githubPullCommitsSchema = z.array(z.object({ commit: z.object({ message: z.string() }) }));
 export const githubCommentSchema = z.object({ id: z.number().int().positive(), body: z.string().nullable().default(null), html_url: z.url() });
 export const githubCommentListSchema = z.array(githubCommentSchema);
 export const githubLabelListSchema = z.array(z.object({ name: z.string() }));

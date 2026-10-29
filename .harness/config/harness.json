@@ -191,12 +191,17 @@
       "planned": [
         "OpenAPI 3.1 validation",
         "Breaking change detection against the base branch",
-        "Rails routes defined by the contract"
+        "Rails routes defined by the contract",
+        "Prism Mock starts from the workspace OpenAPI and answers each documented GET"
       ],
       "commands": [
         [
           "node",
           "../../tools/harness/api-contract.mjs"
+        ],
+        [
+          "node",
+          "../../tools/harness/api-mock-check.mjs"
         ]
       ],
       "appliesTo": [

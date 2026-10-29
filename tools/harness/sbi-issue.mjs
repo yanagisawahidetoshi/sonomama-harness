@@ -85,8 +85,41 @@ export function sbiFromIssue({ ref, issue, config }) {
     gherkin: [`Feature: ${issue.title}`, ...gherkin.map(line => line.trim() ? `  ${line}` : '')].join('\n'),
     acceptanceCriteria, allowedFiles: [], allowedDirs, risks: securityImpact, ambiguous: false, requiresDesignDecision: false,
     securityImpact, requiredSecurityRules: [], requiredVerifiers: [], affectedAreas: [], preImplementationGate: false,
-    minimumRiskLevel: candidate === 'L3' || securityImpact.length ? 3 : 2, issueUrl: ref.url,
+    minimumRiskLevel: candidate === 'L3' || securityImpact.length ? 3 : 2, issueUrl: ref.url, pbiUrl: markerPattern.exec(issue.body ?? '')?.[1],
   };
+}
+
+// A dependency is done only when its Harness PR was merged into the base branch: merged_at is set, the body says Closes #N and a commit carries
+// the SBI-Issue trailer of that Issue. Closing the Issue by hand is not enough, since the canonical packages/api-schema/openapi.yaml
+// a Rails or frontend SBI builds on reaches main only by that merge. Anything GitHub cannot answer keeps the run from starting.
+async function mergedHarnessPull({ ref, dependency, base, github }) {
+  const url = `https://github.com/${ref.owner}/${ref.repo}/issues/${dependency.number}`;
+  const pulls = (await github.issueTimeline({ ...ref, number: dependency.number }))
+    .map(event => event.event === 'cross-referenced' && event.source?.issue?.pull_request ? event.source.issue : null)
+    .filter(source => source?.html_url === `https://github.com/${ref.owner}/${ref.repo}/pull/${source?.number}`);
+  for (const number of new Set(pulls.map(p => p.number))) {
+    const pull = await github.fetchPull(ref, number);
+    if (!pull.merged_at || pull.base.ref !== base || !new RegExp(`^Closes #${dependency.number}\\s*$`, 'm').test(pull.body ?? '')) continue;
+    if ((await github.pullCommitMessages(ref, number)).some(message => message.split('\n').some(line => line.trim() === `SBI-Issue: ${url}`))) return pull;
+  }
+  return null;
+}
+async function unfinishedDependencies({ ref, issue, config, github }) {
+  const lines = (sections(issue.body).get('依存SBI') ?? []).map(l => l.trim()).filter(l => l.startsWith('- '));
+  const base = config.github?.base ?? 'main', problems = [];
+  for (const line of lines) {
+    const number = /\(#([1-9]\d*)\)\s*$/.exec(line)?.[1];
+    if (!number) { problems.push(`依存SBI ${line.slice(2)} のIssue番号がありません`); continue; }
+    let dependency;
+    try { dependency = await github.fetchIssue({ ...ref, number: Number(number) }); }
+    catch (error) { problems.push(`依存SBI #${number} を読めません（${error.message}）`); continue; }
+    if (dependency.state !== 'closed' || dependency.state_reason !== 'completed') { problems.push(`依存SBI #${number} が完了していません（${dependency.state ?? 'unknown'}${dependency.state_reason ? ` / ${dependency.state_reason}` : ''}）。そのPRのmerge後に実行してください`); continue; }
+    let merged;
+    try { merged = await mergedHarnessPull({ ref, dependency, base, github }); }
+    catch (error) { problems.push(`依存SBI #${number} のPRをGitHubから確認できません（${error.message}）`); continue; }
+    if (!merged) problems.push(`依存SBI #${number} はclosedですが、${base}へmergeされたHarness PR（Closes #${number} と SBI-Issue trailer）がありません`);
+  }
+  return problems;
 }
 
 export async function loadSbiIssue({ issueUrl, config, github = githubCli }) {
@@ -95,5 +128,8 @@ export async function loadSbiIssue({ issueUrl, config, github = githubCli }) {
   try { issue = await github.fetchIssue(ref); } catch (error) { throw new Error(`SBI Issue fetch failed for ${ref.url}: ${error.message}`); }
   const reasons = issueReadiness(issue, ref.url);
   if (reasons.length) throw new Error([`SBI Issue ${ref.url} はreadyではありません。Runは開始していません。`, ...reasons.map(r => `- ${r}`)].join('\n'));
-  return { ref, issue, sbi: sbiFromIssue({ ref, issue, config }) };
+  const sbi = sbiFromIssue({ ref, issue, config });
+  const waiting = await unfinishedDependencies({ ref, issue, config, github });
+  if (waiting.length) throw new Error([`SBI Issue ${ref.url} の依存SBIが完了していません。Runは開始していません。`, ...waiting.map(p => `- ${p}`)].join('\n'));
+  return { ref, issue, sbi };
 }

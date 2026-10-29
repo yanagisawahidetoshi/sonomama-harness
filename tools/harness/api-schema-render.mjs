@@ -121,7 +121,7 @@ export function renderSummary({ issue, proposal, quality, contractDiff = { break
     ] : []),
     '## Human Review', '',
     ...reviewChecklist.map(item => `- [ ] ${item}`), '',
-    `承認は Proposal をcommitしたうえで \`pnpm planner:api-schema-approve ${issue.url}\` で署名付き台帳に記録する。`,
+    `承認は Proposal をcommitしたうえで \`node tools/harness/cli.mjs api-schema-approve ${issue.url}\` で署名付き台帳に記録する。`,
     `Security Impactがあれば異なる人間2人、なければ1人の承認が必要。承認はこの内容のdigestとcommit SHAに紐づき、内容が変われば無効になる。`,
     `Issueの \`${approvedLabel}\` / \`${reviewLabel}\` は台帳の状態を映す目印で、承認の正本ではない。Plannerは承認・実装・mergeを行わない。`, '',
   ].join('\n');
