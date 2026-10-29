@@ -34,6 +34,8 @@ group :development, :test do
   gem "brakeman", require: false
 
   gem "factory_bot_rails"
+  # Checks request specs against packages/api-schema/openapi.yaml (OpenAPI 3.1). See README "OpenAPI".
+  gem "openapi_first", "~> 4.2"
   gem "rspec-rails"
 
   gem "rubocop", require: false

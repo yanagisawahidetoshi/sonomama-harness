@@ -22,7 +22,7 @@ module ApiContractFixture
     def missing_nested_grade = render(json: STUDENT.merge(profile: {}))
     def extra_property = render(json: STUDENT.merge(classroom: "1-A"))
     def invalid_guardian_email = render(json: STUDENT.merge(guardianEmail: "guardian-at-example"))
-    def undeclared_status = render(json: STUDENT, status: :im_a_teapot)
+    def undeclared_status = render(json: STUDENT, status: :conflict)
     def plain_text = render(plain: "Taro", status: :ok)
     def not_found = render(json: { error: { code: "not_found", message: "Student not found" } }, status: :not_found)
     def malformed_not_found = render(json: { message: "Student not found" }, status: :not_found)
@@ -31,11 +31,15 @@ module ApiContractFixture
     def index_with_extra_property = render(json: { students: [STUDENT], total: 1 })
 
     def create
-      return render(json: STUDENT.merge(name: params[:name]), status: :created) if valid_input?
+      if valid_input?
+        return render(json: STUDENT.merge(name: params[:name]), status: :created,
+                      location: "/students/s-1")
+      end
 
       render json: { error: { code: "invalid_request", message: "name and grade are required" } }, status: :bad_request
     end
 
+    def create_without_location = render(json: STUDENT, status: :created)
     def create_with_malformed_error = render(json: { errors: ["invalid"] }, status: :bad_request)
     def destroy = head(:no_content)
     def archive = head(:accepted)

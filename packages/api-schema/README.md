@@ -13,4 +13,4 @@ API Schema Plannerは`.harness/api-schema/<issue-number>/openapi.yaml`にProposa
 | 契約を見る | Swagger UI | `pnpm api:docs` |
 | 契約からMock APIを提供する | Prism | `pnpm api:mock <Issue URL>` |
 
-型生成ツール・Contract Testは未導入。
+Railsのrequest specは、実際のrequest / responseをこのファイルに照合する（apps/api/README.md「request specの契約検証」）。型生成ツールは未導入。

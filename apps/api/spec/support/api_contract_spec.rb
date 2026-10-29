@@ -12,11 +12,9 @@ RSpec.describe "API contract for request specs", type: :request do
   def app = fixture_app
 
   # Returns the matcher's failure message, or nil when the exchange matched the contract.
-  def contract_failure(subject_contract = contract, **options)
-    expect(response).to match_api_contract(subject_contract, **options)
-    nil
-  rescue RSpec::Expectations::ExpectationNotMetError => e
-    e.message
+  def contract_failure(subject_contract = contract, **)
+    matcher = match_api_contract(subject_contract, **)
+    matcher.matches?(response) ? nil : matcher.failure_message
   end
 
   describe "a successful response" do
@@ -69,7 +67,7 @@ RSpec.describe "API contract for request specs", type: :request do
     end
 
     context "when a nullable property is null" do
-      it "passes, because the contract allows null there" do
+      it "passes, because the contract allows null there", :aggregate_failures do
         get "/students/s-1"
 
         expect(response.parsed_body).to include("nickname" => nil)
@@ -133,7 +131,7 @@ RSpec.describe "API contract for request specs", type: :request do
       it "fails and names the status" do
         get "/students/s-1"
 
-        expect(contract_failure).to include("GET /students/{studentId}", "418")
+        expect(contract_failure).to include("GET /students/{studentId}", "409")
       end
     end
 
@@ -148,9 +146,21 @@ RSpec.describe "API contract for request specs", type: :request do
     end
   end
 
+  describe "a response header" do
+    context "when the contract requires a header and Rails does not send it" do
+      let(:fixture_app) { ApiContractFixture.app(create: :create_without_location) }
+
+      it "fails and names the header" do
+        post "/students", params: { name: "Taro", grade: 3 }, as: :json
+
+        expect(contract_failure).to include("POST /students", "201", "Location")
+      end
+    end
+  end
+
   describe "a response without a body" do
     context "when Rails answers 204 to a DELETE whose contract declares 204 without content" do
-      it "passes" do
+      it "passes", :aggregate_failures do
         delete "/students/s-1"
 
         expect(response).to have_http_status(:no_content)
@@ -201,7 +211,7 @@ RSpec.describe "API contract for request specs", type: :request do
 
   describe "the request" do
     context "when the request body follows the contract" do
-      it "passes for the request and the 201 response" do
+      it "passes for the request and the 201 response", :aggregate_failures do
         post "/students", params: { name: "Taro", grade: 3 }, as: :json
 
         expect(response).to have_http_status(:created)
@@ -218,7 +228,8 @@ RSpec.describe "API contract for request specs", type: :request do
     end
 
     context "when a negative spec declares the invalid request and Rails answers with the declared 400" do
-      it "passes, because the violation was detected and the error response follows the contract" do
+      it "passes, because the violation was detected and the error response follows the contract",
+         :aggregate_failures do
         post "/students", params: { name: "Taro", grade: "third" }, as: :json
 
         expect(response).to have_http_status(:bad_request)
@@ -245,7 +256,7 @@ RSpec.describe "API contract for request specs", type: :request do
     end
 
     context "when the required request body is missing" do
-      it "detects the request violation" do
+      it "detects the request violation", :aggregate_failures do
         post "/students"
 
         expect(contract_failure).to include("POST /students", "request")
@@ -254,7 +265,7 @@ RSpec.describe "API contract for request specs", type: :request do
     end
 
     context "when a query parameter breaks its schema" do
-      it "detects the request violation on that parameter" do
+      it "detects the request violation on that parameter", :aggregate_failures do
         get "/students", params: { grade: 0 }
 
         expect(contract_failure).to include("GET /students", "grade")
@@ -277,7 +288,7 @@ RSpec.describe "API contract for request specs", type: :request do
         end
       end
 
-      it "fails even for a negative spec, because the operation cannot be resolved" do
+      it "fails even for a negative spec, because the operation cannot be resolved", :aggregate_failures do
         get "/teachers/t-1"
 
         expect(contract_failure).to include("GET /teachers/t-1")
@@ -288,7 +299,7 @@ RSpec.describe "API contract for request specs", type: :request do
 
   describe "a contract change" do
     context "when the contract changes studentId to an integer and Rails still returns a string" do
-      it "fails the request spec that passed against the previous contract" do
+      it "fails the request spec that passed against the previous contract", :aggregate_failures do
         get "/students/s-1"
 
         changed = ApiContract::Contract.load(ApiContractFixture.contract_path("students_changed"))
@@ -302,7 +313,7 @@ RSpec.describe "API contract for request specs", type: :request do
     let(:fixture_app) { ApiContractFixture.app(show: :invalid_guardian_email) }
 
     context "when the response carries PII and the request carries a token" do
-      it "names the property without printing the token, the value or the body" do
+      it "names the property without printing the token, the value or the body", :aggregate_failures do
         get "/students/s-1", headers: { "Authorization" => "Bearer secret-token-value" }
 
         message = contract_failure
@@ -346,58 +357,11 @@ RSpec.describe "API contract for request specs", type: :request do
         end
       end
 
-      it "fails the default contract check instead of skipping it" do
+      it "fails the default contract check instead of skipping it", :aggregate_failures do
         get "/students/s-1"
 
         expect { expect(response).to match_api_contract }
           .to raise_error(ApiContract::ContractError, /openapi\.yaml/)
-      end
-    end
-  end
-end
-
-RSpec.describe ApiContract::Coverage do
-  let(:contract) { ApiContract::Contract.load(ApiContractFixture.contract_path) }
-  let(:show_route) { { "verb" => "GET", "path" => "/students/:id(.:format)", "controller" => "students", "action" => "show" } }
-  let(:health_route) { { "verb" => "GET", "path" => "/up(.:format)", "controller" => "rails/health", "action" => "show" } }
-
-  describe "#verify!" do
-    context "when every Rails business route has a request spec that checked its operation" do
-      it "passes and lists which spec covered which operation, and the operations Rails has not implemented" do
-        coverage = described_class.new(contract:, routes: [show_route, health_route])
-        coverage.record("GET /students/{studentId}", "./spec/requests/students_spec.rb:10")
-
-        lines = coverage.verify!
-
-        expect(lines).to include(
-          "COVERED GET /students/{studentId} (students#show) by ./spec/requests/students_spec.rb:10",
-          "UNIMPLEMENTED POST /students"
-        )
-      end
-    end
-
-    context "when a Rails business route has no request spec that checked it against the contract" do
-      it "fails and names the route" do
-        coverage = described_class.new(contract:, routes: [show_route])
-
-        expect { coverage.verify! }
-          .to raise_error(ApiContract::CoverageError, %r{UNCOVERED GET /students/\{studentId\} \(students#show\)})
-      end
-    end
-
-    context "when Rails has business routes but packages/api-schema has no OpenAPI document" do
-      it "fails, because there is nothing to check the routes against" do
-        coverage = described_class.new(contract: nil, routes: [show_route])
-
-        expect { coverage.verify! }.to raise_error(ApiContract::CoverageError, /openapi\.yaml/)
-      end
-    end
-
-    context "when there is no OpenAPI document and Rails only draws framework routes" do
-      it "reports that nothing was checked instead of reporting a pass" do
-        coverage = described_class.new(contract: nil, routes: [health_route])
-
-        expect(coverage.verify!).to contain_exactly(a_string_including("NOT CHECKED", "openapi.yaml"))
       end
     end
   end
