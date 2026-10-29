@@ -55,11 +55,13 @@ export const configSchema = z.strictObject({
     sbiIssue: z.number().int().positive().optional(),
     areas: z.array(text).default([]),
   })).min(1),
-  // SBI Impact Analysis: cross-layer contracts added when areas meet, and paths whose change runs the Full Gate.
+  // SBI Impact Analysis: cross-layer contracts added when areas meet, paths whose change runs the Full Gate,
+  // and shared toolchain paths whose change runs the Full Gate and every application verifier.
   impact: z.strictObject({
     crossLayer: z.array(z.strictObject({ all: z.array(text).min(1), any: z.array(text).min(1), add: z.array(text).min(1) })).default([]),
     fullGate: z.array(text).default([]),
-  }).default({ crossLayer: [], fullGate: [] }),
+    toolchain: z.array(text).default([]),
+  }).default({ crossLayer: [], fullGate: [], toolchain: [] }),
 }).refine(c => new Set(c.verifiers.map(v => v.id)).size === c.verifiers.length && !c.verifiers.some(v => v.id === 'sample-bdd'), 'duplicate or reserved verifier');
 export const rulesSchema = z.strictObject({
   humanGate: z.array(z.enum(['AuthN', 'AuthZ', 'RLS', 'PII', 'Migration', 'ADR'])).length(6),
