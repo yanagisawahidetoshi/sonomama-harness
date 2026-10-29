@@ -57,6 +57,28 @@ describe('Security Impact Classifier', () => {
     it('when SBI names a specific rule then forces its required checks', () => assert.ok(assess([], { requiredSecurityRules: ['SEC-PII-001'] }).requiredVerifiers.includes('pii-log-check')));
     it('when an unknown rule is requested then rejects the request', () => assert.throws(() => assess([], { requiredSecurityRules: ['UNKNOWN'] }), /unknown.*rule/i));
   });
+  describe('given a Markdown document that names security files and rule IDs', () => {
+    const doc = added => assess([{ path: 'docs/adr/0002-foo.md', status: 'A', added }]);
+    it('when it links to authorization.md then does not require the authorization test', () => {
+      const result = doc('- 詳しくは[authorization.md](../security/authorization.md)と`docs/security/authorization.md`を見る。');
+      assert.equal(result.matchedRules.includes('SEC-AUTHZ-001'), false);
+      assert.equal(result.requiredVerifiers.includes('rails-authz-test'), false);
+    });
+    it('when it cites the role rule ID then does not match the role rule', () => {
+      const result = doc('- 実装はSEC-AUTH-001とSEC-ROLE-001の対象になる。');
+      assert.equal(result.matchedRules.includes('SEC-ROLE-001'), false);
+      assert.equal(result.requiredVerifiers.includes('rails-authz-test'), false);
+    });
+    it('when its prose describes authorization then still requires the authorization test', () => {
+      const result = doc('This endpoint requires authorization.');
+      assert.ok(result.matchedRules.includes('SEC-AUTHZ-001'));
+      assert.ok(result.requiredVerifiers.includes('rails-authz-test'));
+    });
+    it('when source code names authorization.md then still requires the authorization test', () => {
+      const result = assess([{ path: 'apps/api/lib/policy_docs.rb', status: 'A', added: "POLICY = 'docs/security/authorization.md'" }]);
+      assert.ok(result.matchedRules.includes('SEC-AUTHZ-001'));
+    });
+  });
 });
 
 describe('Security cannot be overridden by completion or approval', () => {
