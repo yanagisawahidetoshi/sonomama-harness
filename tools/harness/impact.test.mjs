@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fixture, update } from './test-fixture.mjs';
 import { readJson } from './io.mjs';
@@ -12,8 +12,10 @@ import { snapshotFromIssue, snapshotPath } from './sbi-source.mjs';
 import { git } from './workspace.mjs';
 import { verify } from './verifier.mjs';
 import { check } from './check.mjs';
+import { parse } from 'yaml';
 
 const config = await readJson(new URL('../../.harness/config/harness.json', import.meta.url));
+const workflow = parse(await readFile(new URL('../../.github/workflows/harness.yml', import.meta.url), 'utf8'));
 const sbi = (affectedAreas, extra = {}) => ({ id: 'SBI-X', acceptanceCriteria: [{ id: 'X-AC-1', verifier: 'admin-acceptance' }], requiredVerifiers: [], affectedAreas, ...extra });
 const files = (...paths) => paths.map(path => ({ path }));
 const touched = { api: 'apps/api/app/models/lesson.rb', mobile: 'apps/mobile/src/features/home/index.ts', admin: 'apps/admin/src/features/home/index.ts' };
@@ -434,6 +436,41 @@ describe('CI Completion Judge for Trusted Acceptance and Security', () => {
       assert.ok(lines.includes('Application: verifiers=success harness-test=skipped harness-demo=skipped'));
       assert.ok(lines.includes('Acceptance: PASS (sample-bdd: PASS)'));
       assert.ok(lines.includes('Security: PASS (secret-scan: PASS)'));
+    });
+  });
+});
+
+describe('CI workflow setup', () => {
+  const runs = job => workflow.jobs[job].steps.filter(s => s.run).map(s => s.run);
+  const nodeCache = job => workflow.jobs[job].steps.find(s => s.uses?.startsWith('actions/setup-node@')).with.cache;
+
+  describe('given impact and the Completion Judge on every PR critical path', () => {
+    for (const job of ['impact', 'harness']) {
+      it(`when ${job} sets up then installs only the root production dependencies from the frozen lockfile without restoring the pnpm store`, () => {
+        assert.ok(runs(job).includes('pnpm install --frozen-lockfile --prod --ignore-workspace'));
+        assert.ok(!runs(job).includes('pnpm install --frozen-lockfile'));
+        assert.equal(nodeCache(job), undefined);
+      });
+    }
+  });
+
+  describe('given verifiers and the Full Gate that build applications', () => {
+    for (const job of ['verifiers', 'harness-test', 'harness-demo']) {
+      it(`when ${job} sets up then keeps the full workspace install with the pnpm store`, () => {
+        assert.ok(runs(job).includes('pnpm install --frozen-lockfile'));
+        assert.equal(nodeCache(job), 'pnpm');
+      });
+    }
+  });
+
+  describe('given a faster setup', () => {
+    it('when the jobs run then every job still runs the same Harness commands', () => {
+      const harness = job => runs(job).filter(r => r.startsWith('pnpm harness:'));
+      assert.deepEqual(harness('impact'), ['pnpm harness:check', 'pnpm harness:impact $HARNESS_SCOPE']);
+      assert.deepEqual(harness('verifiers'), ['pnpm harness:verify --verifier ${{ matrix.verifier }} $HARNESS_SCOPE']);
+      assert.deepEqual(harness('harness-test'), ['pnpm harness:test']);
+      assert.deepEqual(harness('harness-demo'), ['pnpm harness:demo --full']);
+      assert.deepEqual(harness('harness'), ['pnpm harness:judge $HARNESS_SCOPE']);
     });
   });
 });
