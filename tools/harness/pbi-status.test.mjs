@@ -88,7 +88,7 @@ async function status({ state: stateOverrides, evidence = connected(), records =
 const implementationOnlyIssues = plannedSbis.slice(0, 2).map(s => sbiIssue(s));
 
 describe('PBI Status: collecting the PBI from GitHub', () => {
-  describe('given a PBI whose SBIs merged, passed every required check and E2E, with an approved Human Acceptance and no blocking bug', () => {
+  describe('given a PBI whose SBIs merged, passed every required check and E2E, with an approved Human Acceptance and no open blocker', () => {
     it('when the status is collected then the PBI is DONE and every SBI is listed with its kind, Issue, PR and results', async () => {
       const result = await status();
       assert.equal(result.status, 'DONE', result.reasons.join('\n'));
@@ -104,7 +104,7 @@ describe('PBI Status: collecting the PBI from GitHub', () => {
       assert.deepEqual(result.sbis[2].dependsOn, ['SBI-001', 'SBI-002']);
       assert.equal(result.acceptance, 'APPROVED');
       assert.equal(result.evidenceDigest, validationDigest);
-      assert.deepEqual(result.blockingBugs, []);
+      assert.deepEqual(result.blockers, []);
     });
     it('when the Issues of another PBI or Issues without the Planner marker carry the sbi label then they are not SBIs of this PBI', async () => {
       const other = sbiIssue(planned({ id: 'SBI-001' }), { number: 30, html_url: issueUrl(30), body: renderSbiBody(planned(), { ...pbi, number: 9, url: issueUrl(9) }, {}) });
@@ -280,13 +280,14 @@ describe('PBI Status: Human Acceptance and the evidence digest', () => {
   });
 });
 
-describe('PBI Status: blocking bugs', () => {
+describe('PBI Status: blockers', () => {
   describe('given Issues registered on GitHub as blocking the PBI (blocked by)', () => {
     it('when one is open then the PBI is NOT_DONE and names it', async () => {
       const result = await status({ state: { blockedBy: [{ number: 40, title: 'ログインできない', body: null, html_url: issueUrl(40), state: 'open', labels: [{ name: 'bug' }] }] } });
       assert.equal(result.status, 'NOT_DONE');
-      assert.deepEqual(result.blockingBugs, [{ url: issueUrl(40), title: 'ログインできない', state: 'open' }]);
-      assert.match(result.reasons.join('\n'), /issues\/40/);
+      assert.deepEqual(result.blockers, [{ url: issueUrl(40), title: 'ログインできない', state: 'open' }]);
+      assert.match(result.reasons.join('\n'), /blocker.*issues\/40/);
+      assert.equal(result.ready, false);
     });
     it('when every one is closed then it does not block the PBI', async () => {
       const result = await status({ state: { blockedBy: [{ number: 40, title: 'ログインできない', body: null, html_url: issueUrl(40), state: 'closed', labels: [{ name: 'bug' }] }] } });
@@ -318,7 +319,7 @@ describe('PBI Status: GitHub failures fail closed', () => {
 
 describe('PBI Status: display', () => {
   describe('given a collected status', () => {
-    it('when it is rendered then the PBI, its status, each SBI, Human Acceptance, blocking bugs and the reasons are shown', async () => {
+    it('when it is rendered then the PBI, its status, each SBI, Human Acceptance, blockers and the reasons are shown', async () => {
       const text = renderPbiStatus(await status({ records: [] })).join('\n');
       assert.match(text, /^PBI: #8 受講生ログイン$/m);
       assert.match(text, /^Status: NOT_DONE$/m);
@@ -327,7 +328,8 @@ describe('PBI Status: display', () => {
       assert.match(text, /Human Acceptance\n.*PENDING/);
       assert.match(text, new RegExp(`Evidence digest: ${validationDigest}`));
       assert.match(text, new RegExp(`pnpm harness:pbi-accept ${pbi.url} --evidence ${validationDigest}`));
-      assert.match(text, /Blocking Bugs\n.*none/);
+      assert.match(text, /Blockers\n.*none/);
+      assert.doesNotMatch(text, /[Bb]ug/);
       assert.match(text, /Reason:\n- PBI Human Acceptance Gate/);
     });
     it('when the Maestro E2E Evidence is not connected then each SBI line says so instead of showing no E2E target', async () => {
@@ -383,6 +385,19 @@ describe('PBI Acceptance from the trusted CLI', () => {
       await assert.rejects(accept(root, {}, state), /まだ受け入れ確認できません/);
       assert.deepEqual(await pbiAcceptanceRecords(root, pbi.url), []);
     }));
+    it('when an Issue blocking the PBI (blocked by) is still open then APPROVE is not recorded even though every SBI is done', () => withRoot(async root => {
+      await assert.rejects(accept(root, {}, { blockedBy: [{ number: 40, title: 'ログインできない', body: null, html_url: issueUrl(40), state: 'open', labels: [] }] }), /まだ受け入れ確認できません[\s\S]*issues\/40/);
+      assert.deepEqual(await pbiAcceptanceRecords(root, pbi.url), []);
+    }));
+    it('when the blockers of the PBI cannot be read then APPROVE is not recorded', () => withRoot(async root => {
+      await assert.rejects(accept(root, {}, { fail: { blockedBy: true } }), /まだ受け入れ確認できません/);
+      assert.deepEqual(await pbiAcceptanceRecords(root, pbi.url), []);
+    }));
+    it('when every blocker is closed then APPROVE is recorded', () => withRoot(async root => {
+      const result = await accept(root, {}, { blockedBy: [{ number: 40, title: 'ログインできない', body: null, html_url: issueUrl(40), state: 'closed', labels: [] }] });
+      assert.equal(result.record.decision, 'APPROVE');
+      assert.equal(result.status.status, 'DONE', result.status.reasons.join('\n'));
+    }));
     it('when GitHub cannot be read then APPROVE is not recorded', () => withRoot(async root => {
       await assert.rejects(accept(root, {}, { fail: { list: true } }), /まだ受け入れ確認できません/);
       assert.deepEqual(await pbiAcceptanceRecords(root, pbi.url), []);
@@ -392,6 +407,10 @@ describe('PBI Acceptance from the trusted CLI', () => {
         const result = await accept(root, { decision }, { fail: { list: true } });
         assert.equal(result.record.decision, decision);
         assert.equal(result.status.status, 'NOT_DONE');
+      }));
+      it(`when the human records ${decision} while a blocker is open then it is recorded`, () => withRoot(async root => {
+        const result = await accept(root, { decision }, { blockedBy: [{ number: 40, title: 'ログインできない', body: null, html_url: issueUrl(40), state: 'open', labels: [] }] });
+        assert.equal(result.record.decision, decision);
       }));
     }
   });
