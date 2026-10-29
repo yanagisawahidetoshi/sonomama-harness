@@ -131,7 +131,10 @@ export async function snapshotVerified({ workspace, base, files, snapshot, confi
 }
 
 export function describeSbiSource(source) {
-  if (!source.required.length) return ['SBI source: not required'];
+  const exemption = source.exemption?.exempt ? [`SBI source: exempted for the dependency update by ${source.exemption.bot}`]
+    : source.exemption ? [`SBI source exemption: not applied (${source.exemption.reasons.join('; ')})`] : [];
+  if (!source.required.length) return exemption.length ? exemption : ['SBI source: not required'];
+  if (exemption.length) return [...exemption, ...describeSbiSource({ ...source, exemption: undefined })];
   return [
     ...source.sources.map(s => `SBI source: ${s.url} run ${s.runId}`),
     `SBI source check: ${source.status}${source.reasons.length ? ` (${source.reasons.join('; ')})` : ''}`,
