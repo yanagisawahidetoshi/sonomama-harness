@@ -107,11 +107,16 @@ describe('Engineering Issue as the source of a Production change', () => {
       assert.ok(source.reasons.some(r => r.includes('could not be read (HTTP 502)')), source.reasons.join('; '));
     }));
 
-    it('when GITHUB_REPOSITORY is not known then fails closed', () => repository(async root => {
+    it('when GITHUB_REPOSITORY is not set then fails closed', () => repository(async root => {
       await commit(root, linked);
-      const source = await verifyEngineeringSource({ root, base: 'base', required: ['production:apps/admin/package.json'], repository: undefined, github: { fetchIssue: async () => issue() } });
-      assert.equal(source.status, 'FAIL');
-      assert.ok(source.reasons.some(r => r.includes('GITHUB_REPOSITORY is not set')), source.reasons.join('; '));
+      // CI sets GITHUB_REPOSITORY, which is also the default for repository.
+      const previous = process.env.GITHUB_REPOSITORY;
+      delete process.env.GITHUB_REPOSITORY;
+      try {
+        const source = await verifyEngineeringSource({ root, base: 'base', required: ['production:apps/admin/package.json'], github: { fetchIssue: async () => issue() } });
+        assert.equal(source.status, 'FAIL');
+        assert.ok(source.reasons.some(r => r.includes('GITHUB_REPOSITORY is not set')), source.reasons.join('; '));
+      } finally { if (previous !== undefined) process.env.GITHUB_REPOSITORY = previous; }
     }));
 
     it('when the PR links two different Issues then fails', () => repository(async root => {
