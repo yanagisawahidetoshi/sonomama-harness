@@ -22,9 +22,20 @@ PRで追加・変更された `.harness/state/sbi-*.json`（Harness Runのsnapsh
 
 必須のVerifierは、アプリが無い・コマンドが未設定ならFAILする。任意のVerifierは、対象がまだ作られていなければ「missing app (placeholder)」としてSKIPする。
 
-## SBIが必須の変更
+## Production変更の起点
 
-Production（`apps/`・`packages/`と`.harness/config/lanes.json`の`productionPaths`）を変更するPRは、承認済みSBI Issueを起点にしたHarness Runから作られていることが必須。Completion Judge（`harness` job）が次をすべて確かめ、1つでも欠ければFAILする。
+Production（`apps/`・`packages/`と`.harness/config/lanes.json`の`productionPaths`）を変更するPRは、承認済みの変更起点を必須とする。変更の種類で起点を分ける。
+
+| 種類 | 例 | 必須の起点 |
+| --- | --- | --- |
+| Product implementation | 新機能、仕様変更、ユーザー挙動の変更 | 承認済みSBI Issueを起点にしたHarness Run + snapshot |
+| Engineering change | dependency、refactor、tooling、Storybook、build設定、Design System導入など、プロダクト仕様を直接変更しない技術変更 | open・`ready`のEngineering Issue + commit trailer |
+
+Engineering changeでもVerifier・Security・Risk・Human Reviewは通常どおり行う。免除されるのはSBI Run snapshotだけ。どちらか曖昧ならProduct implementationとしてSBIを使う。
+
+### Product implementation: SBI Run snapshot
+
+Completion Judge（`harness` job）が次をすべて確かめ、1つでも欠ければFAILする。
 
 | 確認 | 内容 |
 | --- | --- |
@@ -36,9 +47,29 @@ Production（`apps/`・`packages/`と`.harness/config/lanes.json`の`productionP
 snapshotとtrailerはHarnessがRunとPR作成のときに書く。人間はSBI JSONを書かない。snapshotのSBIは手書きのSBI JSONと同じくImpact AnalysisとTrusted Acceptanceに使う。Issue本文からSBIへの組み立ては `tools/harness/sbi-issue.mjs` の `sbiFromIssue` で、Runの開始とCIで同じ処理を使う。
 保証するのは「CIを実行した時点で、PRのsnapshotが承認済みSBI Issueの現在の内容と完全に一致し、snapshotが改変されていない」こと。Run開始後にIssueを編集した（チェックボックスを付けただけでも）PRはFAILする。編集を残すなら、そのIssueから新しいRunを始める。
 snapshotをHarnessが書いたことの暗号学的な証明ではない。Issueと完全に一致するsnapshotとtrailerを手で作ることはできる。防ぐにはGitHub ActionsのOIDCなどによるRunの実行attestationが要る（未実装）。
-source Issueを持たない手書きの `sbi-*.json`（`sbi-admin-env.json` など）はProduction変更の根拠にならない。触らないPRには影響しない。
-それ以外（`prototypes/`、docs、Harness本体など）だけを変更するPRはSBIなしで通り、Verifierは差分だけで選ぶ。mainへのpushでも確認しない。
-判定理由はimpact jobとharness jobのログの `SBI required:` 行と、harness jobの `SBI source` 行に出る。harness jobはIssueを読むため `issues: read` と `GH_TOKEN` を持つ。
+source Issueを持たない手書きの `sbi-*.json`（`sbi-admin-env.json` など）はProduct implementationの根拠にならない。
+
+### Engineering change: Engineering Issue
+
+SBIに分ける必要のない技術変更は、Issue本文に次を置く。
+
+```md
+## 種類
+engineering
+```
+
+Issueはこのリポジトリのもので、open・`ready`あり・`needs-review`なし・`sbi`なしであること。PRのcommitのどれかに次のtrailerを入れる。
+
+```text
+Engineering-Issue: https://github.com/<owner>/<repo>/issues/<number>
+```
+
+Completion Judgeはcommit trailerからIssueを1件だけ特定し、GitHub APIで現在のIssueを読む。Issueを読めない、別repository、複数のEngineering Issue、`ready`なし、`needs-review`あり、`sbi`あり、`## 種類 / engineering`が無い場合はFAILする。
+SBI snapshotがPRに存在する、または壊れたsnapshotが存在する場合は必ずSBI側の検証を行い、Engineering Issueへフォールバックしない。壊れたSBI sourceをEngineering経路で回避することはできない。
+詳細は [docs/workflows/engineering-changes.md](../../docs/workflows/engineering-changes.md)。
+
+それ以外（`prototypes/`、docs、Harness本体など）だけを変更するPRはProduction sourceなしで通り、Verifierは差分だけで選ぶ。mainへのpushでもsource確認は行わない。
+判定理由はimpact jobとharness jobに出る。互換性のためimpactログのフィールド名は当面 `SBI required:` のままだが、意味は「Production source required」。harness jobはIssueを読むため `issues: read` と `GH_TOKEN` を持つ。
 
 `impact.fullGate` のパス（`tools/harness/`、`.harness/config|verification|rules|skills/`、`.github/`、`.githooks/`、`AGENTS.md`、`.ai/`）が変わったときはFull Gateも実行する。
 `impact.toolchain` のパス（`.node-version`、`.tool-versions`、root の `package.json`、`pnpm-workspace.yaml`、`.npmrc`）が変わったときは、全Application VerifierとFull Gateを実行する。ログの理由は`toolchain:<path>`になる。workflowはこの判定の出力を使うだけで、pathを持たない。
@@ -99,4 +130,4 @@ pnpm harness:verify --verifier admin --base origin/main
 - `impact.fullGate`か`impact.toolchain`のパスが変わった
 - 複数のrefを同時にpushした（pushするcommitごとに実行）、push先のcommitが手元に無い、比較するbaseが無い、refを読めない（HEADのcommitで実行）
 
-hookはローカルの早期検出用で、回避できる。SBI必須・Trusted Acceptance・Security・`harness:demo --full`はCIのCompletion Judgeが最終判定する。
+hookはローカルの早期検出用で、回避できる。Production source・Trusted Acceptance・Security・`harness:demo --full`はCIのCompletion Judgeが最終判定する。
