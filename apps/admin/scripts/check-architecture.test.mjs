@@ -167,6 +167,55 @@ describe('checkArchitecture', () => {
     });
   });
 
+  describe('given sparkle-design imports', () => {
+    it('when only shared/components/ui imports sparkle-design then reports no violation', () => {
+      const src = fixture({
+        ...valid,
+        'shared/components/ui/Button/index.tsx': "import { Button as SparkleButton } from 'sparkle-design';\n",
+        'shared/components/ui/Input/index.tsx': "import { Input } from 'sparkle-design/input';\n",
+      });
+      assert.deepEqual(checkArchitecture(src), []);
+    });
+
+    it('when a feature page imports sparkle-design directly then reports it', () => {
+      const src = fixture({
+        ...valid,
+        'features/home/pages/HomePage/index.tsx': "import { Button } from 'sparkle-design';\n",
+      });
+      assert.deepEqual(checkArchitecture(src), [
+        {
+          file: 'features/home/pages/HomePage/index.tsx',
+          specifier: 'sparkle-design',
+          rule: 'sparkle-design outside shared/components/ui',
+        },
+      ]);
+    });
+
+    it('when app, providers or other shared code imports a sparkle-design subpath then reports each', () => {
+      const src = fixture({
+        ...valid,
+        'app/router.tsx': "import { HomePage } from '@/features/home';\nimport { Tag } from 'sparkle-design/tag';\n",
+        'providers/ToastProvider/index.tsx': "import { Toaster } from 'sparkle-design';\n",
+        'shared/components/PageHeading/index.tsx': "const load = () => import('sparkle-design/card');\n",
+      });
+      assert.deepEqual(
+        checkArchitecture(src)
+          .map((v) => `${v.file}: ${v.specifier}`)
+          .sort(),
+        [
+          'app/router.tsx: sparkle-design/tag',
+          'providers/ToastProvider/index.tsx: sparkle-design',
+          'shared/components/PageHeading/index.tsx: sparkle-design/card',
+        ],
+      );
+    });
+
+    it('when a package whose name only starts with sparkle-design is imported then reports no violation', () => {
+      const src = fixture({ ...valid, 'features/home/hooks/useTheme.ts': "import { x } from 'sparkle-design-cli';\n" });
+      assert.deepEqual(checkArchitecture(src), []);
+    });
+  });
+
   describe('given a relative import that leaves src', () => {
     it('when a feature imports a file outside src then reports it as an unknown layer', () => {
       const src = fixture({

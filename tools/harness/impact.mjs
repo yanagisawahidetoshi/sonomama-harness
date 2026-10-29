@@ -1,10 +1,14 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isSafeEnvTemplate } from './evidence-protection.mjs';
+import { verifyEngineeringSource } from './engineering-source.mjs';
 import { readJson } from './io.mjs';
 import { isProductionPath } from './lanes.mjs';
-import { readSbiFiles, verifySbiSource } from './sbi-source.mjs';
-import { configSchema, securityPolicySchema } from './schemas.mjs';
+import { claimsSbiSource, readSbiFiles, verifySbiSource } from './sbi-source.mjs';
+import { dependencyBotExemption } from './dependency-bot.mjs';
+import { githubCli } from './planner-github.mjs';
+import { verifyMigrationExceptions } from './migration-exception-approval.mjs';
+import { configSchema, dependencyBotPolicySchema, securityPolicySchema } from './schemas.mjs';
 import { classifySecurity, combineSecurity, securityPassed, verifySecurity } from './security-enforcement.mjs';
 import { checksPassed, verify } from './verifier.mjs';
 import { withAcceptance } from './acceptance-registry.mjs';
@@ -37,6 +41,11 @@ export function analyzeImpact({ config, sbis = [], files = [], all = false }) {
     if (sbis.length && !fromSbi.has(v.id)) select(v.id, 'diff-not-in-sbi', false);
   }
   if (all) for (const v of apps) select(v.id, 'all', false);
+  // A gated command (expo-doctor) is named with the path that makes it run, so the log shows why it ran or why it did not.
+  for (const v of apps) for (const gate of v.gatedCommands ?? []) {
+    const path = firstMatch(gate.appliesTo, files);
+    if (path) select(v.id, `gate:${gate.command.join(' ')}:${path}`, false);
+  }
   // A shared runtime or package manager change can break any app, so it selects every application verifier and the Full Gate.
   const toolchainPath = firstMatch(config.impact?.toolchain, files);
   if (toolchainPath) for (const v of apps) select(v.id, `toolchain:${toolchainPath}`, false);
@@ -50,7 +59,8 @@ export function analyzeImpact({ config, sbis = [], files = [], all = false }) {
   }
   const fullGatePath = firstMatch(config.impact?.fullGate, files);
   const fullGateReasons = all ? ['all'] : [...fullGatePath ? [`diff:${fullGatePath}`] : [], ...toolchainPath ? [`toolchain:${toolchainPath}`] : []];
-  // Production work goes through an SBI; prototypes, docs and Harness maintenance stay outside lanes.json productionPaths.
+  // Production work needs an approved source: an SBI Run for Product implementation, a ready Engineering Issue for engineering changes.
+  // Prototypes, docs and Harness maintenance stay outside lanes.json productionPaths.
   const sbiRequiredReasons = files.filter(f => isProductionPath(f.path)).slice(0, 1).map(f => `production:${f.path}`);
   const selected = [...verifiers.values()].sort((a, b) => a.id.localeCompare(b.id));
   return {
@@ -67,7 +77,7 @@ export function analyzeImpact({ config, sbis = [], files = [], all = false }) {
 }
 
 // Required jobs must succeed; a job may be skipped only when the impact did not ask for it. Security that was not evaluated fails.
-export function judgeCi({ impact, needs, acceptance, security, source }) {
+export function judgeCi({ impact, needs, acceptance, security, source, migrationExceptions }) {
   const reasons = [];
   const expect = (job, wanted) => {
     const result = needs[job]?.result ?? 'missing';
@@ -75,6 +85,7 @@ export function judgeCi({ impact, needs, acceptance, security, source }) {
   };
   expect('impact', true);
   if (impact.sbiRequired && source?.status !== 'PASS') reasons.push(...(source?.reasons.length ? source.reasons : ['sbi source: not evaluated']));
+  if (migrationExceptions?.status === 'FAIL') reasons.push(...migrationExceptions.reasons);
   expect('verifiers', impact.requiredVerifiers.length > 0);
   expect('harness-test', impact.fullGate);
   expect('harness-demo', impact.fullGate);
@@ -109,7 +120,8 @@ export async function loadImpact({ root, base, all = false }) {
 // The matrix job: one verifier, mandatory only when an SBI asked for it, so a cross-layer contract without a document stays a placeholder SKIP.
 export async function runVerifier({ root, base, all = false, id }) {
   const { config, files, impact } = await loadImpact({ root, base, all });
-  const mandatory = impact.verifiers.find(v => v.id === id)?.mandatory ?? false;
+  const entry = impact.verifiers.find(v => v.id === id);
+  const mandatory = entry?.mandatory ?? false;
   // A Security Verifier connected in harness.json runs the same way as in the Harness run; without commands it stays NOT_CONFIGURED and fails.
   if (config.securityVerifiers.some(v => v.id === id)) {
     const policy = securityPolicySchema.parse(await readJson(join(root, '.harness/rules/security.json')));
@@ -134,9 +146,9 @@ async function changedContent(root, files) {
   return content;
 }
 
-// Completion Judge: trusted acceptance of every changed SBI and the Harness Security Policy run here, the source SBI Issue of a Production change
-// is read from GitHub, then the job results are checked against what the impact required.
-export async function runCompletionJudge({ root, base, all = false, needs, repository, github }) {
+// Completion Judge: trusted acceptance of every changed SBI and the Harness Security Policy run here. Production changes must be backed by either
+// a ready SBI Run snapshot or, for engineering/maintenance work, a ready Engineering Issue linked from a commit trailer.
+export async function runCompletionJudge({ root, base, all = false, needs, repository = process.env.GITHUB_REPOSITORY, pullNumber, github = githubCli, githubPr }) {
   const { config, files, sbis, impact } = await loadImpact({ root, base, all });
   const missing = [], checks = [];
   for (const sbi of sbis) {
@@ -151,16 +163,30 @@ export async function runCompletionJudge({ root, base, all = false, needs, repos
   const matrix = impact.requiredVerifiers.map(id => ({ id, status: needs.verifiers?.result === 'success' ? 'PASS' : 'FAIL', reason: `verifier matrix: ${needs.verifiers?.result ?? 'missing'}` }));
   const headSha = (await git(root, ['rev-parse', 'HEAD'])).stdout.trim();
   const security = await verifySecurity({ workspace: root, sbi: {}, assessment, policy, config, headSha, verification: { checks: [...checks, ...matrix] }, changed: await changedContent(root, files) });
-  const source = await verifySbiSource({ root, base, files, required: impact.sbiRequiredReasons, config, repository, github });
-  return { impact, acceptance, checks, security, source, ...judgeCi({ impact, needs, acceptance, security, source }) };
+  // A trusted bot's dependency PR lifts the source requirement only; everything above and judgeCi stay as they are.
+  const exemption = impact.sbiRequired && pullNumber !== undefined
+    ? await dependencyBotExemption({ policy: dependencyBotPolicySchema.parse(await readJson(join(root, '.harness/rules/dependency-bots.json'))), files, headSha, repository, pullNumber, github })
+    : null;
+  const required = exemption?.exempt ? [] : impact.sbiRequiredReasons;
+  // Anything that claims an SBI (a changed, broken or deleted snapshot, or the Run trailers) is judged as an SBI, so an Engineering Issue
+  // cannot stand in for a missing or broken Run.
+  const verified = await claimsSbiSource(root, base, files)
+    ? await verifySbiSource({ root, base, files, required, config, repository, github })
+    : await verifyEngineeringSource({ root, base, required, repository, github });
+  const source = { ...verified, ...(exemption ? { exemption } : {}) };
+  // A destructive migration that migration-safety let through as an exception request still needs two reviews on headSha.
+  const migrationExceptions = all ? { status: 'PASS', exceptions: [], reasons: [] }
+    : await verifyMigrationExceptions({ root, base, files, headSha, repository, pullNumber, ...(githubPr ? { githubPr } : {}) });
+  return { impact, acceptance, checks, security, source, migrationExceptions, ...judgeCi({ impact, needs, acceptance, security, source, migrationExceptions }) };
 }
 
-export function describeJudge({ needs, acceptance, checks, security }) {
+export function describeJudge({ needs, acceptance, checks, security, migrationExceptions }) {
   const list = items => items.length ? ` (${items.map(c => `${c.id}: ${c.status}`).join(', ')})` : ' (none)';
   return [
     `Application: ${Object.entries(needs).filter(([job]) => job !== 'impact').map(([job, value]) => `${job}=${value.result}`).join(' ') || '(no job results)'}`,
     `Acceptance: ${acceptance.status}${list(checks.filter(c => c.trust === 'acceptance'))}`,
     `Security: ${security.status}${list(security.checks.filter(c => c.required))}`,
+    ...(migrationExceptions?.exceptions.length || migrationExceptions?.status === 'FAIL' ? [`Migration exception: ${migrationExceptions.status}${migrationExceptions.exceptions.map(e => ` (${e.migration}: ${e.approvers.join(', ') || 'no approval'})`).join('')}`] : []),
   ];
 }
 

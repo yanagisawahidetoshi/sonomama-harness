@@ -13,7 +13,7 @@ import { recordApiSchemaDecision } from './api-schema-approval.mjs';
 import { githubCli } from './planner-github.mjs';
 import { parseIssueUrl } from './planner.mjs';
 import { startApiMock, mockSchemaPath } from './api-mock.mjs';
-import { checkApiMock } from './api-mock-check.mjs';
+import { checkApiMock, dummyBearer, mockEnvironment } from './api-mock-check.mjs';
 
 const issueUrl = 'https://github.com/acme/app/issues/12';
 const issue = { number: 12, title: 'プロフィールAPIを追加する', body: '## 背景\n受講生が自分のプロフィールを取得する。', html_url: issueUrl, state: 'open', labels: [] };
@@ -240,12 +240,59 @@ describe('Prism Mock check of a Schema SBI', () => {
     assert.deepEqual(result.skipped.map(s => s.endpoint), ['GET /api/v1/courses/{id}']);
     assert.match(result.skipped[0].reason, /path parameter id/);
   }));
-  it('when an endpoint has a security requirement then it is listed as not called with the reason, since the Verifier sends no credential', () => fixture(async root => {
-    await write(root, openapi({ '/api/v1/courses': courses, '/api/v1/me': { get: { operationId: 'getMe', security: [{ bearer: [] }], responses: { 200: { description: 'OK' } } } } }));
+  // #101: an authenticated endpoint is called with the fixed dummy Bearer only; nothing else stands in for a credential.
+  const schemes = { bearer: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' }, oauth: { type: 'oauth2', flows: { clientCredentials: { tokenUrl: 'https://auth.invalid/token', scopes: {} } } }, oidc: { type: 'openIdConnect', openIdConnectUrl: 'https://auth.invalid/.well-known/openid-configuration' }, key: { type: 'apiKey', in: 'header', name: 'X-Api-Key' }, basic: { type: 'http', scheme: 'basic' } };
+  const secured = (security, example = { id: 'u1' }) => ({ get: { operationId: 'getMe', security, responses: { 200: { description: 'OK', content: json({ type: 'object', required: ['id'], properties: { id: { type: 'string' } } }, example) }, 401: { description: 'Unauthorized' } } } });
+  const withSchemes = paths => openapi(paths, { components: { securitySchemes: schemes } });
+  it('when an endpoint requires a Bearer token then Prism is called with the fixed dummy Bearer and answers the documented status', () => fixture(async root => {
+    await write(root, withSchemes({ '/api/v1/me': secured([{ bearer: [] }]) }));
     const result = await checkApiMock({ root });
-    assert.deepEqual([result.status, result.checked, result.skipped.map(s => s.endpoint)], ['PASS', ['GET /api/v1/courses 200'], ['GET /api/v1/me']]);
-    assert.match(result.skipped[0].reason, /security/);
+    assert.deepEqual([result.status, result.checked], ['PASS', ['GET /api/v1/me 200 (dummy Bearer)']], result.errors.join('; '));
   }));
+  it('when only authenticated endpoints exist then the check passes because at least one endpoint was requested', () => fixture(async root => {
+    await write(root, withSchemes({ '/api/v1/me': secured([{ bearer: [] }]), '/api/v1/me/settings': secured([{ oauth: [] }]), '/api/v1/me/profile': secured([{ oidc: [] }]) }));
+    const result = await checkApiMock({ root });
+    assert.equal(result.status, 'PASS', result.errors.join('; '));
+    assert.deepEqual(result.checked.sort(), ['GET /api/v1/me 200 (dummy Bearer)', 'GET /api/v1/me/profile 200 (dummy Bearer)', 'GET /api/v1/me/settings 200 (dummy Bearer)']);
+  }));
+  it('when the global security applies to an endpoint then it is called with the dummy Bearer, and an empty requirement is called without it', () => fixture(async root => {
+    const open = { get: { operationId: 'listCourses', security: [{}], responses: courses.get.responses } };
+    await write(root, openapi({ '/api/v1/me': { get: { ...secured([]).get, security: undefined } }, '/api/v1/courses': open }, { components: { securitySchemes: schemes }, security: [{ bearer: [] }] }));
+    const result = await checkApiMock({ root });
+    assert.deepEqual([result.status, result.checked.sort()], ['PASS', ['GET /api/v1/courses 200', 'GET /api/v1/me 200 (dummy Bearer)']], result.errors.join('; '));
+  }));
+  it('when an endpoint can be satisfied only by an API key, Basic auth or an undefined scheme then it is listed as not called with the reason', () => fixture(async root => {
+    await write(root, withSchemes({ '/api/v1/courses': courses, '/api/v1/key': secured([{ key: [] }]), '/api/v1/basic': secured([{ basic: [] }]), '/api/v1/unknown': secured([{ missing: [] }]), '/api/v1/both': secured([{ bearer: [], key: [] }]) }));
+    const result = await checkApiMock({ root });
+    assert.deepEqual([result.status, result.checked], ['PASS', ['GET /api/v1/courses 200']], result.errors.join('; '));
+    assert.deepEqual(result.skipped.map(s => s.endpoint).sort(), ['GET /api/v1/basic', 'GET /api/v1/both', 'GET /api/v1/key', 'GET /api/v1/unknown']);
+    for (const { reason } of result.skipped) assert.match(reason, /dummy Bearer/);
+  }));
+  it('when an endpoint accepts either an API key or a Bearer token then it is called with the dummy Bearer', () => fixture(async root => {
+    await write(root, withSchemes({ '/api/v1/me': secured([{ key: [] }, { bearer: [] }]) }));
+    assert.deepEqual((await checkApiMock({ root })).checked, ['GET /api/v1/me 200 (dummy Bearer)']);
+  }));
+  it('when the documented example of an authenticated response breaks its schema then fails with the violation', () => fixture(async root => {
+    await write(root, withSchemes({ '/api/v1/me': secured([{ bearer: [] }], { id: 3 }) }));
+    const result = await checkApiMock({ root });
+    assert.equal(result.status, 'FAIL');
+    assert.match(result.errors.join('\n'), /GET \/api\/v1\/me: .*id must be string/);
+  }));
+  it('when the documented example of a public response breaks its schema then fails with the violation', () => fixture(async root => {
+    await write(root, openapi({ '/api/v1/courses': { get: { operationId: 'listCourses', responses: { 200: { description: 'OK', content: json(courses.get.responses[200].content['application/json'].schema, [{ id: 1 }]) } } } } }));
+    const result = await checkApiMock({ root });
+    assert.equal(result.status, 'FAIL');
+    assert.match(result.errors.join('\n'), /GET \/api\/v1\/courses: /);
+  }));
+  it('when the dummy Bearer is compared with the secret patterns then it is not mistaken for a credential', async () => {
+    const policy = JSON.parse(await readFile(new URL('../../.harness/rules/security.json', import.meta.url), 'utf8'));
+    assert.match(dummyBearer, /dummy/);
+    for (const pattern of policy.secretPatterns) assert.equal(new RegExp(pattern).test(dummyBearer), false, pattern);
+  });
+  it('when Prism is started then it receives no credential from the environment of the Verifier', () => {
+    const env = mockEnvironment({ PATH: '/usr/bin', HOME: '/home/harness', GH_TOKEN: 'x', GITHUB_TOKEN: 'x', AWS_ACCESS_KEY_ID: 'x', AWS_SECRET_ACCESS_KEY: 'x', AWS_SESSION_TOKEN: 'x', NPM_TOKEN: 'x', ANTHROPIC_API_KEY: 'x' });
+    assert.deepEqual(env, { PATH: '/usr/bin' });
+  });
   // Nothing called is nothing confirmed: a Schema of only POST, unresolvable parameters and secured GETs does not pass.
   it('when no endpoint could be requested from Prism then fails instead of passing with nothing checked', () => fixture(async root => {
     await write(root, openapi({

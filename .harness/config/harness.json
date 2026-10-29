@@ -143,7 +143,9 @@
       ],
       "areas": [
         "api"
-      ]
+      ],
+      "isolation": "compose",
+      "network": true
     },
     {
       "id": "api-acceptance",
@@ -212,7 +214,8 @@
       ],
       "areas": [
         "api-contract"
-      ]
+      ],
+      "isolation": "harness"
     },
     {
       "id": "expo",
@@ -268,13 +271,27 @@
       "appliesTo": [
         "^apps/mobile/",
         "^packages/",
-        "^(package\\.json|pnpm-lock\\.yaml|pnpm-workspace\\.yaml|\\.npmrc|\\.ruby-version|\\.tool-versions|tsconfig[^/]*)$"
+        "^(package\\.json|pnpm-lock\\.yaml|pnpm-workspace\\.yaml|\\.npmrc|\\.node-version|\\.nvmrc|\\.ruby-version|\\.tool-versions|tsconfig[^/]*)$"
       ],
       "lanes": [
         "production"
       ],
       "areas": [
         "mobile"
+      ],
+      "network": true,
+      "gatedCommands": [
+        {
+          "command": [
+            "pnpm",
+            "run",
+            "doctor"
+          ],
+          "appliesTo": [
+            "^apps/mobile/(package\\.json|app\\.json|app\\.config\\.[^/]+|eas\\.json|babel\\.config\\.[^/]+|metro\\.config\\.[^/]+|react-native\\.config\\.[^/]+|(ios|android)/)",
+            "^(package\\.json|pnpm-workspace\\.yaml|\\.npmrc|\\.node-version|\\.nvmrc|\\.tool-versions)$"
+          ]
+        }
       ]
     },
     {
@@ -359,7 +376,8 @@
         "Biome",
         "Vitest",
         "RTL",
-        "build"
+        "build",
+        "Storybook build"
       ],
       "commands": [
         [
@@ -402,6 +420,14 @@
           "--outDir",
           "node_modules/.harness/dist",
           "--emptyOutDir"
+        ],
+        [
+          "pnpm",
+          "run",
+          "build-storybook",
+          "--output-dir",
+          "node_modules/.harness/storybook-static",
+          "--quiet"
         ]
       ],
       "appliesTo": [
@@ -414,7 +440,8 @@
       ],
       "areas": [
         "admin"
-      ]
+      ],
+      "network": true
     },
     {
       "id": "admin-acceptance",
@@ -543,7 +570,8 @@
       ],
       "areas": [
         "prototype-web"
-      ]
+      ],
+      "network": true
     },
     {
       "id": "prototype-web-acceptance",
@@ -582,7 +610,7 @@
       "marker": "package.json",
       "appliesTo": [
         "^prototypes/mobile/",
-        "^(package\\.json|pnpm-lock\\.yaml|pnpm-workspace\\.yaml|\\.npmrc|tsconfig[^/]*)$"
+        "^(package\\.json|pnpm-lock\\.yaml|pnpm-workspace\\.yaml|\\.npmrc|\\.node-version|\\.nvmrc|\\.tool-versions|tsconfig[^/]*)$"
       ],
       "lanes": [
         "prototype",
@@ -620,6 +648,20 @@
       ],
       "areas": [
         "prototype-mobile"
+      ],
+      "network": true,
+      "gatedCommands": [
+        {
+          "command": [
+            "pnpm",
+            "run",
+            "doctor"
+          ],
+          "appliesTo": [
+            "^prototypes/mobile/(package\\.json|app\\.json|app\\.config\\.[^/]+|eas\\.json|babel\\.config\\.[^/]+|metro\\.config\\.[^/]+|react-native\\.config\\.[^/]+|(ios|android)/)",
+            "^(package\\.json|pnpm-workspace\\.yaml|\\.npmrc|\\.node-version|\\.nvmrc|\\.tool-versions)$"
+          ]
+        }
       ]
     },
     {
@@ -786,7 +828,9 @@
           "compose.yaml",
           "down"
         ]
-      ]
+      ],
+      "isolation": "compose",
+      "network": true
     },
     {
       "id": "rails-authz-test",
@@ -844,7 +888,9 @@
           "compose.yaml",
           "down"
         ]
-      ]
+      ],
+      "isolation": "compose",
+      "network": true
     }
   ],
   "semanticReview": {

@@ -126,7 +126,7 @@ describe('rails-authz-test Security Verifier configuration', () => {
 describe('rails-authz-test in the CI verifier matrix', () => {
   // The CI matrix job runs `harness:verify --verifier rails-authz-test`; the Docker commands are replaced with the static step to stay hermetic.
   const policyPath = 'apps/api/app/policies/lesson_policy.rb';
-  const pullRequest = async (root, specs, commands = [[process.execPath, script]]) => {
+  const pullRequest = async (root, specs, commands = [['node', script]]) => {
     await update(root, '.harness/config/harness.json', c => { c.securityVerifiers.find(v => v.id === 'rails-authz-test').commands = commands; });
     await commitFixture(root);
     await mkdir(join(root, 'apps/api/app/policies'), { recursive: true });

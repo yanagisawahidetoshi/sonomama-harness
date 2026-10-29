@@ -130,6 +130,53 @@ describe('SBI Impact Analysis', () => {
       assert.equal(impact.fullGate, true);
     });
   });
+  describe('given the Expo dependency check that only dependency and native config changes need', () => {
+    const doctor = 'gate:pnpm run doctor';
+    for (const path of ['apps/mobile/package.json', 'apps/mobile/app.json', 'apps/mobile/app.config.ts', 'apps/mobile/eas.json', 'apps/mobile/metro.config.js', 'apps/mobile/babel.config.js', 'apps/mobile/ios/Podfile', 'apps/mobile/android/build.gradle', '.npmrc', 'pnpm-workspace.yaml', 'package.json', '.node-version', '.nvmrc']) {
+      it(`when ${path} changes then selects expo and explains that expo-doctor runs for that path`, () => {
+        const impact = analyzeImpact({ config, sbis: [], files: files(path) });
+        assert.ok(required(impact).includes('expo'));
+        assert.ok(reasons(impact, 'expo').includes(`${doctor}:${path}`), reasons(impact, 'expo').join(', '));
+      });
+    }
+
+    it('when only pnpm-lock.yaml changes then does not name expo-doctor for any verifier', () => {
+      const impact = analyzeImpact({ config, sbis: [], files: files('pnpm-lock.yaml') });
+      for (const id of ['expo', 'prototype-mobile']) assert.ok(!reasons(impact, id).some(r => r.startsWith(doctor)), id);
+    });
+
+    it('when only apps/mobile source changes then selects expo without the expo-doctor reason', () => {
+      const impact = analyzeImpact({ config, sbis: [], files: files(touched.mobile) });
+      assert.deepEqual(reasons(impact, 'expo'), [`diff:${touched.mobile}`]);
+    });
+
+    it('when a mobile SBI changes only source then keeps the expo-doctor reason out of the mandatory selection', () => {
+      const impact = analyzeImpact({ config, sbis: [sbi(['mobile'])], files: files(touched.mobile) });
+      assert.ok(!reasons(impact, 'expo').some(r => r.startsWith(doctor)));
+    });
+
+    it('when only an unrelated file changes then selects neither expo nor prototype-mobile', () => {
+      const impact = analyzeImpact({ config, sbis: [], files: files('docs/architecture/README.md', touched.admin) });
+      assert.ok(!required(impact).includes('expo'));
+      assert.ok(!required(impact).includes('prototype-mobile'));
+    });
+
+    it('when prototypes/mobile dependencies change then explains that the prototype expo-doctor runs', () => {
+      const impact = analyzeImpact({ config, sbis: [], files: files('prototypes/mobile/package.json') });
+      assert.ok(reasons(impact, 'prototype-mobile').includes(`${doctor}:prototypes/mobile/package.json`));
+      assert.ok(!reasons(impact, 'expo').some(r => r.startsWith(doctor)));
+    });
+
+    it('when only prototypes/mobile source changes then selects prototype-mobile without the expo-doctor reason', () => {
+      const impact = analyzeImpact({ config, sbis: [], files: files('prototypes/mobile/src/app/index.tsx') });
+      assert.deepEqual(reasons(impact, 'prototype-mobile'), ['diff:prototypes/mobile/src/app/index.tsx']);
+    });
+
+    it('when every verifier is requested then still does not run expo-doctor without a matching change', () => {
+      const impact = analyzeImpact({ config, sbis: [], files: [], all: true });
+      for (const id of ['expo', 'prototype-mobile']) assert.deepEqual(reasons(impact, id), ['all']);
+    });
+  });
 
   describe('given a shared toolchain changes', () => {
     const everyVerifier = ['admin', 'api-contract', 'expo', 'prototype-mobile', 'prototype-web', 'rails'];
@@ -220,7 +267,7 @@ describe('Single verifier execution', () => {
   describe('given the verifier selected by Impact Analysis', () => {
     it('when only one verifier is requested then evaluates that verifier alone', () => fixture(async root => {
       const { config: fixtureConfig, sbi: sample } = await check(root);
-      await update(root, '.harness/config/harness.json', c => { c.verifiers.find(v => v.id === 'admin').commands = [[process.execPath, '-e', 'process.exit(0)']]; });
+      await update(root, '.harness/config/harness.json', c => { c.verifiers.find(v => v.id === 'admin').commands = [['node', '-e', 'process.exit(0)']]; });
       await writeFile(join(root, 'apps/admin/package.json'), '{"private":true}');
       const current = await readJson(join(root, '.harness/config/harness.json'));
       const result = await verify({ root, workspace: root, config: current, sbi: { ...sample, acceptanceCriteria: [], requiredVerifiers: [] }, files: files(touched.admin), only: new Set(['admin']), selected: new Map([['admin', true]]) });

@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "bots": [
+    { "login": "renovate[bot]", "type": "Bot" }
+  ],
+  "paths": [
+    "apps/admin/package.json",
+    "pnpm-lock.yaml",
+    "apps/api/Gemfile",
+    "apps/api/Gemfile.lock"
+  ]
+}
