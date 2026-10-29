@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+storybook-static
+# Vite loads the Sparkle fonts from index.html; sparkle:generate also emits this unused Next.js helper.
+src/app/SparkleHead.tsx

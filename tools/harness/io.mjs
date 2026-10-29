@@ -10,11 +10,11 @@ export async function json(path, value) {
   await writeFile(temp, JSON.stringify(redact(value), null, 2) + '\n');
   await rename(temp, path);
 }
-// No shell expansion. Bound runtime and captured output; kill the process group on timeout.
-export function execute(command, args, { cwd, input = '', timeoutMs = 120000 } = {}) {
+// No shell expansion. env replaces the inherited environment when given. Bound runtime and captured output; kill the process group on timeout.
+export function execute(command, args, { cwd, input = '', timeoutMs = 120000, env } = {}) {
   return new Promise(resolve => {
     let stdout = '', stderr = '', error = null, timedOut = false;
-    const child = spawn(command, args, { cwd, shell: false, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(command, args, { cwd, env, shell: false, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] });
     const kill = () => {
       try { process.platform === 'win32' ? child.kill('SIGKILL') : process.kill(-child.pid, 'SIGKILL'); } catch { /* already exited */ }
     };

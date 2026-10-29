@@ -1,10 +1,18 @@
 import { z } from 'zod';
+import { posix } from 'node:path';
 import { states } from './state-machine.mjs';
 import { escalationCodes } from './escalation.mjs';
 const text = z.string().min(1);
 // implementation: feature work (Maestro against the mock API). validation: optional real API + Rails + DB E2E after every implementation SBI.
 // Human acceptance changes no code and runs no test, so it is a PBI Gate (pbiAcceptanceRecordSchema), never an SBI kind.
 export const sbiKinds = Object.freeze(['implementation', 'validation']);
+// A Harness-owned script (node tools/harness/*.mjs) only parses workspace files and runs on the host.
+export const isHarnessScript = (directory, [command, script]) => command === 'node' && /^tools\/harness\/[^/]+\.mjs$/.test(posix.normalize(posix.join(directory, script || '')));
+export const isComposeCommand = ([docker, compose, flag, file]) => docker === 'docker' && compose === 'compose' && flag === '-f' && Boolean(file);
+function isolationRules(v, ctx) {
+  if (v.isolation === 'harness' && !v.commands.every(c => isHarnessScript(v.directory, c))) ctx.addIssue({ code: 'custom', message: 'harness isolation only runs tools/harness scripts' });
+  if (v.isolation === 'compose' && (!v.network || !v.commands.every(c => isComposeCommand(c) || isHarnessScript(v.directory, c)))) ctx.addIssue({ code: 'custom', message: 'compose isolation only runs docker compose -f FILE or tools/harness scripts and requires network' });
+}
 export const relativePath = text.refine(p => !p.startsWith('/') && !p.includes('\\') && p.split('/').every(s => s !== '..' && s !== '.' && s !== ''), 'unsafe relative path');
 // A directory scope ends with '/' so it can never be read as a file name, and allowedFiles keeps meaning exactly those files.
 export const directoryPath = text.refine(p => p.endsWith('/') && relativePath.safeParse(p.slice(0, -1)).success, 'directory scope must be a safe relative path ending with /');
@@ -40,7 +48,10 @@ export const configSchema = z.strictObject({
   version: z.literal(1), provider: z.enum(['fake', 'codex', 'claude']), sbi: relativePath,
   maxConsecutiveFailures: z.number().int().min(1).max(3), maxIterations: z.number().int().min(1).max(20),
   timeoutMs: z.number().int().min(100).max(600000),
-  securityVerifiers: z.array(z.strictObject({ id: text, directory: z.union([z.literal('.'), relativePath]), commands: z.array(z.array(text).min(1)) })).default([]),
+  securityVerifiers: z.array(z.strictObject({ id: text, directory: z.union([z.literal('.'), relativePath]), commands: z.array(z.array(text).min(1)),
+    isolation: z.enum(['container', 'compose', 'harness']).default('container'), network: z.boolean().default(false) }).superRefine(isolationRules)).default([]),
+  // Untrusted verifier commands run in a Docker container; docker names the trusted CLI that starts it.
+  isolation: z.strictObject({ docker: text }).default({ docker: 'docker' }),
   semanticReview: z.strictObject({ enabled: z.boolean() }).default({ enabled: false }),
   // GitHub PR mode. requiredChecks are combined with the ruleset's required status checks of the base branch.
   github: z.strictObject({ remote: text, base: text, requiredChecks: z.array(text) }).default({ remote: 'origin', base: 'main', requiredChecks: ['harness'] }),
@@ -54,9 +65,13 @@ export const configSchema = z.strictObject({
     // Trusted Acceptance a human registered for one SBI Issue; its acceptanceIds are that Issue's acceptance criteria.
     sbiIssue: z.number().int().positive().optional(),
     areas: z.array(text).default([]),
+    // container: workspace-only Docker container. compose: Harness-started Compose after the file is checked.
+    // harness: a Harness-owned script that only parses workspace files. network grants egress to this verifier only.
+    isolation: z.enum(['container', 'compose', 'harness']).default('container'),
+    network: z.boolean().default(false),
     // A command that runs only when the change matches appliesTo, whatever else requires the verifier.
     gatedCommands: z.array(z.strictObject({ command: z.array(text).min(1), appliesTo: z.array(text).min(1) })).default([]),
-  }).refine(v => v.gatedCommands.every(g => v.commands.some(c => c.join('\0') === g.command.join('\0'))), 'gated command must be one of the verifier commands')).min(1),
+  }).superRefine(isolationRules).refine(v => v.gatedCommands.every(g => v.commands.some(c => c.join('\0') === g.command.join('\0'))), 'gated command must be one of the verifier commands')).min(1),
   // SBI Impact Analysis: cross-layer contracts added when areas meet, paths whose change runs the Full Gate,
   // and shared toolchain paths whose change runs the Full Gate and every application verifier.
   impact: z.strictObject({

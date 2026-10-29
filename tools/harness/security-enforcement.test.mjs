@@ -95,7 +95,7 @@ describe('Security enforcement in the execution loop', () => {
     }));
     it('when a trusted RLS command is configured then verifies it and still requires two merge reviewers', () => fixture(async root => {
       await update(root, '.harness/state/sample-sbi.json', s => s.securityImpact = ['RLS']);
-      await update(root, '.harness/config/harness.json', c => c.securityVerifiers = [{ id: 'rails-rls-test', directory: 'apps/api', commands: [[process.execPath, '-e', 'require("node:assert/strict").ok(true)']] }]);
+      await update(root, '.harness/config/harness.json', c => c.securityVerifiers = [{ id: 'rails-rls-test', directory: 'apps/api', commands: [['node', '-e', 'require("node:assert/strict").ok(true)']] }]);
       const run = await runHarness({ root, quiet: true });
       await recordDecision({ root, runId: run.id, purpose: 'implementation-gate', identityProvider: human('Designer') });
       let resumed = await resumeRun({ root, runId: run.id, quiet: true });

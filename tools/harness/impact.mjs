@@ -1,9 +1,10 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isSafeEnvTemplate } from './evidence-protection.mjs';
+import { verifyEngineeringSource } from './engineering-source.mjs';
 import { readJson } from './io.mjs';
 import { isProductionPath } from './lanes.mjs';
-import { readSbiFiles, verifySbiSource } from './sbi-source.mjs';
+import { claimsSbiSource, readSbiFiles, verifySbiSource } from './sbi-source.mjs';
 import { dependencyBotExemption } from './dependency-bot.mjs';
 import { githubCli } from './planner-github.mjs';
 import { verifyMigrationExceptions } from './migration-exception-approval.mjs';
@@ -58,7 +59,8 @@ export function analyzeImpact({ config, sbis = [], files = [], all = false }) {
   }
   const fullGatePath = firstMatch(config.impact?.fullGate, files);
   const fullGateReasons = all ? ['all'] : [...fullGatePath ? [`diff:${fullGatePath}`] : [], ...toolchainPath ? [`toolchain:${toolchainPath}`] : []];
-  // Production work goes through an SBI; prototypes, docs and Harness maintenance stay outside lanes.json productionPaths.
+  // Production work needs an approved source: an SBI Run for Product implementation, a ready Engineering Issue for engineering changes.
+  // Prototypes, docs and Harness maintenance stay outside lanes.json productionPaths.
   const sbiRequiredReasons = files.filter(f => isProductionPath(f.path)).slice(0, 1).map(f => `production:${f.path}`);
   const selected = [...verifiers.values()].sort((a, b) => a.id.localeCompare(b.id));
   return {
@@ -144,8 +146,8 @@ async function changedContent(root, files) {
   return content;
 }
 
-// Completion Judge: trusted acceptance of every changed SBI and the Harness Security Policy run here, the source SBI Issue of a Production change
-// is read from GitHub, then the job results are checked against what the impact required.
+// Completion Judge: trusted acceptance of every changed SBI and the Harness Security Policy run here. Production changes must be backed by either
+// a ready SBI Run snapshot or, for engineering/maintenance work, a ready Engineering Issue linked from a commit trailer.
 export async function runCompletionJudge({ root, base, all = false, needs, repository = process.env.GITHUB_REPOSITORY, pullNumber, github = githubCli, githubPr }) {
   const { config, files, sbis, impact } = await loadImpact({ root, base, all });
   const missing = [], checks = [];
@@ -161,11 +163,17 @@ export async function runCompletionJudge({ root, base, all = false, needs, repos
   const matrix = impact.requiredVerifiers.map(id => ({ id, status: needs.verifiers?.result === 'success' ? 'PASS' : 'FAIL', reason: `verifier matrix: ${needs.verifiers?.result ?? 'missing'}` }));
   const headSha = (await git(root, ['rev-parse', 'HEAD'])).stdout.trim();
   const security = await verifySecurity({ workspace: root, sbi: {}, assessment, policy, config, headSha, verification: { checks: [...checks, ...matrix] }, changed: await changedContent(root, files) });
-  // A trusted bot's dependency PR lifts the SBI source requirement only; everything above and judgeCi stay as they are.
+  // A trusted bot's dependency PR lifts the source requirement only; everything above and judgeCi stay as they are.
   const exemption = impact.sbiRequired && pullNumber !== undefined
     ? await dependencyBotExemption({ policy: dependencyBotPolicySchema.parse(await readJson(join(root, '.harness/rules/dependency-bots.json'))), files, headSha, repository, pullNumber, github })
     : null;
-  const source = { ...await verifySbiSource({ root, base, files, required: exemption?.exempt ? [] : impact.sbiRequiredReasons, config, repository, github }), ...(exemption ? { exemption } : {}) };
+  const required = exemption?.exempt ? [] : impact.sbiRequiredReasons;
+  // Anything that claims an SBI (a changed, broken or deleted snapshot, or the Run trailers) is judged as an SBI, so an Engineering Issue
+  // cannot stand in for a missing or broken Run.
+  const verified = await claimsSbiSource(root, base, files)
+    ? await verifySbiSource({ root, base, files, required, config, repository, github })
+    : await verifyEngineeringSource({ root, base, required, repository, github });
+  const source = { ...verified, ...(exemption ? { exemption } : {}) };
   // A destructive migration that migration-safety let through as an exception request still needs two reviews on headSha.
   const migrationExceptions = all ? { status: 'PASS', exceptions: [], reasons: [] }
     : await verifyMigrationExceptions({ root, base, files, headSha, repository, pullNumber, ...(githubPr ? { githubPr } : {}) });

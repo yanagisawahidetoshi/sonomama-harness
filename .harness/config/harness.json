@@ -143,7 +143,9 @@
       ],
       "areas": [
         "api"
-      ]
+      ],
+      "isolation": "compose",
+      "network": true
     },
     {
       "id": "api-acceptance",
@@ -212,7 +214,8 @@
       ],
       "areas": [
         "api-contract"
-      ]
+      ],
+      "isolation": "harness"
     },
     {
       "id": "expo",
@@ -276,6 +279,7 @@
       "areas": [
         "mobile"
       ],
+      "network": true,
       "gatedCommands": [
         {
           "command": [
@@ -372,7 +376,8 @@
         "Biome",
         "Vitest",
         "RTL",
-        "build"
+        "build",
+        "Storybook build"
       ],
       "commands": [
         [
@@ -415,6 +420,14 @@
           "--outDir",
           "node_modules/.harness/dist",
           "--emptyOutDir"
+        ],
+        [
+          "pnpm",
+          "run",
+          "build-storybook",
+          "--output-dir",
+          "node_modules/.harness/storybook-static",
+          "--quiet"
         ]
       ],
       "appliesTo": [
@@ -427,7 +440,8 @@
       ],
       "areas": [
         "admin"
-      ]
+      ],
+      "network": true
     },
     {
       "id": "admin-acceptance",
@@ -556,7 +570,8 @@
       ],
       "areas": [
         "prototype-web"
-      ]
+      ],
+      "network": true
     },
     {
       "id": "prototype-web-acceptance",
@@ -634,6 +649,7 @@
       "areas": [
         "prototype-mobile"
       ],
+      "network": true,
       "gatedCommands": [
         {
           "command": [
@@ -812,7 +828,9 @@
           "compose.yaml",
           "down"
         ]
-      ]
+      ],
+      "isolation": "compose",
+      "network": true
     }
   ],
   "semanticReview": {

@@ -44,7 +44,7 @@ harness.jsonには共通のVerifier Registryだけを置く（`sbiIssue`付き�
 
 ## 実行
 
-Node.js 22以上、pnpm 8以上、Git 2.28以上が必要。レビューZIPの作成にはzip、テストにはunzipも使用する。
+Node.js 22以上、pnpm 8以上、Git 2.28以上、Docker（verifierの実行に使う）が必要。レビューZIPの作成にはzip、テストにはunzipも使用する。
 
 ```sh
 pnpm install --frozen-lockfile
@@ -142,6 +142,8 @@ markerあり・commands未設定もFAIL。**対象となる必須チェックは
 
 commandsは引数配列で指定する。例は`[["bundle", "exec", "rspec"]]`。
 cwdは常に`<run>/workspace/<directory>`。アプリに検証を追加したら、ここに登録する。
+commandsはworkspaceだけを見せるDockerコンテナで、network無効・非rootで実行する。外部接続が必要なverifierだけ`network: true`を宣言する。
+Dockerが使えなければ`FAIL`（isolation unavailable）。信頼境界は[docs/security/threat-model.md](docs/security/threat-model.md)。
 SBI固有のテストは任意のverifier IDとacceptanceIdsで追加できる。
 
 ## ReviewerとSecurity Check
@@ -194,7 +196,7 @@ Security Verifierは次の状態を区別する。
 | PASS | 対象の検証を実行して成功 |
 | FAIL | 対象の検証を実行して失敗 |
 | SKIP | この変更では対象外 |
-| NOT_CONFIGURED | 必須だがコマンド・必要なツールが未設定／未導入 |
+| NOT_CONFIGURED | 必須だがコマンドが未設定 |
 
 requiredな検証はすべてPASSが必要。FAIL・SKIP・NOT_CONFIGURED、未承認Gate、rule violationがあれば
 Completion JudgeもMerge Policy Judgeも拒否する。未設定の必須検証は修正ループで解決できないため即Escalation。
@@ -456,8 +458,9 @@ Plannerは`needs-review`のSBIをExecution Harnessへ投入しない。人間が
 API契約の新規作成・変更が要るPBIでは、`planner:sbi`が`packages/api-schema`だけを変えるOpenAPI Schema SBIを1件作り、
 同じPBIの他のSBIをそれに依存させる（SBI Quality Judgeが検査する）。Schema SBIも通常のSBIと同じく、レビューして`ready`にし、`pnpm harness:run <SBI Issue URL>`で実行する。
 api-contract VerifierがOpenAPI 3.1の検証と破壊的変更の検出を行い、続けてrun workspaceのOpenAPIからPrism Mockを起動して、
-security要件のないGET endpointが記載した2xxとJSONを返すことを確認する。path parameterと必須query parameterの値はOpenAPIのexample・enum・型から作り、
-作れないendpointは理由つきで呼ばない。1件もrequestできなければFAIL。どれかがFAILならPRは作らない。
+GET endpointが記載した2xxとJSONを返し、responseがschemaと一致する（Prismの`sl-violations`が無い）ことを確認する。path parameterと必須query parameterの値はOpenAPIのexample・enum・型から作り、
+作れないendpointは理由つきで呼ばない。認証付きendpointは、http bearer・oauth2・openIdConnectで満たせるときだけ固定のdummy Bearer（`sonomama-harness-dummy-bearer`）で呼ぶ。
+apiKey・Basicなどdummy Bearerで満たせないものは呼ばない。Prismには実Credentialを渡さない（環境変数はPATHだけ）。1件もrequestできなければFAIL。どれかがFAILならPRは作らない。
 PR本文には元PBI、Schema SBI、breaking / non-breakingのcontract diff、Prismで確認したendpointと呼ばなかったendpoint（理由）を載せる。
 依存SBIは、そのIssueがclosed / completedで、かつ`Closes #<番号>`と`SBI-Issue:` trailerを持つHarness PRがmainへmergeされていることをGitHub APIで確認できたときだけ完了とみなす。
 Issueを手で閉じただけでは完了にならず、GitHubを読めないときも`harness:run`は開始しない。

@@ -172,7 +172,7 @@ describe('CI Completion Judge for a destructive migration exception', () => {
   const verify = (root, head, githubPr, extra = {}) => verifyMigrationExceptions({ root, base: 'base', headSha: head, repository: 'acme/app', pullNumber: '42', githubPr, ...extra });
   const digestOf = (body, source = destroySource) => exceptionDigest({ migration: destroy, source, request: body });
   // migration-safety runs its static step only, so the Judge never starts Docker in harness:test.
-  const staticOnly = root => update(root, '.harness/config/harness.json', c => { c.securityVerifiers.find(v => v.id === 'migration-safety').commands = [[process.execPath, 'tools/harness/migration-safety.mjs']]; });
+  const staticOnly = root => update(root, '.harness/config/harness.json', c => { c.securityVerifiers.find(v => v.id === 'migration-safety').commands = [['node', 'tools/harness/migration-safety.mjs']]; });
   it('when two people approved the exact request on the tested commit then it PASSes', () => fixture(async root => {
     const { head, body } = await contract(root);
     const result = await verify(root, head, prGitHub({ head, digest: digestOf(body) }));
