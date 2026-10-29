@@ -60,9 +60,17 @@ export async function verify({ root, workspace, config, sbi, files = sbi.allowed
     else if (missing) checks.push({...base,status:'FAIL',cwd,reason:'required app is missing',planned:adapter.planned});
     else if (!adapter.commands.length) checks.push({...base,required:true,status:'NOT_CONFIGURED',cwd,reason:'app exists but verifier commands are not configured'});
     else {
-      const processes=[];
-      for (const [command,...args] of adapter.commands) processes.push(await execute(command,args,{cwd,timeoutMs:config.timeoutMs}));
-      checks.push({...base,required:true,status:processes.every(p=>p.ok)?'PASS':'FAIL',cwd,processes});
+      // A gated command (expo-doctor follows the latest Expo release) runs only for a matching change; requiring the verifier, full and areas do not lift the gate.
+      const gateOf = command => (adapter.gatedCommands ?? []).find(g => g.command.join('\0') === command.join('\0'));
+      const processes=[], skippedCommands=[];
+      for (const [command,...args] of adapter.commands) {
+        const gate = gateOf([command,...args]);
+        if (gate && !files.some(f=>gate.appliesTo.some(p=>new RegExp(p).test(f.path)))) {
+          skippedCommands.push({command:[command,...args].join(' '),reason:'no dependency or native config change matches its appliesTo'}); continue;
+        }
+        processes.push(await execute(command,args,{cwd,timeoutMs:config.timeoutMs}));
+      }
+      checks.push({...base,required:true,status:processes.every(p=>p.ok)?'PASS':'FAIL',cwd,processes,skippedCommands});
     }
   }
   return {status:checksPassed(checks)?'PASS':'FAIL',acceptance:[...new Set(acceptance)],lane:lane.name,checks};

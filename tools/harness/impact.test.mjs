@@ -130,6 +130,53 @@ describe('SBI Impact Analysis', () => {
       assert.equal(impact.fullGate, true);
     });
   });
+  describe('given the Expo dependency check that only dependency and native config changes need', () => {
+    const doctor = 'gate:pnpm run doctor';
+    for (const path of ['apps/mobile/package.json', 'apps/mobile/app.json', 'apps/mobile/app.config.ts', 'apps/mobile/eas.json', 'apps/mobile/metro.config.js', 'apps/mobile/babel.config.js', 'apps/mobile/ios/Podfile', 'apps/mobile/android/build.gradle', '.npmrc', 'pnpm-workspace.yaml', 'package.json', '.node-version', '.nvmrc']) {
+      it(`when ${path} changes then selects expo and explains that expo-doctor runs for that path`, () => {
+        const impact = analyzeImpact({ config, sbis: [], files: files(path) });
+        assert.ok(required(impact).includes('expo'));
+        assert.ok(reasons(impact, 'expo').includes(`${doctor}:${path}`), reasons(impact, 'expo').join(', '));
+      });
+    }
+
+    it('when only pnpm-lock.yaml changes then does not name expo-doctor for any verifier', () => {
+      const impact = analyzeImpact({ config, sbis: [], files: files('pnpm-lock.yaml') });
+      for (const id of ['expo', 'prototype-mobile']) assert.ok(!reasons(impact, id).some(r => r.startsWith(doctor)), id);
+    });
+
+    it('when only apps/mobile source changes then selects expo without the expo-doctor reason', () => {
+      const impact = analyzeImpact({ config, sbis: [], files: files(touched.mobile) });
+      assert.deepEqual(reasons(impact, 'expo'), [`diff:${touched.mobile}`]);
+    });
+
+    it('when a mobile SBI changes only source then keeps the expo-doctor reason out of the mandatory selection', () => {
+      const impact = analyzeImpact({ config, sbis: [sbi(['mobile'])], files: files(touched.mobile) });
+      assert.ok(!reasons(impact, 'expo').some(r => r.startsWith(doctor)));
+    });
+
+    it('when only an unrelated file changes then selects neither expo nor prototype-mobile', () => {
+      const impact = analyzeImpact({ config, sbis: [], files: files('docs/architecture/README.md', touched.admin) });
+      assert.ok(!required(impact).includes('expo'));
+      assert.ok(!required(impact).includes('prototype-mobile'));
+    });
+
+    it('when prototypes/mobile dependencies change then explains that the prototype expo-doctor runs', () => {
+      const impact = analyzeImpact({ config, sbis: [], files: files('prototypes/mobile/package.json') });
+      assert.ok(reasons(impact, 'prototype-mobile').includes(`${doctor}:prototypes/mobile/package.json`));
+      assert.ok(!reasons(impact, 'expo').some(r => r.startsWith(doctor)));
+    });
+
+    it('when only prototypes/mobile source changes then selects prototype-mobile without the expo-doctor reason', () => {
+      const impact = analyzeImpact({ config, sbis: [], files: files('prototypes/mobile/src/app/index.tsx') });
+      assert.deepEqual(reasons(impact, 'prototype-mobile'), ['diff:prototypes/mobile/src/app/index.tsx']);
+    });
+
+    it('when every verifier is requested then still does not run expo-doctor without a matching change', () => {
+      const impact = analyzeImpact({ config, sbis: [], files: [], all: true });
+      for (const id of ['expo', 'prototype-mobile']) assert.deepEqual(reasons(impact, id), ['all']);
+    });
+  });
 
   describe('given a shared toolchain changes', () => {
     const everyVerifier = ['admin', 'api-contract', 'expo', 'prototype-mobile', 'prototype-web', 'rails'];
@@ -405,6 +452,19 @@ describe('CI Completion Judge for Trusted Acceptance and Security', () => {
       assert.equal(status(judged, 'migration-safety'), 'NOT_CONFIGURED');
       assert.equal(judged.status, 'FAIL');
       assert.ok(judged.reasons.includes('security: migration-safety NOT_CONFIGURED'));
+    }));
+
+    it('when only an ADR describes authorization then passes with the authorization test skipped as not applicable', () => fixture(async root => {
+      await branch(root, async root => {
+        await mkdir(join(root, 'docs/adr'), { recursive: true });
+        await writeFile(join(root, 'docs/adr/0009-invitation.md'), '# Invitation\n\nThis endpoint requires authorization.\n');
+      });
+      const judged = await judgeBranch(root);
+      assert.equal(judged.security.requiredVerifiers.includes('rails-authz-test'), false);
+      assert.equal(status(judged, 'rails-authz-test'), 'SKIP');
+      assert.equal(status(judged, 'secret-scan'), 'PASS');
+      assert.equal(status(judged, 'forbidden-pattern-check'), 'PASS');
+      assert.equal(judged.status, 'PASS');
     }));
 
     it('when the SBI requires an application verifier then takes its result from the verifier matrix', () => fixture(async root => {

@@ -52,13 +52,20 @@ mainへのpushでは全Verifierを実行し、Full Gateも実行する。
 | --- | --- |
 | Application | `verifiers` matrixと、Full Gateなら`harness-test` / `harness-demo`のjob結果 |
 | Acceptance | 変更されたSBIのTrusted Acceptance（`trust: acceptance`）をjudge内で実行した結果 |
-| Security | `classifySecurity()`がdiffとSBIから決めたrequired verifierを`verifySecurity()`で評価した結果。`alwaysRequiredVerifiers`（secret-scan・forbidden-pattern-check）は常に含む |
+| Security | `classifySecurity()`がdiffとSBIから決めたrequired verifierを`verifySecurity()`で評価した結果。`alwaysRequiredVerifiers`（secret-scan・forbidden-pattern-check）は常に含む。`appliesTo`を持つ実装Verifierは、ルールに一致したファイルがその範囲に入るときだけ含む |
 
 - SecurityはFAIL・NOT_CONFIGURED・SKIP・未実行をPASS扱いしない。Security ruleが追加したverifierのコマンドが未設定なら、そのPRはFAILする。
 - SBIの`requiredVerifiers`にあるapplication verifierは、matrix jobの結果をSecurityの判定にも使う。
 - secret-scanとforbidden-pattern-checkは、変更ファイルの追加行を検査する。`tools/harness/*.test.mjs`はredactionのfixtureを含むため、Harness worktree作成時と同じくcredential形式の値だけを秘密値とみなす。
 - mainへのpush（`--all`）は差分が無いので、Securityの検査対象も無い。PRの判定で検査済みの前提。
 - 実装前Gate・Human Approvalの要否はCIでは判定しない。Harness runとGitHub Reviewで扱う。
+
+## expo-doctor
+
+`expo` と `prototype-mobile` の `pnpm run doctor`（expo-doctor）は `gatedCommands` で、依存・native・toolchainの変更があるときだけ実行する。expo-doctorは公開済みの最新Expoと比べるため、リポジトリが変わらなくてもExpoのpatch公開だけでFAILするから。
+対象は各アプリの `package.json`・`app.json`・`app.config.*`・`eas.json`・`babel.config.*`・`metro.config.*`・`react-native.config.*`・`ios/`・`android/`と、rootの `package.json`・`pnpm-workspace.yaml`・`.npmrc`・`.node-version`・`.nvmrc`・`.tool-versions`。root `pnpm-lock.yaml` はAdminなど他アプリの依存更新でも変わるため起動条件に含めない。Mobileの依存更新は `apps/mobile/package.json`・`prototypes/mobile/package.json` の変更で起動する。
+実行するときはimpact jobのログに `gate:pnpm run doctor:<path>` が出る。実行しなかったときは、Verifierの結果の `skippedCommands` に理由が残る。typecheck・Biome・Jest・architecture checkは従来どおり毎回実行する。
+`--all`（mainへのpush）、`harness:demo --full`、SBIの `affectedAreas` では実行しない。SBIの `requiredVerifiers`・Security・ACで `expo` Verifierが選ばれても、doctorの実行条件は変わらない。変更パスが上の対象に該当したときだけ実行する。Expo/React NativeはRenovate対象外で、Expoの更新は専用の手動dependency更新PR（`expo install --fix` 等）で扱う。
 
 ## api-contract
 

@@ -14,10 +14,10 @@ Rails API・Expo・React adminの3アプリは開発環境まで構築済みで�
 | apps/mobile | Expo（受講生アプリ）。Jest・Biome・expo-doctorを接続済み。業務画面は未実装 | [apps/mobile/README.md](apps/mobile/README.md) |
 | apps/admin | React + Vite（管理画面）。Vitest・Biome・buildを接続済み。業務画面は未実装 | [apps/admin/README.md](apps/admin/README.md) |
 | prototypes/web・mobile | デザイナー用の試作workspace。軽量ゲートで検証する | [Prototype Lane](#prototype-lane--production-lane) |
-| packages/api-schema | OpenAPI 3.1のSSOTの置き場所。`openapi.yaml`はまだ無い（最初のOpenAPI Schema SBIで追加する）。API契約はProvider非依存 | [packages/api-schema/README.md](packages/api-schema/README.md) |
+| packages/api-schema | OpenAPI 3.1のSSOTの置き場所。`openapi.yaml`はまだ無い（最初のOpenAPI Schema SBIで追加する）。認証は特定Providerに依存しない`bearer-jwt` / `bearerAuth` | [packages/api-schema/README.md](packages/api-schema/README.md) |
 | Harness | 実装ループ、Risk・承認・MERGE_ALLOWED判定、PBI → SBI Planner、API Schema Planner、GitHub PR Adapter | 本README、[.ai/workflows/](.ai/workflows/) |
 | CI | SBIと差分から必要なVerifierを選び、matrixで並列実行する。`harness` jobがCompletion Judge（Trusted AcceptanceとSecurity Verifierも実行）。Production変更はSBI Issue由来のRunが必須。必須チェック名は`harness` | [.ai/workflows/ci.md](.ai/workflows/ci.md) |
-| Auth Provider | 未決定。Provider固有のSDK・gemは入れていない | [apps/api/README.md](apps/api/README.md) |
+| 認証 | Auth Providerは未決定。Provider固有のSDK・gemは入れていない | [apps/api/README.md](apps/api/README.md#認証) |
 | GitHub Ruleset | 定義は[.github/rulesets/main.json](.github/rulesets/main.json)。GitHubへ適用済み（ruleset id 26088284）。PR必須・`harness`必須・force push / 削除禁止・必要な承認数0（人数はHarnessが判定） | [docs/workflows/github-ruleset.md](docs/workflows/github-ruleset.md) |
 
 ## 通常の開発フロー
@@ -132,7 +132,7 @@ ACは組み込みsample-bddまたは`trust: "acceptance"`と`trustedScript`で�
 | adapter | 未生成判定marker | 接続状況 |
 | --- | --- | --- |
 | rails | apps/api/Gemfile | 接続済み: Docker Compose経由でbuild / db:prepare / RSpec / RuboCop / Brakeman / Bundler Audit / Zeitwerk。ACは`api-acceptance`。api-contractがRailsのroute manifestと契約のmethod + pathを照合する。request / response bodyの照合は未実装（[#99](https://github.com/yanagisawahidetoshi/sonomama-harness/issues/99)でSpike） |
-| expo | apps/mobile/package.json | 接続済み: install / TypeScript / Biome / Jest + RNTL / expo-doctor。ACは`mobile-acceptance`。Maestroはローカルのみ |
+| expo | apps/mobile/package.json | 接続済み: install / TypeScript / Biome / Jest + RNTL / expo-doctor（依存・native設定の変更時だけ）。ACは`mobile-acceptance`。Maestroはローカルのみ |
 | admin | apps/admin/package.json | 接続済み: install / TypeScript / Biome / Vitest + RTL / build。ACは`admin-acceptance` |
 
 markerなしでallowMissing=trueかつそのACを要求しないアプリだけ、対象外としてSKIPできる。
@@ -505,6 +505,7 @@ Security Ruleから一般VerifierのIDを要求する場合も同じworktree上�
 `pnpm harness:demo --full` / `pnpm harness:run --full`はlane内の全アプリVerifierを選択する。
 このモードでも未生成の任意placeholderはSKIPできる。AC・Security必須チェックは引き続き省略不可。
 CIはmainへのpushで全Verifierを実行し、PRではSBIと差分から選ぶ（[.ai/workflows/ci.md](.ai/workflows/ci.md)）。
+`gatedCommands`に挙げたcommand（expo-doctor）は、そのappliesToに一致する変更があるときだけ実行する。SBI.requiredVerifiers・Security・ACでVerifierが選ばれても実行条件は変わらない。fullモードでも実行しない。詳細は[.ai/workflows/ci.md](.ai/workflows/ci.md)。
 
 ## Prototype Lane / Production Lane
 

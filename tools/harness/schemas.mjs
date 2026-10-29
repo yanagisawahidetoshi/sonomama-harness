@@ -54,7 +54,9 @@ export const configSchema = z.strictObject({
     // Trusted Acceptance a human registered for one SBI Issue; its acceptanceIds are that Issue's acceptance criteria.
     sbiIssue: z.number().int().positive().optional(),
     areas: z.array(text).default([]),
-  })).min(1),
+    // A command that runs only when the change matches appliesTo, whatever else requires the verifier.
+    gatedCommands: z.array(z.strictObject({ command: z.array(text).min(1), appliesTo: z.array(text).min(1) })).default([]),
+  }).refine(v => v.gatedCommands.every(g => v.commands.some(c => c.join('\0') === g.command.join('\0'))), 'gated command must be one of the verifier commands')).min(1),
   // SBI Impact Analysis: cross-layer contracts added when areas meet, paths whose change runs the Full Gate,
   // and shared toolchain paths whose change runs the Full Gate and every application verifier.
   impact: z.strictObject({
@@ -217,7 +219,8 @@ export const securityPolicySchema = z.strictObject({
     requiredHumanApprovals: z.number().int().min(2), requiredVerifiers: z.array(text).min(1), policyDocument: relativePath,
   })).min(1),
   verifiers: z.array(z.strictObject({ id: text, kind: z.enum(['secret', 'forbidden', 'pii-log', 'command']),
-    directory: z.union([z.literal('.'), relativePath]).optional(), commands: z.array(z.array(text).min(1)).optional() })),
+    directory: z.union([z.literal('.'), relativePath]).optional(), commands: z.array(z.array(text).min(1)).optional(),
+    appliesTo: z.array(text).optional() })),
   secretPatterns: z.array(text).min(1), forbiddenPatterns: z.array(text), piiLogPatterns: z.array(text),
 }).refine(p => new Set(p.rules.map(r => r.id)).size === p.rules.length && new Set(p.verifiers.map(v => v.id)).size === p.verifiers.length, 'duplicate security rule/verifier');
 export const humanGatesSchema = z.strictObject({ version: z.literal(1), preImplementationRuleIds: z.array(text).min(1) });

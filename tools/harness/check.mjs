@@ -36,7 +36,7 @@ export async function check(root, sbiPath, sbiValue, { sbiIssue = null } = {}) {
     if (!humanGates.preImplementationRuleIds.includes(rule.id)) throw new Error('Security Human Gate rules are inconsistent');
   }
   for (const id of humanGates.preImplementationRuleIds) if (!securityPolicy.rules.some(r => r.id === id)) throw new Error('Unknown Human Gate security rule');
-  for (const pattern of [...securityPolicy.secretPatterns, ...securityPolicy.forbiddenPatterns, ...securityPolicy.piiLogPatterns]) new RegExp(pattern);
+  for (const pattern of [...securityPolicy.secretPatterns, ...securityPolicy.forbiddenPatterns, ...securityPolicy.piiLogPatterns, ...securityPolicy.verifiers.flatMap(v => v.appliesTo || [])]) new RegExp(pattern);
   if (config.securityVerifiers.some(v => securityPolicy.verifiers.some(base => base.id === v.id && base.kind !== 'command'))) throw new Error('Builtin security verifiers cannot be overridden');
   if (new Set(config.securityVerifiers.map(v => v.id)).size !== config.securityVerifiers.length) throw new Error('Duplicate security verifier');
   if (sbiPath) relativePath.parse(sbiPath);

@@ -268,13 +268,26 @@
       "appliesTo": [
         "^apps/mobile/",
         "^packages/",
-        "^(package\\.json|pnpm-lock\\.yaml|pnpm-workspace\\.yaml|\\.npmrc|\\.ruby-version|\\.tool-versions|tsconfig[^/]*)$"
+        "^(package\\.json|pnpm-lock\\.yaml|pnpm-workspace\\.yaml|\\.npmrc|\\.node-version|\\.nvmrc|\\.ruby-version|\\.tool-versions|tsconfig[^/]*)$"
       ],
       "lanes": [
         "production"
       ],
       "areas": [
         "mobile"
+      ],
+      "gatedCommands": [
+        {
+          "command": [
+            "pnpm",
+            "run",
+            "doctor"
+          ],
+          "appliesTo": [
+            "^apps/mobile/(package\\.json|app\\.json|app\\.config\\.[^/]+|eas\\.json|babel\\.config\\.[^/]+|metro\\.config\\.[^/]+|react-native\\.config\\.[^/]+|(ios|android)/)",
+            "^(package\\.json|pnpm-workspace\\.yaml|\\.npmrc|\\.node-version|\\.nvmrc|\\.tool-versions)$"
+          ]
+        }
       ]
     },
     {
@@ -582,7 +595,7 @@
       "marker": "package.json",
       "appliesTo": [
         "^prototypes/mobile/",
-        "^(package\\.json|pnpm-lock\\.yaml|pnpm-workspace\\.yaml|\\.npmrc|tsconfig[^/]*)$"
+        "^(package\\.json|pnpm-lock\\.yaml|pnpm-workspace\\.yaml|\\.npmrc|\\.node-version|\\.nvmrc|\\.tool-versions|tsconfig[^/]*)$"
       ],
       "lanes": [
         "prototype",
@@ -620,6 +633,19 @@
       ],
       "areas": [
         "prototype-mobile"
+      ],
+      "gatedCommands": [
+        {
+          "command": [
+            "pnpm",
+            "run",
+            "doctor"
+          ],
+          "appliesTo": [
+            "^prototypes/mobile/(package\\.json|app\\.json|app\\.config\\.[^/]+|eas\\.json|babel\\.config\\.[^/]+|metro\\.config\\.[^/]+|react-native\\.config\\.[^/]+|(ios|android)/)",
+            "^(package\\.json|pnpm-workspace\\.yaml|\\.npmrc|\\.node-version|\\.nvmrc|\\.tool-versions)$"
+          ]
+        }
       ]
     },
     {
