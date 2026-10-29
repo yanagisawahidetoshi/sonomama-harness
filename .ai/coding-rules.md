@@ -18,6 +18,7 @@
 - TanStack QueryはstaleTime=5分、gcTime=10分。4xxはretryせず、その他は最大3回。
 - sharedのHTTP clientで認証・エラー・型を統一する。
 - StorybookはComponentName.stories.tsx、titleはディレクトリパスに合わせる。
+- apps/adminではsparkle-designを直接importしない（許可はsrc/shared/components/ui/**だけ）。wrapperはSparkleのpropsをそのまま受け、再定義しない。使うcomponentだけを使う時点でwrapする。見た目はSparkle DesignのcomponentとTailwindのクラスで作り、独自UIを並行して作らない。
 
 ## 検証
 

@@ -50,10 +50,18 @@ const ruleFor = (from, to) => {
   return null;
 };
 
+// Only the SONOMAMA UI wrappers depend on Sparkle Design, so its API changes stay inside shared/components/ui.
+const SPARKLE = /^sparkle-design(\/|$)/;
+const SPARKLE_BOUNDARY = /^shared\/components\/ui\//;
+
 export function checkArchitecture(src) {
   return sourceFiles(src).flatMap((file) => {
     const from = layerOf(src, file);
     return [...readFileSync(file, 'utf8').matchAll(IMPORT)].flatMap(([, specifier]) => {
+      if (SPARKLE.test(specifier))
+        return SPARKLE_BOUNDARY.test(relative(src, file))
+          ? []
+          : [{ file: relative(src, file), specifier, rule: 'sparkle-design outside shared/components/ui' }];
       const target = resolveImport(src, file, specifier);
       const rule = target && ruleFor(from, layerOf(src, target));
       return rule ? [{ file: relative(src, file), specifier, rule }] : [];
