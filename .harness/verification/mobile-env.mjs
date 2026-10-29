@@ -90,10 +90,12 @@ try {
       const expo = JSON.parse(read('.harness/config/harness.json')).verifiers.find(v => v.id === 'expo');
       for (const script of ['typecheck', 'check', 'test', 'doctor']) assert.ok(hasCommand(expo.commands, ['pnpm', 'run', script]), script);
     }],
-    ['MOBILE-AC-16', 'Given the Harness, When verifying mobile, Then Maestro is not a required command', () => {
+    // #68: Maestro stays out of every verifier (the ordinary mobile verifier included) and runs only in the maestro CI job for mobile E2E SBIs.
+    ['MOBILE-AC-16', 'Given the Harness, When verifying mobile, Then Maestro is in no verifier and is selected only for mobile E2E SBIs', () => {
       const config = JSON.parse(read('.harness/config/harness.json'));
       for (const v of config.verifiers) for (const c of v.commands) assert.doesNotMatch(c.join(' '), /maestro/i, v.id);
       forbids(/maestro/i, 'Maestro is an external CLI');
+      assert.match(read('tools/harness/impact.mjs'), /maestro: maestroLanes\(sbis\)/, 'Impact Analysis selects the Maestro lanes from the SBIs');
     }],
     ['MOBILE-AC-17', 'Given the app, When listing dependencies, Then no auth provider SDK is installed', () => {
       forbids(/amplify|cognito|firebase|google-auth|@react-oauth|oidc|auth0|@clerk|supabase|expo-auth-session/i, 'Auth provider SDK must not be installed');

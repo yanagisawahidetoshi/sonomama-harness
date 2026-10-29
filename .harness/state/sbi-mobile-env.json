@@ -81,7 +81,7 @@
     },
     {
       "id": "MOBILE-AC-16",
-      "description": "Maestroをrequired CIにはしていない",
+      "description": "Maestroを通常のmobile Verifierに入れず、E2E対象のmobile SBIでだけmaestro CI jobを必須にする",
       "verifier": "mobile-acceptance"
     },
     {
