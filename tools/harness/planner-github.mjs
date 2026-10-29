@@ -1,6 +1,6 @@
 import { execute } from './io.mjs';
 import { redactText } from './evidence-protection.mjs';
-import { githubIssueSchema, githubCommentSchema, githubIssueListSchema, githubCommentListSchema, githubLabelListSchema } from './schemas.mjs';
+import { githubIssueSchema, githubCommentSchema, githubIssueListSchema, githubCommentListSchema, githubLabelListSchema, githubTimelineSchema, githubPullSchema, githubPullCommitsSchema } from './schemas.mjs';
 
 // GitHub access goes through the authenticated gh CLI. Request bodies are JSON on stdin; no shell expansion, no token handling here.
 export async function api(method, endpoint, body) {
@@ -64,5 +64,14 @@ export const githubCli = {
   },
   async addComment({ owner, repo, number }, body) {
     return githubCommentSchema.parse(await api('POST', `repos/${owner}/${repo}/issues/${number}/comments`, { body }));
+  },
+  async issueTimeline({ owner, repo, number }) {
+    return listAll(`repos/${owner}/${repo}/issues/${number}/timeline`, {}, githubTimelineSchema);
+  },
+  async fetchPull({ owner, repo }, number) {
+    return githubPullSchema.parse(await api('GET', `repos/${owner}/${repo}/pulls/${number}`));
+  },
+  async pullCommitMessages({ owner, repo }, number) {
+    return (await listAll(`repos/${owner}/${repo}/pulls/${number}/commits`, {}, githubPullCommitsSchema)).map(c => c.commit.message);
   },
 };

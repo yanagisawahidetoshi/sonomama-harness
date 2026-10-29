@@ -3,8 +3,30 @@
 SBI単位で「実装 → 検証 → 修正」を回し、Security・Risk・人間の承認からマージ可否まで判定するローカル基盤。
 
 Rails API + Expo + React adminの将来構成に向けた、ローカルLoop Engineering基盤。
-アプリ本体はplaceholder。クラウドFactory、CI/CD、PR作成、実際のmergeは実装しない。
+アプリ本体はplaceholder。クラウドFactory、CI/CD、実際のmergeは実装しない。
 このリポジトリはHarness専用。既存の動画PoC・参照ファイル・実行履歴・秘密情報は含めない。
+
+## 通常の開発フロー
+
+人間が使うコマンドは次の3つ。`harness:approve`はHuman Gateで止まったときだけ使う。
+
+```sh
+pnpm planner:sbi https://github.com/<owner>/<repo>/issues/<PBI番号>     # PBI → SBI Issue [sbi][needs-review]
+# 人間がSBI Issueをレビューし、全ACのTrusted Acceptanceを登録してから ready にする
+pnpm harness:run https://github.com/<owner>/<repo>/issues/<SBI番号>     # 実装 → ローカル検証 → PR作成
+pnpm harness:approve https://github.com/<owner>/<repo>/issues/<SBI番号> --phase gate   # Human Gateのときだけ。承認後にHarnessが再開しPRを作る
+```
+
+providerの既定はClaude。Codexだけ使える場合は各コマンドに`--provider codex`を付ける。
+PRのmergeは人間がGitHub Reviewのあとで行う。RUN_IDのコピー、`harness:resume`・`harness:pr`の実行は通常フローでは要らない。
+`harness:run`はIssueがopen・`sbi`と`ready`付き・`needs-review`なしで、Planner markerがあるときだけ開始する。
+Issue本文から実行SBIを組み立て、Run開始時点の内容を`.harness/runs/<id>/sbi-snapshot.json`に保存し、PRへ`.harness/state/sbi-<Issue番号>.json`としてcommitする。
+想定変更範囲は末尾`/`付きのディレクトリ許可（allowedDirs）になる。`apps/admin/`は`apps/admin-other/`を含まず、予約パスは範囲内でも書けない。
+ACごとのTrusted Acceptanceは、人間が`.harness/verification/`にscriptを書き、
+`.harness/acceptance/sbi-<SBI番号>.json`に`{ "version": 1, "sbiIssue": <SBI番号>, "verifiers": [{ "id", "trustedScript", "planned", "acceptanceIds": [IssueのAC ID] }] }`で登録する。
+harness.jsonには共通のVerifier Registryだけを置く（`sbiIssue`付きの登録はcheckがFAILにする）。runとCIは、そのSBI Issueのファイルだけを読む。
+未登録・対応漏れ・余分な登録・ファイル名と中身のIssue番号の不一致があればRunを開始しない。
+内部・保守用コマンドとAPI設計時のコマンドは`node tools/harness/cli.mjs`のhelpに分けて載せている。
 
 ## 実行
 
@@ -26,8 +48,9 @@ SBI → 意図的な誤実装 → Verifier FAIL
     → Risk Classifier: LEVEL 2 → WAITING_FOR_HUMAN_REVIEW
 ```
 
-デモは実装完了とリスク判定まで確認してexit 0。通常のrun/resumeはMERGE_ALLOWEDでexit 0、
-承認待ち・停止はexit 2、入力やCLI操作のエラーはexit 1。
+run/approve/resume/pr/demoは、人間かGitHub CIへ引き継いだ状態ならexit 0。PR作成済みでCI待ち・Review待ち、
+MERGE_ALLOWED、Riskが要求するHuman Gate・Design Approval待ち、PRを作らないrun（デモ等）のDONEが該当する。
+FAILED・ESCALATED・REJECTED・CI以外の理由のBLOCKEDはexit 2、PR作成失敗・入力やCLI操作のエラーはexit 1。
 **Execution DONEはマージ承認ではない。** このサンプルはruntime変更のため既定LEVEL 2。
 承認を自動生成せず、実際のmergeも行わない。
 
@@ -254,21 +277,19 @@ Design Approval未充足（未承認・撤回後）ならMerge JudgeはWAITING_F
 新しいcommitや入力変更で失効した承認は再利用しない。
 
 ```sh
-# ゲート待ちのrunに、人間が着手を承認
+# ゲート待ちのrunに、人間が着手を承認する。harness:runが表示したコマンドをそのまま実行する。
+# 承認を記録したあと、Harnessがrunを再開し、ローカル検証がPASSすればPRを作成する。
 pnpm harness:approve --run RUN_ID --phase gate
-pnpm harness:resume --run RUN_ID
 
-# 実装DONE後、人間が現在の差分をレビューして承認
-pnpm harness:approve --run RUN_ID --phase merge
-pnpm harness:resume --run RUN_ID
-
-# 承認の取り消し・修正要求
-pnpm harness:approve --run RUN_ID --phase merge --decision revoke
-pnpm harness:approve --run RUN_ID --phase merge --decision request-changes
-pnpm harness:resume --run RUN_ID
+# 着手前の修正要求・取り消し
+pnpm harness:approve --run RUN_ID --phase gate --decision request-changes
 ```
 
-`pnpm harness:pr --run RUN_ID`でPRを作ったrun（GitHub PR mode）では、実装後の承認はGitHub Reviewで判定し、`--phase merge`は使わない。
+`harness:run`は、ローカル検証がPASSしてexecutionStatus=DONEになると、tested SHAをpushしてPRを作成する（GitHub PR mode）。
+FAILやゲート待ちのrunではPRを作成しない。fake provider（`harness:demo`）と、SBIを指定しないrun（既定のsample SBI）もPRを作成しない。
+GitHub PR modeでは、実装後の承認はGitHub Reviewで判定し、`--phase merge`は使わない。
+`harness:resume` / `harness:pr`は障害復旧・Harness保守用に残している。通常の操作では使わない。
+PRを作らないLocal mode（`--provider fake`など）では、`harness:approve --run RUN_ID --phase merge`で実装後の承認を記録する。
 base branchの先頭がrunのbaselineのままであること、tested SHAとPR HEADの一致、必須CIのPASS、CHANGES_REQUESTEDがないことも条件にする。Approveはwrite以上の権限を持つ人のものだけを数える。手順は[.ai/workflows/pull-request.md](.ai/workflows/pull-request.md)。
 
 実装前承認は1人、実装後はRisk別の人数を要求する。承認待ちは連続失敗に数えない。
@@ -362,13 +383,12 @@ Reviewer名・prompt・agent応答・秘密値もMetricsに含めず、他のEvi
 ## provider切り替え
 
 ```sh
-pnpm harness:run --provider fake
-pnpm harness:run --provider codex
-pnpm harness:run --provider claude
-pnpm harness:run --provider fake --sbi .harness/state/sample-sbi.json
+pnpm harness:run --sbi PATH                    # Claude（既定）
+pnpm harness:run --sbi PATH --provider codex   # Codexだけ使える場合
+pnpm harness:run --provider fake --sbi .harness/state/sample-sbi.json   # Harness自己テスト用。PRは作らない
 ```
 
-既定値はharness.jsonのprovider。demoは常にfake。
+既定値はharness.jsonのprovider（claude）。demoは常にfake。provider自動検出はしない。
 Codex CLI / Claude Codeはインストール・ログイン済みでPATHから起動できることが必要。
 実際のモデル通信を検証済みなのはfakeのみ。実CLIは模擬プロセスでプロトコルを確認している。
 
@@ -385,7 +405,8 @@ CLIの仕様は[Codex公式資料](https://developers.openai.com/codex/cli/refer
 GitHub IssueのPBIをBDDベースのSBIへ分割し、レビュー待ちのSBI Issueとして登録する。
 
 ```sh
-pnpm planner:sbi https://github.com/<owner>/<repo>/issues/<number> --provider claude
+pnpm planner:sbi https://github.com/<owner>/<repo>/issues/<number>                    # Claude（既定）
+pnpm planner:sbi https://github.com/<owner>/<repo>/issues/<number> --provider codex   # Codexだけ使える場合
 ```
 
 ```text
@@ -410,17 +431,27 @@ title・本文が今回の生成結果と完全一致する場合だけ再利用
 digest不一致（PBIやモデル出力が変わった）、人間による本文・title編集、`ready`化、closeのいずれかがあれば書き込まずに停止し、人間が判断する。
 途中失敗後の再実行で重複Issueを作らない。
 
-Plannerは`needs-review`のSBIをExecution Harnessへ投入しない。人間がレビューして`needs-review`を外し`ready`を付ける。
-Execution Harnessは引き続きSBI JSONを入力にし、Issueからの自動実行・`ready`への自動遷移・Risk確定・mergeは行わない。
+Plannerは`needs-review`のSBIをExecution Harnessへ投入しない。人間がレビューし、全ACのTrusted Acceptanceを登録してから`needs-review`を外し`ready`を付ける。
+`ready`のSBIは`pnpm harness:run <SBI Issue URL>`で実行する。SBI JSONは書かない。`ready`への自動遷移・Risk確定・mergeは行わない。
 手順は[.ai/workflows/pbi-sbi-planner.md](.ai/workflows/pbi-sbi-planner.md)。
 
-## API Schema Planner
+## OpenAPI Schema SBI
+
+API契約の新規作成・変更が要るPBIでは、`planner:sbi`が`packages/api-schema`だけを変えるOpenAPI Schema SBIを1件作り、
+同じPBIの他のSBIをそれに依存させる（SBI Quality Judgeが検査する）。Schema SBIも通常のSBIと同じく、レビューして`ready`にし、`pnpm harness:run <SBI Issue URL>`で実行する。
+api-contract VerifierがOpenAPI 3.1の検証と破壊的変更の検出を行い、続けてrun workspaceのOpenAPIからPrism Mockを起動して、
+security要件のないGET endpointが記載した2xxとJSONを返すことを確認する。path parameterと必須query parameterの値はOpenAPIのexample・enum・型から作り、
+作れないendpointは理由つきで呼ばない。1件もrequestできなければFAIL。どれかがFAILならPRは作らない。
+PR本文には元PBI、Schema SBI、breaking / non-breakingのcontract diff、Prismで確認したendpointと呼ばなかったendpoint（理由）を載せる。
+依存SBIは、そのIssueがclosed / completedで、かつ`Closes #<番号>`と`SBI-Issue:` trailerを持つHarness PRがmainへmergeされていることをGitHub APIで確認できたときだけ完了とみなす。
+Issueを手で閉じただけでは完了にならず、GitHubを読めないときも`harness:run`は開始しない。
+後続のRails / Frontend SBIは、merge後のmainにある`packages/api-schema/openapi.yaml`を使う。
+
+## API Schema Planner（内部機能）
+
+以下は旧来の専用フロー。人間向けのpackage scriptからは外した。`node tools/harness/cli.mjs api-schema <Issue URL>`で引き続き使える。
 
 API変更を伴うIssueから、実装前に合意するOpenAPI 3.1の契約案を作る。Rails / Frontendの実装はしない。
-
-```sh
-pnpm planner:api-schema https://github.com/<owner>/<repo>/issues/<number> --provider claude
-```
 
 ```text
 GitHub Issue → 既存OpenAPI（packages/api-schema）→ API Schema Planner（codex / claude）→ API Schema Quality Judge
@@ -435,7 +466,7 @@ Quality Judgeは決定的なルールで構造・認証認可・Security Impact�
 
 `modify`で既存の内容が消える場合は、既存OpenAPIとの構造差分から破壊的変更の候補として必ず表示する。
 
-承認は`pnpm planner:api-schema-approve <Issue URL>`で署名付き台帳に記録し、Proposalのdigestとcommit SHAに紐づける。
+承認は`node tools/harness/cli.mjs api-schema-approve <Issue URL>`で署名付き台帳に記録し、Proposalのdigestとcommit SHAに紐づける。
 判定は`pnpm planner:api-schema-status <Issue URL>`。Issueの`api-schema-approved`ラベルは目印で、承認の正本ではない。
 Execution Harnessの実装前Gate・Merge Approvalとは別で、どちらの代わりにもならない。承認後に人間がpackages/api-schemaへ反映し、実装SBIを作る。
 手順は[.ai/workflows/api-schema.md](.ai/workflows/api-schema.md)。
@@ -487,7 +518,7 @@ SBI.securityImpactで宣言し、既知の接続先はsecurityPatternsにも追�
 packagesへの変更を含むSBIも常にProduction。本番共有packageの検証を試作profileで省略できない。
 
 試作を本番へ移す場合は、新しいProduction SBIに`promotion: {"source":"prototypes/web"}`を設定する。
-Design Approval待ちで実装を止め、`pnpm harness:approve --run RUN_ID --phase design`で人間が承認してからresumeする。
+Design Approval待ちで実装を止め、`pnpm harness:approve --run RUN_ID --phase design`で人間が承認すると、Harnessがrunを再開する。
 Design Approvalは`design-approval`という独立した署名済みstate。待機状態は`WAITING_FOR_DESIGN_APPROVAL`。
 実装前Human Gateが不要なら、Design Approvalの待機・承認・拒否・撤回の間もgate.stateは`NOT_REQUIRED`を保つ。
 証跡はdesign-approval.jsonとhuman-gate.jsonで分離する。SBIやSHAを変えたら取り直す。
@@ -517,9 +548,11 @@ cleanで所有関係を確認できたworktreeだけを削除する。証跡・r
 
 Nodeは`.node-version`、pnpmはpackage.jsonのpackageManagerに固定。`pnpm install --frozen-lockfile`後のprepareで
 version管理された`.githooks/pre-push`を設定する。必要なら`pnpm hooks:install`で再設定できる。
-push前にharness:check→harness:testを実行し、失敗するとpushを止める。
+push前にharness:checkを必ず実行し、続けて`harness:push-gate`がImpact Analysisで選んだVerifierだけを実行する。
+Harness本体などFull Gate対象の変更や、push先との差分を特定できない場合はharness:test全件を実行する。どれかが失敗するとpushを止める。
+`--no-verify`は通常手順にしない。
 
-GitHub ActionsはPRとmainへのpushでfrozen install→harness:check→harness:test→harness:demo --fullを実行する。
-いずれかの失敗でworkflowも失敗する。Actionsはcommit SHA固定、読取専用権限、checkout認証情報を保存しない。
+GitHub ActionsはSBIと差分から必要なVerifierを並列実行し、Full Gate対象ならharness:testとharness:demo --fullも実行する。
+最終の品質ゲートはCIの`harness`チェック（Completion Judge）。詳細は[.ai/workflows/ci.md](.ai/workflows/ci.md)。Actionsはcommit SHA固定、読取専用権限、checkout認証情報を保存しない。
 ローカルhookは回避可能なので、チーム運用ではRuleset / branch protectionで成功チェックを必須にする。
 これは次の設定段階。hook・CI・Harnessのどれにもmerge機能はない。

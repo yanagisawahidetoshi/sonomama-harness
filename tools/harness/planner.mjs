@@ -17,7 +17,7 @@ export const sbiLabels = Object.freeze(['sbi', 'needs-review']);
 const stable = value => Array.isArray(value) ? value.map(stable) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, stable(value[key])])) : value;
 export const sbiDigest = sbi => createHash('sha256').update(JSON.stringify(stable(sbi))).digest('hex');
 export const sbiMarker = (pbiUrl, id, digest) => `<!-- sonomama-sbi pbi=${pbiUrl} id=${id} digest=${digest} -->`;
-const markerPattern = /<!-- sonomama-sbi pbi=(\S+) id=(SBI-\d{3})(?: digest=([0-9a-f]{64}))? -->/;
+export const markerPattern = /<!-- sonomama-sbi pbi=(\S+) id=(SBI-\d{3})(?: digest=([0-9a-f]{64}))? -->/;
 export const listMarker = pbiUrl => `<!-- sonomama-sbi-list pbi=${pbiUrl} -->`;
 export function parseIssueUrl(url) {
   const match = /^https:\/\/github\.com\/([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)\/([A-Za-z0-9_.-]+)\/issues\/([1-9]\d*)\/?$/.exec(String(url).trim());

@@ -1,7 +1,11 @@
 # Local development and Harness verification only. Not a production deployment definition.
 services:
   api:
-    build: ./apps/api
+    build:
+      context: ./apps/api
+      # CI points these at a restored BuildKit cache. Unset, the import finds nothing (a warning) and the inline export changes nothing.
+      cache_from: ["${HARNESS_BUILD_CACHE_FROM:-type=local,src=.no-build-cache}"]
+      cache_to: ["${HARNESS_BUILD_CACHE_TO:-type=inline}"]
     command: ["bash", "-c", "rm -f tmp/pids/server.pid && bin/rails db:prepare && bin/rails server -b 0.0.0.0 -p 3000"]
     ports:
       - "127.0.0.1:3000:3000"

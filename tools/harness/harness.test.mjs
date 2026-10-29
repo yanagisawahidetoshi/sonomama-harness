@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtemp, cp, readFile, writeFile, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { check, judge, providerCommand } from './index.mjs';
+import { check, judge, providerCommand, runExitCode } from './index.mjs';
+import { execute } from './io.mjs';
 
 import { fixture, update, runFixture as runHarness } from './test-fixture.mjs';
 
@@ -120,6 +121,110 @@ describe('CLI provider adapters', () => {
     });
     it('when provider is unknown then fails closed', () => {
       assert.throws(() => providerCommand('unknown'), /provider/);
+    });
+  });
+});
+
+describe('Default provider', () => {
+  describe('given a run started without --provider', () => {
+    it('when harness:run starts then implements with Claude', () => fixture(async root => {
+      const used = [];
+      const run = await runHarness({ root, quiet: true, provider: undefined, agent: async ({ provider }) => { used.push(provider); return { files: [{ path: 'greeting.mjs', content: 'export function greet(name) { return `こんにちは、${name?.trim() || "ゲスト"}さん`; }' }] }; } });
+      assert.equal(run.provider, 'claude');
+      assert.deepEqual(used, ['claude']);
+    }));
+    it('when harness:run starts with --provider codex then implements with Codex instead', () => fixture(async root => {
+      const used = [];
+      const run = await runHarness({ root, quiet: true, provider: 'codex', agent: async ({ provider }) => { used.push(provider); return { files: [{ path: 'greeting.mjs', content: 'export function greet(name) { return `こんにちは、${name?.trim() || "ゲスト"}さん`; }' }] }; } });
+      assert.equal(run.provider, 'codex');
+      assert.deepEqual(used, ['codex']);
+    }));
+  });
+});
+
+describe('CLI help', () => {
+  describe('given an unknown command', () => {
+    it('when the usage is printed then User-facing commands come first and resume / pr are listed only as Internal/Maintenance', async () => {
+      const { stderr } = await execute(process.execPath, [new URL('./cli.mjs', import.meta.url).pathname, 'unknown']);
+      const userFacing = stderr.indexOf('User-facing'), internal = stderr.indexOf('Internal/Maintenance');
+      assert.ok(userFacing >= 0 && internal > userFacing, stderr);
+      for (const command of ['planner:sbi', 'harness:run', 'harness:approve']) {
+        const at = stderr.indexOf(`pnpm ${command}`);
+        assert.ok(at > userFacing && at < internal, `${command} is user-facing`);
+      }
+      for (const command of ['harness:resume', 'harness:pr', 'harness:impact', 'harness:verify', 'harness:judge', 'harness:check', 'harness:export', 'harness:cleanup']) {
+        assert.ok(stderr.indexOf(`pnpm ${command}`) > internal, `${command} is internal`);
+      }
+      assert.match(stderr.slice(userFacing, internal), /--provider codex/);
+      assert.match(stderr.slice(userFacing, internal), /pnpm harness:run SBI_URL/);
+      assert.match(stderr.slice(userFacing, internal), /pnpm harness:approve SBI_URL/);
+      assert.ok(stderr.indexOf('--sbi PATH') > internal, '--sbi is for Harness self-tests');
+    });
+  });
+});
+
+describe('OpenAPI Schema as a normal SBI', () => {
+  describe('given the commands offered to developers', () => {
+    it('when the package scripts are read then the API Schema Planner and its approval are not human commands', async () => {
+      const { scripts } = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
+      assert.equal(scripts['planner:api-schema'], undefined);
+      assert.equal(scripts['planner:api-schema-approve'], undefined);
+      assert.ok(scripts['planner:sbi'] && scripts['harness:run']);
+    });
+    it('when the CLI usage is printed then it does not offer pnpm planner:api-schema or planner:api-schema-approve', async () => {
+      const { stderr } = await execute(process.execPath, [new URL('./cli.mjs', import.meta.url).pathname, 'unknown']);
+      assert.doesNotMatch(stderr, /pnpm planner:api-schema( |-approve)/);
+    });
+  });
+});
+
+// harness:run / approve / resume / pr exit 0 when the run stopped where a human or GitHub CI takes over, and 2 when the run itself failed.
+describe('Exit code of a run command', () => {
+  const run = (overrides = {}) => ({ publish: true, executionStatus: 'DONE', status: 'BLOCKED', merge: { reasons: ['required_ci_not_passed'] }, gate: { state: 'NOT_REQUIRED' }, designApproval: { state: 'NOT_REQUIRED' },
+    pullRequest: { number: 201, url: 'https://github.com/acme/app/pull/201' }, ...overrides });
+  describe('given a run that handed over to a human or to GitHub CI', () => {
+    it('when the PR was opened and only GitHub CI has not passed yet then exits 0', () => {
+      assert.equal(runExitCode(run()), 0);
+    });
+    it('when the PR was opened and waits for a GitHub Review then exits 0', () => {
+      assert.equal(runExitCode(run({ status: 'WAITING_FOR_HUMAN_REVIEW', merge: { reasons: ['insufficient_human_approvals'] } })), 0);
+    });
+    it('when every merge condition is satisfied then exits 0', () => {
+      assert.equal(runExitCode(run({ status: 'MERGE_ALLOWED', merge: { reasons: ['all_conditions_satisfied'] } })), 0);
+    });
+    it('when the run waits at the implementation gate as its Risk requires then exits 0', () => {
+      assert.equal(runExitCode(run({ executionStatus: 'PENDING', status: 'WAITING_FOR_HUMAN_GATE', gate: { state: 'WAITING_FOR_HUMAN_GATE' }, pullRequest: undefined })), 0);
+    });
+    it('when the run waits for Design Approval then exits 0', () => {
+      assert.equal(runExitCode(run({ executionStatus: 'PENDING', status: 'WAITING_FOR_DESIGN_APPROVAL', designApproval: { state: 'WAITING_FOR_DESIGN_APPROVAL' }, pullRequest: undefined })), 0);
+    });
+    it('when a run that never publishes, such as harness:demo, is DONE and waits for review then exits 0', () => {
+      assert.equal(runExitCode(run({ publish: false, status: 'WAITING_FOR_HUMAN_REVIEW', pullRequest: undefined })), 0);
+    });
+  });
+  describe('given a run that failed or needs recovery', () => {
+    for (const executionStatus of ['FAILED', 'ESCALATED']) {
+      it(`when execution is ${executionStatus} then exits 2`, () => {
+        assert.equal(runExitCode(run({ executionStatus, status: 'BLOCKED', pullRequest: undefined })), 2);
+      });
+    }
+    it('when a human requested changes at the gate then exits 2', () => {
+      assert.equal(runExitCode(run({ executionStatus: 'PENDING', status: 'WAITING_FOR_HUMAN_GATE', gate: { state: 'REJECTED' }, pullRequest: undefined })), 2);
+    });
+    it('when a reviewer requested changes on the PR then exits 2', () => {
+      assert.equal(runExitCode(run({ status: 'REJECTED', merge: { reasons: ['github_changes_requested'] } })), 2);
+    });
+    it('when the PR is blocked for a reason other than CI, such as a commit pushed after verification, then exits 2', () => {
+      assert.equal(runExitCode(run({ merge: { reasons: ['tested_sha_mismatch'] } })), 2);
+    });
+    it('when the merge assessment after DONE failed but can be retried (RETRYABLE) then exits 2', () => {
+      assert.equal(runExitCode(run({ status: 'RETRYABLE', merge: { reasons: ['merge_assessment_failed'], failure: { code: 'GITHUB_UNAVAILABLE', retryable: true } } })), 2);
+    });
+    it('when the merge assessment after DONE stopped because the source moved then exits 2', () => {
+      assert.equal(runExitCode(run({ status: 'ESCALATED', merge: { reasons: ['required_ci_not_passed'], failure: { code: 'SOURCE_CHANGED', retryable: false } } })), 2);
+    });
+    it('when a run meant to publish is DONE without a PR then exits 2', () => {
+      assert.equal(runExitCode(run({ status: 'WAITING_FOR_HUMAN_REVIEW', pullRequest: undefined })), 2);
     });
   });
 });
