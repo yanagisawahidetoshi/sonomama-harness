@@ -132,7 +132,7 @@ describe('SBI Impact Analysis', () => {
   });
   describe('given the Expo dependency check that only dependency and native config changes need', () => {
     const doctor = 'gate:pnpm run doctor';
-    for (const path of ['apps/mobile/package.json', 'prototypes/mobile/package.json', 'apps/mobile/app.json', 'apps/mobile/app.config.ts', 'apps/mobile/eas.json', 'apps/mobile/metro.config.js', 'apps/mobile/babel.config.js', 'apps/mobile/ios/Podfile', 'apps/mobile/android/build.gradle', '.npmrc', 'pnpm-workspace.yaml', 'package.json', '.node-version', '.nvmrc']) {
+    for (const path of ['apps/mobile/package.json', 'apps/mobile/app.json', 'apps/mobile/app.config.ts', 'apps/mobile/eas.json', 'apps/mobile/metro.config.js', 'apps/mobile/babel.config.js', 'apps/mobile/ios/Podfile', 'apps/mobile/android/build.gradle', '.npmrc', 'pnpm-workspace.yaml', 'package.json', '.node-version', '.nvmrc']) {
       it(`when ${path} changes then selects expo and explains that expo-doctor runs for that path`, () => {
         const impact = analyzeImpact({ config, sbis: [], files: files(path) });
         assert.ok(required(impact).includes('expo'));

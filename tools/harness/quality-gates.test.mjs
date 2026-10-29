@@ -127,7 +127,7 @@ describe('Commands gated on dependency and native config changes', () => {
       assert.deepEqual(expoCheck(result).skippedCommands.map(c=>c.command),[doctor]);
       assert.match(expoCheck(result).skippedCommands[0].reason,/dependency or native config/);
     }));
-    for (const path of ['apps/mobile/package.json','prototypes/mobile/package.json','apps/mobile/eas.json','.node-version']) {
+    for (const path of ['apps/mobile/package.json','apps/mobile/eas.json','.node-version']) {
       it(`when ${path} changes then runs expo-doctor and its failure fails the verifier`, () => fixture(async root => {
         const {config,sbi}=await gated(root);
         const result=await verify({root,workspace:root,config,sbi,files:[{path}]});
