@@ -128,3 +128,4 @@ Provider固有SDK・token保存・auth context・login画面は導入してい�
 
 `.harness/config/harness.json` の `expo` verifierが `typecheck` / `check` / `test` / `doctor` を実行する。
 受け入れ条件は `.harness/verification/mobile-env.mjs` で検証する。
+
