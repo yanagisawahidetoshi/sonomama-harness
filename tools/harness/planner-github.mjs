@@ -65,6 +65,10 @@ export const githubCli = {
   async addComment({ owner, repo, number }, body) {
     return githubCommentSchema.parse(await api('POST', `repos/${owner}/${repo}/issues/${number}/comments`, { body }));
   },
+  // GitHub issue dependencies: the Issues registered as blocking this one (blocked by).
+  async blockedBy({ owner, repo, number }) {
+    return listAll(`repos/${owner}/${repo}/issues/${number}/dependencies/blocked_by`, {}, githubIssueListSchema);
+  },
   async issueTimeline({ owner, repo, number }) {
     return listAll(`repos/${owner}/${repo}/issues/${number}/timeline`, {}, githubTimelineSchema);
   },

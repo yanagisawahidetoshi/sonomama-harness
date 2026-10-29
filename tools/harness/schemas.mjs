@@ -186,7 +186,7 @@ export const githubIssueListSchema = z.array(githubIssueSchema);
 export const githubTimelineSchema = z.array(z.object({ event: z.string().nullable().optional(),
   source: z.object({ issue: z.object({ number: z.number().int().positive(), html_url: z.url(), pull_request: z.unknown().optional() }).optional() }).nullable().optional() }));
 export const githubPullSchema = z.object({
-  number: z.number().int().positive(), merged_at: z.string().nullable(), base: z.object({ ref: z.string() }), body: z.string().nullable().default(null),
+  number: z.number().int().positive(), merged_at: z.string().nullable(), merge_commit_sha: z.string().nullable().optional(), base: z.object({ ref: z.string() }), body: z.string().nullable().default(null),
   user: z.object({ login: z.string(), type: z.string() }).nullable().optional(),
   head: z.object({ sha: z.string(), repo: z.object({ full_name: z.string() }).nullable() }).optional(),
 });

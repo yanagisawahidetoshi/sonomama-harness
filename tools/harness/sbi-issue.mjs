@@ -46,6 +46,10 @@ function directoryScope(area) {
   return `${path}/`;
 }
 
+export const issueKind = body => (sections(body).get('種類') ?? []).map(l => /（(implementation|validation)）\s*$/.exec(l.trim())?.[1]).find(Boolean) ?? 'implementation';
+// The SBI IDs listed under ## 依存SBI, such as "- SBI-001 (#12)".
+export const issueDependsOn = body => (sections(body).get('依存SBI') ?? []).flatMap(l => /^- (SBI-\d{3})\b/.exec(l.trim())?.[1] ?? []);
+
 export function sbiFromIssue({ ref, issue, config }) {
   const parts = sections(issue.body), problems = [];
   for (const name of ['目的', '受け入れ要件', 'Gherkin', '想定変更範囲', 'Risk / Security Impact']) if (!parts.has(name)) problems.push(`## ${name} がありません`);
@@ -71,7 +75,7 @@ export function sbiFromIssue({ ref, issue, config }) {
   const securityImpact = (security ?? '').split(/,\s*/).map(s => s.trim()).filter(s => s && s !== 'None');
   // Optional for Issues planned before these sections existed: the kind defaults to implementation, and a missing
   // expected number of changed files makes the Completion Judge fail closed instead of blocking the Run here.
-  const kind = section('種類').map(l => /（(implementation|validation)）\s*$/.exec(l.trim())?.[1]).find(Boolean) ?? 'implementation';
+  const kind = issueKind(issue.body);
   const estimate = section('想定変更ファイル数').find(l => l.trim())?.trim();
   const estimatedFiles = /^\d+$/.test(estimate ?? '') ? Number(estimate) : null;
 
@@ -97,7 +101,7 @@ export function sbiFromIssue({ ref, issue, config }) {
 // A dependency is done only when its Harness PR was merged into the base branch: merged_at is set, the body says Closes #N and a commit carries
 // the SBI-Issue trailer of that Issue. Closing the Issue by hand is not enough, since the canonical packages/api-schema/openapi.yaml
 // a Rails or frontend SBI builds on reaches main only by that merge. Anything GitHub cannot answer keeps the run from starting.
-async function mergedHarnessPull({ ref, dependency, base, github }) {
+export async function mergedHarnessPull({ ref, dependency, base, github }) {
   const url = `https://github.com/${ref.owner}/${ref.repo}/issues/${dependency.number}`;
   const pulls = (await github.issueTimeline({ ...ref, number: dependency.number }))
     .map(event => event.event === 'cross-referenced' && event.source?.issue?.pull_request ? event.source.issue : null)
