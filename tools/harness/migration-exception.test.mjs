@@ -82,6 +82,8 @@ describe('Destructive migration exception request in migration-safety', () => {
       ['records a deployed production without the deployment', { requestOverrides: { productionState: { state: 'deployed' } } }, /productionState/],
       ['records an unprovisioned production with a deployment', { requestOverrides: { productionState: { state: 'not_provisioned', deploymentRef: 'release-1' } } }, /productionState/],
       ['treats a merge to main as a production deployment', { requestOverrides: { productionState: { state: 'merged_to_main' } } }, /productionState/],
+      // A model constant (Probe) can still reach a dropped table without naming it, so table removals wait for a model-aware check.
+      ['removes a whole table', { requestOverrides: { removes: [{ table: 'probes' }] } }, /removes/],
     ]) {
       it(`when it ${name} then it FAILs`, () => fixture(async root => {
         await contract(root, options);
@@ -133,8 +135,15 @@ describe('Approvals of a destructive migration exception', () => {
   it('when two different people with write access post the review on the tested commit then the exception is approved', () => {
     assert.deepEqual(approvals([review(1, 'alice'), review(2, 'bob')]), { approved: true, approvers: ['alice', 'bob'], required: 2 });
   });
-  it('when the review is an APPROVED merge review with the same line then it counts as this approval too, since the line names the purpose', () => {
-    assert.equal(approvals([review(1, 'alice', { state: 'APPROVED' }), review(2, 'bob')]).approved, true);
+  // A merge approval (APPROVED) is a different purpose, so one review never serves both.
+  it('when the second approval is posted as an APPROVED merge review then it does not count for the exception', () => {
+    assert.equal(approvals([review(1, 'alice'), review(2, 'bob', { state: 'APPROVED' })]).approved, false);
+  });
+  it('when the second approval is posted with CHANGES_REQUESTED then it does not count', () => {
+    assert.equal(approvals([review(1, 'alice'), review(2, 'bob', { state: 'CHANGES_REQUESTED' })]).approved, false);
+  });
+  it('when a revoke line comes in an APPROVED review then it does not revoke, since only COMMENTED reviews carry this purpose', () => {
+    assert.equal(approvals([review(1, 'alice'), review(2, 'bob'), review(3, 'bob', { state: 'APPROVED', body: `harness-migration-exception-revoke: ${digest}` })]).approved, true);
   });
   for (const [name, reviews] of [
     ['only one person approved', [review(1, 'alice')]],
