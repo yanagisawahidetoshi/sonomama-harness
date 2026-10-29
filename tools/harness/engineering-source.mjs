@@ -67,3 +67,17 @@ export async function verifyEngineeringSource({ root, base, required, repository
   if (!source.reasons.length) source.sources.push({ url });
   return { ...source, status: source.reasons.length ? 'FAIL' : 'PASS' };
 }
+
+export function describeProductionSource(source) {
+  if (!source.required.length) return ['Production source: not required'];
+  if (source.kind === 'engineering') {
+    return [
+      ...source.sources.map(s => `Engineering source: ${s.url}`),
+      `Production source check: ${source.status}${source.reasons.length ? ` (${source.reasons.join('; ')})` : ''}`,
+    ];
+  }
+  return [
+    ...source.sources.map(s => `SBI source: ${s.url} run ${s.runId}`),
+    `Production source check: ${source.status}${source.reasons.length ? ` (${source.reasons.join('; ')})` : ''}`,
+  ];
+}
