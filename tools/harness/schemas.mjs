@@ -217,7 +217,8 @@ export const securityPolicySchema = z.strictObject({
     requiredHumanApprovals: z.number().int().min(2), requiredVerifiers: z.array(text).min(1), policyDocument: relativePath,
   })).min(1),
   verifiers: z.array(z.strictObject({ id: text, kind: z.enum(['secret', 'forbidden', 'pii-log', 'command']),
-    directory: z.union([z.literal('.'), relativePath]).optional(), commands: z.array(z.array(text).min(1)).optional() })),
+    directory: z.union([z.literal('.'), relativePath]).optional(), commands: z.array(z.array(text).min(1)).optional(),
+    appliesTo: z.array(text).optional() })),
   secretPatterns: z.array(text).min(1), forbiddenPatterns: z.array(text), piiLogPatterns: z.array(text),
 }).refine(p => new Set(p.rules.map(r => r.id)).size === p.rules.length && new Set(p.verifiers.map(v => v.id)).size === p.verifiers.length, 'duplicate security rule/verifier');
 export const humanGatesSchema = z.strictObject({ version: z.literal(1), preImplementationRuleIds: z.array(text).min(1) });
