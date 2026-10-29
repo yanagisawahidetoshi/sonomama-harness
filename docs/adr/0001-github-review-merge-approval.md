@@ -30,6 +30,7 @@
 - PRのbaseは、runのbaselineに固定する。PR作成時とresume時の両方で、base branchが設定どおりで、PRのbase SHAとbase branchの現在の先頭がbaselineと一致することを求める。
   mainが進んだらBLOCKEDにし、最新のmainからrunを作り直す。こうするとmergeの結果がHarnessの検証したコードと一致する。
   この条件はRulesetの`strict_required_status_checks_policy`より強いため、その設定は読まない。
+  「runを作り直す」は、実装を保持したまま最新のmainと統合して検証し直す再検証run（`harness:reverify`）で行う（[ADR-0003](0003-reverify-after-main-update.md)）。base一致の条件は変えない。
 - 必須CIは、Harnessの設定とRulesetのrequired status checksの和集合。Rulesetのcheckに`integration_id`があれば、そのGitHub Appのcheck runだけを数える。
 - 必要な人数は、既存のRisk Policyに従う（LEVEL 1は0人、LEVEL 2は1人、LEVEL 3は異なる2人以上）。
 - Harnessが出すのは`MERGE_ALLOWED`まで。`MERGED`はGitHubの状態を正本とし、Harnessでは生成しない。

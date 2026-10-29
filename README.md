@@ -22,13 +22,14 @@ Rails API・Expo・React adminの3アプリは開発環境まで構築済みで�
 
 ## 通常の開発フロー
 
-人間が使うコマンドは次の3つ。`harness:approve`はHuman Gateで止まったときだけ使う。
+人間が使うコマンドは次の4つ。`harness:approve`はHuman Gateで止まったときだけ、`harness:reverify`はレビュー待ちの間にmainが進んだときだけ使う。
 
 ```sh
 pnpm planner:sbi https://github.com/<owner>/<repo>/issues/<PBI番号>     # PBI → SBI Issue [sbi][needs-review]
 # 人間がSBI Issueをレビューし、全ACのTrusted Acceptanceを登録してから ready にする
 pnpm harness:run https://github.com/<owner>/<repo>/issues/<SBI番号>     # 実装 → ローカル検証 → PR作成
 pnpm harness:approve https://github.com/<owner>/<repo>/issues/<SBI番号> --phase gate   # Human Gateのときだけ。承認後にHarnessが再開しPRを作る
+pnpm harness:reverify https://github.com/<owner>/<repo>/pull/<PR番号>  # mainが進んだときだけ。最新のmainをpullしてから実行する
 ```
 
 providerの既定はClaude。Codexだけ使える場合は各コマンドに`--provider codex`を付ける。
@@ -551,7 +552,7 @@ Design Approvalは実装前Human GateやMerge Approvalの代わりにはなら�
 runのHEADを`refs/harness/runs/<run-id>`で保持するので、レビューとPR Adapterは同じSHAを参照する。
 元リポジトリのHEADが進んだ場合、dirty workspace、検証ソースの変更、入力の変更があれば承認を再利用しない。
 現在のLocal Phaseではresume・merge可否の再判定もroot HEAD==baselineを要求する。
-別PRをpullしただけでも既存runは無効になるため、新しいHEADでrunと承認を作り直す。
+別PRをpullしただけでも既存runは無効になるため、新しいHEADでrunと承認を作り直す。PRを作ったrunは`harness:reverify <PR URL>`で、実装を保持したまま再検証runを作る（[ADR-0003](docs/adr/0003-reverify-after-main-update.md)）。
 並行run / Factory向けのbase追跡は今後の拡張とする。
 証跡・承認台帳・秘密値・node_modulesはiteration commitに含めない。
 

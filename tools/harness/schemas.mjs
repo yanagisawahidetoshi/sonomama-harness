@@ -292,5 +292,12 @@ export const runStateSchema = z.strictObject({
   risk: z.looseObject({ level: z.union([z.literal(1), z.literal(2), z.literal(3)]) }).optional(),
   escalation: z.strictObject({ code: z.enum(escalationCodes), detail: z.string() }).optional(),
   pullRequest: z.strictObject({ number: z.number().int().positive(), url: z.url(), branch: text, base: text, repository: text }).optional(),
+  // harness:reverify (ADR-0003): a run that verifies the code of an existing PR merged with the new main, without the implementation agent.
+  kind: z.literal('reverify').optional(),
+  reverify: z.strictObject({ parentRunId: runIdSchema, previousTestedSha: gitSha, sbiSnapshotDigest: sha256,
+    publish: z.enum(['PREPARED', 'VERIFIED', 'PUSHING', 'PUSHED', 'PR_UPDATED']), conflicts: z.array(text).optional(),
+    // The implementation run on this PC, when it exists: whether its signed state verified and tested the PR head the run started from.
+    parentRun: z.strictObject({ found: z.boolean(), verified: z.boolean().optional(), testedSha: gitSha.optional(), testedShaMatches: z.boolean().optional() }) }).optional(),
   startedAt: text, executionFinishedAt: text.optional(), cleanedAt: text.optional(),
-}).refine(s => (s.sbiPath === null) === (s.sbiIssue !== undefined), 'a run has either sbiPath or sbiIssue');
+}).refine(s => (s.sbiPath === null) === (s.sbiIssue !== undefined), 'a run has either sbiPath or sbiIssue')
+  .refine(s => (s.kind === 'reverify') === (s.reverify !== undefined) && (s.kind !== 'reverify' || (s.pullRequest !== undefined && s.sbiIssue !== undefined)), 'a reverify run has its parent, its SBI Issue and its pull request');

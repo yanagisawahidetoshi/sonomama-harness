@@ -12,7 +12,8 @@
    PRを作らないLocal modeでは、LEVEL 2は1人、LEVEL 3は異なる2人以上がapprove --phase mergeで承認する。
 7. 判定の更新が要るときだけ、保守用のresume --run IDでMERGE_ALLOWEDとautoMergeEligibleを確認する。
    merge判定の一時エラーはRETRYABLE（executionStatusはDONEのまま）。原因を解消してresumeし直す。
-8. 実際のmergeは人間が行う。このHarnessはmergeしない。
+8. レビュー待ちの間にmainが進んだら、最新のmainをpullして`pnpm harness:reverify <PR URL>`を実行する。実装を保持したまま再検証し、同じPRを更新する（[pull-request.md](pull-request.md)）。
+9. 実際のmergeは人間が行う。このHarnessはmergeしない。
 
 ゲート承認とマージ承認は別purpose・別context。使い回せない。
 証跡approvals.jsonを編集しても承認にならない。人間用CLIの署名付き台帳を使う。
