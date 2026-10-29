@@ -24,7 +24,7 @@
 - untrusted applicationをホストで実行しない。Dockerが使えない、image・コンテナを用意できないときはFAIL（isolation unavailable）にし、PASS・SKIP・NOT_CONFIGUREDにしない。
 - コンテナにはworkspaceだけをmountする。HOME・Docker socket・`.harness/state/**`・run証跡・`.git`・秘密ファイルを見せない。環境変数はallowlistだけ。非rootで動かす。CHOWN・DAC_READ_SEARCHはvolume準備のroot execだけが使い、検証コマンドのユーザーはcapabilityを持たない。
 - networkは既定で無効。必要なverifierだけharness.jsonで`network: true`を宣言する。
-- Composeのverifierはtrusted HarnessがCompose fileを検査してから起動する。`isolation: harness`はtools/harnessのスクリプトだけに使う。
+- Composeのverifierはtrusted HarnessがCompose fileを検査してから起動する。workspaceから`build`するサービスは、Harnessのoverrideでホストのuid:gid（non-root）として動かす。Compose fileの`user`では変えられない。`isolation: harness`はtools/harnessのスクリプトだけに使う。
 
 ## Risk / Human Approval
 
