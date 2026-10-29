@@ -328,6 +328,56 @@ describe('CI Completion Judge for the source SBI Issue', () => {
       assert.ok(judged.reasons.some(r => r.startsWith('sbi source missing')), judged.reasons.join('; '));
     })));
 
+    // The Issue a variant of the plan renders and the snapshot a Run takes from it.
+    const variant = (overrides = {}, edit = body => body) => {
+      const issue = { ...readyIssue, body: edit(renderSbiBody({ ...planned, ...overrides }, pbi)) };
+      return { issue, snapshot: snapshotFromIssue({ ref, issue, runId, sbi: sbiFromIssue({ ref, issue, config: { verifiers: [homeAcceptance] } }) }) };
+    };
+    const appFiles = count => Object.fromEntries(Array.from({ length: count }, (_, i) => [`apps/admin/src/features/home/part-${i}.ts`, `export const part${i} = ${i};`]));
+    const judgeFiles = async (root, count, s) => {
+      await prepare(root);
+      await commit(root, { ...appFiles(count), [snapshotPath(s)]: s }, `feat: home${trailers(s)}`);
+      return run(root);
+    };
+    const countReasons = judged => judged.reasons.filter(r => r.includes('変更ファイル数'));
+
+    describe('given the number of files the PR changes against the expected number in its SBI Issue', () => {
+      it('when 11 files change against an expected 2 then the Judge fails with both numbers, not counting the Run snapshot', () => mockGitHub({}, () => fixture(async root => {
+        const judged = await judgeFiles(root, 11, snapshot());
+        assert.equal(judged.status, 'FAIL');
+        assert.deepEqual(countReasons(judged), ['変更ファイル数が11ファイルで、目安10ファイルとSBIの想定2ファイルを超えています']);
+      })));
+      it('when 10 files change against an expected 2 then the Judge passes because the PR stays within 10 files', () => mockGitHub({}, () => fixture(async root => {
+        const judged = await judgeFiles(root, 10, snapshot());
+        assert.deepEqual(countReasons(judged), []);
+        assert.equal(judged.status, 'PASS', judged.reasons.join('; '));
+      })));
+      it('when 14 files change and the Planner justified 14 then the Judge passes', () => {
+        const { issue, snapshot: s } = variant({ estimatedFiles: 14, oversizeReason: '生成コードを含むため分割できない' });
+        return mockGitHub({ issue }, () => fixture(async root => {
+          const judged = await judgeFiles(root, 14, s);
+          assert.deepEqual(countReasons(judged), []);
+          assert.equal(judged.status, 'PASS', judged.reasons.join('; '));
+        }));
+      });
+      it('when the SBI Issue has no expected number then the Judge fails closed', () => {
+        const { issue, snapshot: s } = variant({}, body => body.replace(/## 想定変更ファイル数\n\n2\n\n/, ''));
+        return mockGitHub({ issue }, () => fixture(async root => {
+          const judged = await judgeFiles(root, 1, s);
+          assert.equal(judged.status, 'FAIL');
+          assert.deepEqual(countReasons(judged), ['SBIの想定変更ファイル数がないため、変更ファイル数を判定できません']);
+        }));
+      });
+      it('when it is a validation SBI then the number of changed files is not judged', () => {
+        const { issue, snapshot: s } = variant({ kind: 'validation', estimatedFiles: 2, verification: { applicationTest: '不要', acceptance: 'Trusted Acceptance', e2e: 'Maestro: 実API' } });
+        return mockGitHub({ issue }, () => fixture(async root => {
+          const judged = await judgeFiles(root, 11, s);
+          assert.deepEqual(countReasons(judged), []);
+          assert.equal(judged.status, 'PASS', judged.reasons.join('; '));
+        }));
+      });
+    });
+
     it('when the source SBI Issue still needs review then the Judge fails', () => mockGitHub({ issue: { ...readyIssue, labels: labels('sbi', 'needs-review') } }, () => fixture(async root => {
       await prepare(root);
       await commit(root, { [admin]: 'export const home = 1;', [snapshotPath(snapshot())]: snapshot() }, `feat: home${trailers()}`);
