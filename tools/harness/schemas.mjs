@@ -18,6 +18,8 @@ export const sbiSchema = z.strictObject({
   requiredVerifiers: z.array(text).default([]), affectedAreas: z.array(text).default([]), preImplementationGate: z.boolean().default(false),
   promotion: z.strictObject({ source: relativePath.refine(p => /^prototypes\/(web|mobile)(\/|$)/.test(p)), designApproval: z.null().optional() }).optional(),
   minimumRiskLevel: z.union([z.literal(2), z.literal(3)]).default(2),
+  // The Planner's expected number of changed files, from the SBI Issue. Hand-written SBI JSON has none.
+  estimatedFiles: z.number().int().min(0).nullable().optional(),
   issueUrl: z.url().optional(), pbiUrl: z.url().optional(),
 }).refine(s => new Set(s.acceptanceCriteria.map(a => a.id)).size === s.acceptanceCriteria.length, 'duplicate acceptance criteria')
   .refine(s => s.allowedFiles.length + s.allowedDirs.length > 0, 'allowedFiles or allowedDirs required');
