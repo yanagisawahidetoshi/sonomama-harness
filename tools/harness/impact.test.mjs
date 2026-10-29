@@ -232,24 +232,33 @@ describe('CI workflow setup', () => {
   });
 
   describe('given jobs that build the API image', () => {
-    const cacheDir = '/tmp/harness-build-cache';
+    // Under apps/api/tmp: ignored by Git and Docker, hidden from the container, and inside every building verifier's working directory, which bake's filesystem entitlement requires.
+    const cacheDir = 'apps/api/tmp/buildkit-cache';
     const stepIndex = (job, prefix) => workflow.jobs[job].steps.findIndex(s => s.uses?.startsWith(prefix));
-    for (const job of ['verifiers', 'harness-demo']) {
-      it(`when ${job} sets up then restores the BuildKit layer cache keyed on every Dockerfile and Gemfile.lock before installing`, () => {
-        const cache = workflow.jobs[job].steps[stepIndex(job, 'actions/cache@')];
-        assert.ok(cache, 'actions/cache step');
-        assert.ok(stepIndex(job, 'actions/cache@') < stepIndex(job, 'pnpm/action-setup@'));
-        assert.equal(cache.with.path, cacheDir);
-        assert.match(cache.with.key, /hashFiles\('\*\*\/Dockerfile', '\*\*\/Gemfile\.lock'\)/);
-      });
 
-      it(`when ${job} builds through compose then imports and exports that cache`, () => {
-        assert.equal(workflow.jobs[job].env.HARNESS_BUILD_CACHE_FROM, `type=local,src=${cacheDir}`);
-        assert.equal(workflow.jobs[job].env.HARNESS_BUILD_CACHE_TO, `type=local,dest=${cacheDir},mode=max`);
-      });
-    }
+    it('when verifiers set up then restores the BuildKit layer cache keyed on every Dockerfile and Gemfile.lock before installing', () => {
+      const cache = workflow.jobs.verifiers.steps[stepIndex('verifiers', 'actions/cache@')];
+      assert.ok(cache, 'actions/cache step');
+      assert.ok(stepIndex('verifiers', 'actions/cache@') < stepIndex('verifiers', 'pnpm/action-setup@'));
+      assert.equal(cache.with.path, cacheDir);
+      assert.match(cache.with.key, /hashFiles\('\*\*\/Dockerfile', '\*\*\/Gemfile\.lock'\)/);
+    });
 
-    for (const job of ['impact', 'harness-test', 'harness']) {
+    it('when verifiers build through compose then import and export that cache by absolute path', () => {
+      assert.equal(workflow.jobs.verifiers.env.HARNESS_BUILD_CACHE_FROM, `type=local,src=\${{ github.workspace }}/${cacheDir}`);
+      assert.equal(workflow.jobs.verifiers.env.HARNESS_BUILD_CACHE_TO, `type=local,dest=\${{ github.workspace }}/${cacheDir},mode=max`);
+    });
+
+    it('when any job builds then keeps the bake filesystem entitlement check', () => {
+      for (const [name, job] of Object.entries(workflow.jobs)) {
+        assert.equal(job.env?.BUILDX_BAKE_ENTITLEMENTS_FS, undefined, name);
+        for (const step of job.steps) assert.equal(step.env?.BUILDX_BAKE_ENTITLEMENTS_FS, undefined, name);
+      }
+      assert.doesNotMatch(JSON.stringify(workflow), /--allow|ENTITLEMENTS/);
+    });
+
+    // harness-demo builds inside run worktrees, outside the checkout that holds the cache, so bake would refuse it there.
+    for (const job of ['impact', 'harness-test', 'harness-demo', 'harness']) {
       it(`when ${job} sets up then restores no build cache`, () => {
         assert.equal(stepIndex(job, 'actions/cache@'), -1);
         assert.equal(workflow.jobs[job].env?.HARNESS_BUILD_CACHE_FROM, undefined);
@@ -261,6 +270,11 @@ describe('CI workflow setup', () => {
       assert.equal(build.context, './apps/api');
       assert.deepEqual(build.cache_from, ['${HARNESS_BUILD_CACHE_FROM:-type=local,src=.no-build-cache}']);
       assert.deepEqual(build.cache_to, ['${HARNESS_BUILD_CACHE_TO:-type=inline}']);
+    });
+
+    it('when the base image tag moves to a new digest then the Dockerfile and therefore the cache key change', async () => {
+      const dockerfile = await readFile(new URL('../../apps/api/Dockerfile', import.meta.url), 'utf8');
+      assert.match(dockerfile, /^FROM ruby:3\.4\.\d+-slim@sha256:[0-9a-f]{64}$/m);
     });
   });
 
