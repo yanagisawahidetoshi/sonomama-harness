@@ -34,6 +34,17 @@ async function committedAt(root, directory, sha) {
   return true;
 }
 
+// Regeneration guard: each reviewer's APPROVE stays until that reviewer records REVOKE, regardless of digest, commit or working tree.
+// REQUEST_CHANGES and a dirty proposal directory lower the status below but never free the proposal; only an explicit REVOKE does.
+export async function unrevokedApiSchemaApprovals({ root, issueUrl }) {
+  const held = new Map();
+  for (const record of await records(root, parseIssueUrl(issueUrl))) {
+    if (record.decision === 'APPROVE') held.set(record.reviewer, record);
+    else if (record.decision === 'REVOKE') held.delete(record.reviewer);
+  }
+  return [...held.values()];
+}
+
 export async function apiSchemaApprovalStatus({ root, issueUrl }) {
   const ref = parseIssueUrl(issueUrl), directory = proposalDirectory(ref);
   const ledger = await records(root, ref);
