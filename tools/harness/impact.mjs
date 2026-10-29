@@ -4,7 +4,9 @@ import { isSafeEnvTemplate } from './evidence-protection.mjs';
 import { readJson } from './io.mjs';
 import { isProductionPath } from './lanes.mjs';
 import { readSbiFiles, verifySbiSource } from './sbi-source.mjs';
-import { configSchema, securityPolicySchema } from './schemas.mjs';
+import { dependencyBotExemption } from './dependency-bot.mjs';
+import { githubCli } from './planner-github.mjs';
+import { configSchema, dependencyBotPolicySchema, securityPolicySchema } from './schemas.mjs';
 import { classifySecurity, combineSecurity, securityPassed, verifySecurity } from './security-enforcement.mjs';
 import { checksPassed, verify } from './verifier.mjs';
 import { withAcceptance } from './acceptance-registry.mjs';
@@ -142,7 +144,7 @@ async function changedContent(root, files) {
 
 // Completion Judge: trusted acceptance of every changed SBI and the Harness Security Policy run here, the source SBI Issue of a Production change
 // is read from GitHub, then the job results are checked against what the impact required.
-export async function runCompletionJudge({ root, base, all = false, needs, repository, github }) {
+export async function runCompletionJudge({ root, base, all = false, needs, repository = process.env.GITHUB_REPOSITORY, pullNumber, github = githubCli }) {
   const { config, files, sbis, impact } = await loadImpact({ root, base, all });
   const missing = [], checks = [];
   for (const sbi of sbis) {
@@ -157,7 +159,11 @@ export async function runCompletionJudge({ root, base, all = false, needs, repos
   const matrix = impact.requiredVerifiers.map(id => ({ id, status: needs.verifiers?.result === 'success' ? 'PASS' : 'FAIL', reason: `verifier matrix: ${needs.verifiers?.result ?? 'missing'}` }));
   const headSha = (await git(root, ['rev-parse', 'HEAD'])).stdout.trim();
   const security = await verifySecurity({ workspace: root, sbi: {}, assessment, policy, config, headSha, verification: { checks: [...checks, ...matrix] }, changed: await changedContent(root, files) });
-  const source = await verifySbiSource({ root, base, files, required: impact.sbiRequiredReasons, config, repository, github });
+  // A trusted bot's dependency PR lifts the SBI source requirement only; everything above and judgeCi stay as they are.
+  const exemption = impact.sbiRequired && pullNumber !== undefined
+    ? await dependencyBotExemption({ policy: dependencyBotPolicySchema.parse(await readJson(join(root, '.harness/rules/dependency-bots.json'))), files, headSha, repository, pullNumber, github })
+    : null;
+  const source = { ...await verifySbiSource({ root, base, files, required: exemption?.exempt ? [] : impact.sbiRequiredReasons, config, repository, github }), ...(exemption ? { exemption } : {}) };
   return { impact, acceptance, checks, security, source, ...judgeCi({ impact, needs, acceptance, security, source }) };
 }
 

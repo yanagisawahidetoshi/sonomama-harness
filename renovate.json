@@ -16,6 +16,7 @@
     "packages/**"
   ],
   "automerge": false,
+  "platformCommit": "enabled",
   "lockFileMaintenance": {
     "enabled": false
   },

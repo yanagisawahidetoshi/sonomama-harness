@@ -71,6 +71,9 @@ export const githubCli = {
   async fetchPull({ owner, repo }, number) {
     return githubPullSchema.parse(await api('GET', `repos/${owner}/${repo}/pulls/${number}`));
   },
+  async pullCommits({ owner, repo }, number) {
+    return listAll(`repos/${owner}/${repo}/pulls/${number}/commits`, {}, githubPullCommitsSchema);
+  },
   async pullCommitMessages({ owner, repo }, number) {
     return (await listAll(`repos/${owner}/${repo}/pulls/${number}/commits`, {}, githubPullCommitsSchema)).map(c => c.commit.message);
   },
