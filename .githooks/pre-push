@@ -4,5 +4,10 @@ cd "$(git rev-parse --show-toplevel)"
 # git exports the pushing repository location to hooks. Test fixtures run git in temp dirs,
 # so an inherited GIT_DIR would redirect their commits and config into this repository.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
+# git writes the pushed refs to stdin; read them before any command can consume it.
+# Only this push's refs reach the push gate, never ones inherited from an outer hook.
+unset HARNESS_PUSH_REFS
+refs=$(cat)
 pnpm harness:check
-pnpm harness:test
+# The Harness picks the verifiers from Impact Analysis and falls back to the Full Gate.
+HARNESS_PUSH_REFS="$refs" pnpm harness:push-gate

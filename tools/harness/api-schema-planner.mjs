@@ -10,7 +10,7 @@ import { parseIssueUrl } from './planner.mjs';
 import { githubCli } from './planner-github.mjs';
 import { readExistingSchema, schemaExtract, contractExtract } from './api-schema-reader.mjs';
 import { diffContract } from './api-schema-diff.mjs';
-import { apiSchemaApprovalStatus } from './api-schema-approval.mjs';
+import { unrevokedApiSchemaApprovals } from './api-schema-approval.mjs';
 import { reviewLabels, approvedLabel, proposalDirectory, sha256, assertReplaceable, recordGeneration } from './api-schema-files.mjs';
 import { judgeApiSchema, reservedComponents, supportedStatuses, limits } from './api-schema-judge.mjs';
 import { renderOpenApi, renderSummary } from './api-schema-render.mjs';
@@ -63,9 +63,9 @@ async function proposeProtected({ root, issueUrl, provider, quiet, agent, github
     summary.issue = { ...ref, title: issue.title };
     await json(join(directory, 'issue.json'), issue);
     if (issue.labels.includes(approvedLabel)) throw new Error(`#${issue.number} には${approvedLabel}が付いています。承認済みのAPI Schemaは再生成しません。変更する場合は人間がラベルを外してから実行してください`);
-    // The signed ledger, not the label, decides whether a proposal is approved. Regenerating would silently void an approval.
-    const approval = await apiSchemaApprovalStatus({ root, issueUrl: ref.url });
-    if (approval.approvals > 0) throw new Error(`#${issue.number} のAPI Schemaには有効な承認（${approval.approvals}/${approval.required}）があります。再生成する場合は人間が承認をREVOKEしてから実行してください`);
+    // The signed ledger, not the label or the working tree, decides whether a proposal is approved. Regenerating would silently void an approval.
+    const approvals = await unrevokedApiSchemaApprovals({ root, issueUrl: ref.url });
+    if (approvals.length) throw new Error(`#${issue.number} のAPI Schemaには署名付き台帳に未撤回の承認（${approvals.length}件）があります。再生成する場合は承認者が承認をREVOKEしてから実行してください`);
     await assertReplaceable(root, proposalDir, ref.url);
 
     summary.status = 'READING_SCHEMA'; await save();

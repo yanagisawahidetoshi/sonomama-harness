@@ -28,7 +28,8 @@ export async function verify({ root, workspace, config, sbi, files = sbi.allowed
     if (adapter.allowMissing === false) reasons.push('configured-required');
     if (selected.get(adapter.id) === true) reasons.push('impact-required');
     const mandatory = reasons.length > 0;
-    const matchesLane = !adapter.lanes || adapter.lanes.includes(lane.name);
+    // The Trusted Acceptance of one SBI Issue asserts that Issue's change only; it runs when that SBI requires it, never by path or --full.
+    const matchesLane = (!adapter.lanes || adapter.lanes.includes(lane.name)) && (adapter.sbiIssue === undefined || needed.has(adapter.id));
     const pathMatch = adapter.kind !== 'sample-bdd' && matchesLane && (!adapter.appliesTo || files.some(f=>adapter.appliesTo.some(p=>new RegExp(p).test(f.path))));
     if (pathMatch) reasons.push('changed-path');
     if (selected.get(adapter.id) === false) reasons.push('impact-selected');
@@ -61,8 +62,19 @@ export async function verify({ root, workspace, config, sbi, files = sbi.allowed
     else if (missing) checks.push({...base,status:'FAIL',cwd,reason:'required app is missing',planned:adapter.planned});
     else if (!adapter.commands.length) checks.push({...base,required:true,status:'NOT_CONFIGURED',cwd,reason:'app exists but verifier commands are not configured'});
     else {
-      const {status,reason,processes}=await runIsolated({workspace,adapter,config,cwd});
-      checks.push({...base,required:true,status,...(reason&&{reason}),cwd,isolation:adapter.isolation||'container',processes});
+      // A gated command (expo-doctor follows the latest Expo release) runs only for a matching change; requiring the verifier, full and areas do not lift the gate.
+      // Only the selected commands reach the isolated runner.
+      const gateOf = command => (adapter.gatedCommands ?? []).find(g => g.command.join('\0') === command.join('\0'));
+      const commands=[], skippedCommands=[];
+      for (const command of adapter.commands) {
+        const gate = gateOf(command);
+        if (gate && !files.some(f=>gate.appliesTo.some(p=>new RegExp(p).test(f.path)))) {
+          skippedCommands.push({command:command.join(' '),reason:'no dependency or native config change matches its appliesTo'}); continue;
+        }
+        commands.push(command);
+      }
+      const {status,reason,processes}=await runIsolated({workspace,adapter,config,cwd,commands});
+      checks.push({...base,required:true,status,...(reason&&{reason}),cwd,isolation:adapter.isolation||'container',processes,skippedCommands});
     }
   }
   return {status:checksPassed(checks)?'PASS':'FAIL',acceptance:[...new Set(acceptance)],lane:lane.name,checks};

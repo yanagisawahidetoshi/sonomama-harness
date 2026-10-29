@@ -34,6 +34,17 @@ async function committedAt(root, directory, sha) {
   return true;
 }
 
+// Regeneration guard: each reviewer's APPROVE stays until that reviewer records REVOKE, regardless of digest, commit or working tree.
+// REQUEST_CHANGES and a dirty proposal directory lower the status below but never free the proposal; only an explicit REVOKE does.
+export async function unrevokedApiSchemaApprovals({ root, issueUrl }) {
+  const held = new Map();
+  for (const record of await records(root, parseIssueUrl(issueUrl))) {
+    if (record.decision === 'APPROVE') held.set(record.reviewer, record);
+    else if (record.decision === 'REVOKE') held.delete(record.reviewer);
+  }
+  return [...held.values()];
+}
+
 export async function apiSchemaApprovalStatus({ root, issueUrl }) {
   const ref = parseIssueUrl(issueUrl), directory = proposalDirectory(ref);
   const ledger = await records(root, ref);
@@ -75,7 +86,7 @@ export async function recordApiSchemaDecision({ root, issueUrl, decision = 'APPR
   if (!['APPROVE', 'REVOKE', 'REQUEST_CHANGES'].includes(decision)) throw new Error('Invalid API schema decision');
   const identity = await identityProvider();
   if (identity?.kind !== 'human' || !identity.id || !identity.source) throw new Error('Authenticated human identity required');
-  if (!await readProposalMeta(root, directory)) throw new Error(`No API Schema proposal for ${ref.url} at ${directory}; run planner:api-schema first`);
+  if (!await readProposalMeta(root, directory)) throw new Error(`No API Schema proposal for ${ref.url} at ${directory}; run node tools/harness/cli.mjs api-schema first`);
   const meta = await assertGenerated(root, directory, ref.url);
   if (meta.quality?.status !== 'PASS') throw new Error('API Schema Quality JudgeがPASSしていないProposalは承認できません');
   if (await uncommitted(root, directory)) throw new Error(`${directory} has uncommitted changes; commit the proposal before recording a decision`);

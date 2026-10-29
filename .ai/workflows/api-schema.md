@@ -1,4 +1,7 @@
-# API Schema Plannerの運用
+# API Schema Plannerの運用（内部機能）
+
+通常のOpenAPI作成・変更は、PlannerのOpenAPI Schema SBIを`pnpm harness:run <SBI Issue URL>`で実行する（README「OpenAPI Schema SBI」）。
+以下は旧来の専用フローで、人間向けのpackage scriptからは外している。
 
 API変更を伴うPBI / SBIは、実装前にOpenAPIの契約を人間が承認する。PlannerはProposalの生成までを担当し、承認・実装・mergeはしない。
 
@@ -14,11 +17,11 @@ GitHub Issue → Requirement Reader → Existing API Schema Reader（packages/ap
 
 1. Issueに対象画面・操作・データ・権限の要件を書く。
 2. `gh auth status`で対象リポジトリへissues: writeできることを確認する。
-3. `pnpm planner:api-schema https://github.com/<owner>/<repo>/issues/<number> --provider claude`を実行する。
+3. `node tools/harness/cli.mjs api-schema https://github.com/<owner>/<repo>/issues/<number>`を実行する。
 4. Quality JudgeがFAILならIssueを直して再実行する。
 5. PASSなら`.harness/api-schema/<number>/summary.md`のHuman Reviewを人間が確認する。
    生成物はGit管理対象。commitしてPRで差分レビューする。Execution Harnessはcleanなリポジトリでしか起動しない。
-6. 承認する場合は、Proposalをcommitしたうえで`pnpm planner:api-schema-approve <Issue URL>`を実行する。
+6. 承認する場合は、Proposalをcommitしたうえで`node tools/harness/cli.mjs api-schema-approve <Issue URL>`を実行する。
    取り消しは`--decision revoke`、差し戻しは`--decision request-changes`。
 7. `pnpm planner:api-schema-status <Issue URL>`で判定する。APPROVEDならexit 0、それ以外はexit 2。
 8. 承認後、人間がopenapi.yamlを`packages/api-schema/openapi.yaml`へ反映し、それを参照するFrontend / Backendの実装SBIを作る。
@@ -41,7 +44,8 @@ API Schemaを利用する後続処理は、必ず`planner:api-schema-status`（`
   導出の対象: Bearer JWT必須・Rails認可条件・PII、認証必須→公開、認可条件（roles / rule）の削除・緩和・変更、認証・認可付きendpointの削除。
   必要人数は署名付きの生成記録から読み、proposal.jsonからは読まない。同じ人の承認は1人と数え、各人の最新の判断だけを使う。
 - 識別は既存の承認台帳と同じくOSユーザー。1台のPCの同じOSユーザーでは2人分にならない。複数人の本運用には認証済み承認adapterを接続する。
-- 有効な承認がある間、Plannerは再生成しない。変更する場合は承認者が`--decision revoke`してから再実行する。
+- 署名付き台帳に未撤回の承認（APPROVEの後に同じ承認者のREVOKEがない）がある間、Plannerは再生成しない。digest・commit・未commit/未追跡ファイルの有無は問わない。変更する場合は承認者が`--decision revoke`してから再実行する。
+  REQUEST_CHANGESと未commitの変更はstatusのAPPROVEDを下げるが、再生成の許可には使わない。解除はREVOKEだけ。
 
 この承認はExecution Harnessの実装前Gate・Design Approval・Merge Approvalとは別の記録で、どれの代わりにもならない。
 
@@ -83,7 +87,7 @@ Secret / Credentialらしき値、成功responseでのpassword / secret等の返
 - 生成済みディレクトリは、署名付きの生成記録と3ファイル（openapi.yaml・proposal.json・summary.md）のdigestが一致する場合だけ上書きする。
   人間が編集していた場合や生成記録がない場合は、上書きせずexit 1。
 - 別リポジトリの同じ番号のIssueのProposalがあれば上書きしない。
-- 署名付き台帳に有効な承認があれば再生成しない。Issueに`api-schema-approved`がある場合も再生成しない。
+- 署名付き台帳に未撤回の承認があれば再生成しない。Issueに`api-schema-approved`がある場合も再生成しない。
 - Issueコメントはmarkerで探して同じコメントを更新する。
 
 既存OpenAPIはOpenAPI 3.1.xだけを読む。openapi.yamlとopenapi.jsonが両方あれば停止する。

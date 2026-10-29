@@ -1,0 +1,68 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "enabledManagers": ["npm", "bundler"],
+  "ignorePaths": [
+    "**/node_modules/**",
+    "**/bower_components/**",
+    "**/vendor/**",
+    "**/examples/**",
+    "**/__tests__/**",
+    "**/test/**",
+    "**/tests/**",
+    "**/__fixtures__/**",
+    "apps/mobile/**",
+    "prototypes/**",
+    "packages/**"
+  ],
+  "automerge": false,
+  "lockFileMaintenance": {
+    "enabled": false
+  },
+  "labels": ["dependencies"],
+  "packageRules": [
+    {
+      "description": "Show the admin update in apps/admin/package.json, not only in pnpm-lock.yaml.",
+      "matchManagers": ["npm"],
+      "rangeStrategy": "bump"
+    },
+    {
+      "description": "Keep admin tooling minor and patch updates in one PR.",
+      "matchFileNames": ["apps/admin/package.json"],
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "admin dev dependencies (non-major)"
+    },
+    {
+      "description": "Major updates get their own PR and need a human decision.",
+      "matchUpdateTypes": ["major"],
+      "addLabels": ["major-update"],
+      "automerge": false
+    },
+    {
+      "description": "The root package.json holds Harness tooling and packageManager; changing it runs the Full Gate.",
+      "matchFileNames": ["package.json"],
+      "enabled": false
+    },
+    {
+      "description": "Admin React is pinned to the Expo SDK 58 React version so the workspace resolves a single react (a8218f1). Update it with the Expo SDK upgrade.",
+      "matchFileNames": ["apps/admin/package.json"],
+      "matchPackageNames": ["react", "react-dom", "@types/react", "@types/react-dom"],
+      "enabled": false
+    },
+    {
+      "description": "Expo / React Native follow the Expo SDK and are out of scope for Renovate.",
+      "matchPackageNames": [
+        "expo",
+        "expo-*",
+        "@expo/**",
+        "eas-cli",
+        "react-native",
+        "react-native-*",
+        "@react-native/**",
+        "@react-native-community/**"
+      ],
+      "enabled": false
+    }
+  ]
+}

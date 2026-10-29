@@ -39,9 +39,19 @@ export async function runAgent({ provider, iteration, prompt, directory, workspa
 }
 export async function makePrompt({ root, sbi, workspace, feedback, rules }) {
   const files = {};
-  for (const path of sbi.allowedFiles) {
+  // A directory scope shows the agent the tracked files below it, within the same size limit as a listed file.
+  const listed = [];
+  for (const dir of sbi.allowedDirs ?? []) {
+    const result = await execute('git', ['ls-files', '-z', '--', dir], { cwd: workspace });
+    if (!result.ok) throw new Error(`git ls-files ${dir}: ${result.stderr}`);
+    listed.push(...result.stdout.split('\0').filter(Boolean));
+  }
+  for (const path of [...new Set([...sbi.allowedFiles, ...listed])]) {
     if (isSecretPath(path)) { files[path] = '[EXCLUDED SECRET FILE]'; continue; }
-    try { files[path] = await readFile(join(workspace, path), 'utf8'); }
+    try {
+      const content = await readFile(join(workspace, path), 'utf8');
+      files[path] = sbi.allowedFiles.includes(path) || Buffer.byteLength(content) <= rules.maxFileBytes ? content : '[FILE TOO LARGE]';
+    }
     catch (e) { if (e.code !== 'ENOENT') throw e; }
   }
   return redactText([await readFile(join(root, '.harness/skills/implement.md'), 'utf8'),
