@@ -7,7 +7,7 @@
 - apps/api: Rails API。apps/mobile: Expo（受講生アプリ）。apps/admin: React（管理画面）。
 - prototypes/web・prototypes/mobile: デザイナー用の試作。本番コードではなく、ここからコピーして本番化しない。
 - API契約のSSOTはpackages/api-schemaのOpenAPI。Rails・Expo・adminは同じスキーマを参照する。
-- アプリ内の依存方向はapp → features → shared。feature間の直接依存は禁止。
+- アプリ内の依存方向はapp → features → shared。feature間の直接依存は禁止。apps/admin・apps/mobileのsrc直下はapp / features / shared / providersとentrypoint・test setup・d.tsだけ。未分類のtop-level（src/lib等）はarchitecture checkでFAILする。
 - Auth providerは未決定。明示的な承認なしにCognito / Firebase / Google等のProvider固有SDKを追加しない。
 
 ## Harness v1
@@ -16,8 +16,8 @@ State → Agent → Verifier → Reviewer → Completion Judge。
 失敗時は証跡を次iterationに渡す。各runは新しい作業領域を持つ。
 実装はtools/harness、設定は.harness/config、判断規則は.harness/rules。
 Reviewerは決定的なポリシーチェックで、設計・セキュリティの専門レビューは含まない。
-実際のmergeは対象外。PBI → SBI PlannerはSBI Issueの作成まで、API Schema PlannerはOpenAPI Proposalの生成とレビュー依頼までで、承認・実装・merge・packages/api-schemaへの反映はしない。
-GitHub PR Adapter（`harness:pr`）は検証済みSHAのPR作成と、GitHub Review・必須CIによるMERGE_ALLOWED判定まで。CIのjob構成は[workflows/ci.md](workflows/ci.md)。
+実際のmergeは対象外。PBI → SBI PlannerはSBI Issueの作成まで。実行は`harness:run <SBI Issue URL>`で、OpenAPIの変更も通常のSBI（Schema SBI）として扱う。API Schema Plannerは内部機能で、OpenAPI Proposalの生成とレビュー依頼までしか行わない。
+GitHub PR Adapter（`harness:run`がDONE後に呼ぶ。`harness:pr`は復旧用）は検証済みSHAのPR作成と、GitHub Review・必須CIによるMERGE_ALLOWED判定まで。CIのjob構成は[workflows/ci.md](workflows/ci.md)。
 
 ## Review adapterの接続点
 

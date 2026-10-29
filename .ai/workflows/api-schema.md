@@ -1,4 +1,7 @@
-# API Schema Plannerの運用
+# API Schema Plannerの運用（内部機能）
+
+通常のOpenAPI作成・変更は、PlannerのOpenAPI Schema SBIを`pnpm harness:run <SBI Issue URL>`で実行する（README「OpenAPI Schema SBI」）。
+以下は旧来の専用フローで、人間向けのpackage scriptからは外している。
 
 API変更を伴うPBI / SBIは、実装前にOpenAPIの契約を人間が承認する。PlannerはProposalの生成までを担当し、承認・実装・mergeはしない。
 
@@ -14,11 +17,11 @@ GitHub Issue → Requirement Reader → Existing API Schema Reader（packages/ap
 
 1. Issueに対象画面・操作・データ・権限の要件を書く。
 2. `gh auth status`で対象リポジトリへissues: writeできることを確認する。
-3. `pnpm planner:api-schema https://github.com/<owner>/<repo>/issues/<number> --provider claude`を実行する。
+3. `node tools/harness/cli.mjs api-schema https://github.com/<owner>/<repo>/issues/<number>`を実行する。
 4. Quality JudgeがFAILならIssueを直して再実行する。
 5. PASSなら`.harness/api-schema/<number>/summary.md`のHuman Reviewを人間が確認する。
    生成物はGit管理対象。commitしてPRで差分レビューする。Execution Harnessはcleanなリポジトリでしか起動しない。
-6. 承認する場合は、Proposalをcommitしたうえで`pnpm planner:api-schema-approve <Issue URL>`を実行する。
+6. 承認する場合は、Proposalをcommitしたうえで`node tools/harness/cli.mjs api-schema-approve <Issue URL>`を実行する。
    取り消しは`--decision revoke`、差し戻しは`--decision request-changes`。
 7. `pnpm planner:api-schema-status <Issue URL>`で判定する。APPROVEDならexit 0、それ以外はexit 2。
 8. 承認後、人間がopenapi.yamlを`packages/api-schema/openapi.yaml`へ反映し、それを参照するFrontend / Backendの実装SBIを作る。
@@ -36,7 +39,10 @@ API Schemaを利用する後続処理は、必ず`planner:api-schema-status`（`
 - Proposalが未commit、人間が生成物を編集した、Quality JudgeがPASSしていない場合は承認を記録しない。
 - 生成物の改変は、Plannerが`.harness/state/api-schema/`（Git管理対象外）に署名して残した生成記録の3ファイルのdigestと比べて判定する。proposal.json自身の`files`は参考情報で、改変の判定には使わない。
 - 生成記録は生成したPCにだけある。別のPCやcloneでは生成記録がないため承認を記録しない（承認台帳と同じくローカルの信頼状態）。
-- Security Impactがあれば異なる人間2人、なければ1人が必要。必要人数は署名付きの生成記録から読み、proposal.jsonからは読まない。同じ人の承認は1人と数え、各人の最新の判断だけを使う。
+- Security Impactがあれば異なる人間2人、なければ1人が必要。Security ImpactはHarnessが既存契約とProposalの差分から導出する（`api-schema-security.mjs`）。
+  providerの`securityImpact`は申告値で、導出値を欠けばQuality JudgeがFAILし、必要人数は導出値（申告が多ければ申告も）から決める。
+  導出の対象: Bearer JWT必須・Rails認可条件・PII、認証必須→公開、認可条件（roles / rule）の削除・緩和・変更、認証・認可付きendpointの削除。
+  必要人数は署名付きの生成記録から読み、proposal.jsonからは読まない。同じ人の承認は1人と数え、各人の最新の判断だけを使う。
 - 識別は既存の承認台帳と同じくOSユーザー。1台のPCの同じOSユーザーでは2人分にならない。複数人の本運用には認証済み承認adapterを接続する。
 - 有効な承認がある間、Plannerは再生成しない。変更する場合は承認者が`--decision revoke`してから再実行する。
 
@@ -63,7 +69,7 @@ proposal.jsonはmachine-readableな提案本体、Quality Judgeの結果、生�
 method / path / operationIdの欠落・形式違反、operationIdの重複（既存含む）、method + pathの重複、
 pathの`{param}`とpath parameterの不一致、未定義schemaへの参照、空のenum、型と合わないexample、
 対象外・重複したstatus、2xxなし、204のbody、共通Error以外のerror response、GET / DELETEのrequest body、
-401 / 403と認証・認可条件の不整合、PII・認証・認可に対するSecurity Impactの宣言漏れ、security.json外の分類、
+401 / 403と認証・認可条件の不整合、Harnessが導出したSecurity Impact（PII・認証・認可、既存契約からの認証解除・認可緩和・削除）の宣言漏れ、security.json外の分類、
 Secret / Credentialらしき値、成功responseでのpassword / secret等の返却、既存endpointとの衝突（addで既存あり、modify / removeで既存なし）。
 
 破壊的変更の候補（endpoint削除、property削除、型変更、enum値の削除、必須化など）はFAILにせず、summary.mdに並べて人間が判断する。

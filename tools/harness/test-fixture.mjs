@@ -9,7 +9,7 @@ export async function fixture(fn) {
   const ignored = (await git(source, ['ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '--', 'apps', 'prototypes', 'packages'])).stdout
     .split('\n').filter(Boolean).map(path => join(source, path.replace(/\/$/, '')));
   try {
-    for (const path of ['apps', 'prototypes', 'packages', 'docs', '.harness/config', '.harness/verification', '.harness/rules', '.harness/skills', '.harness/state/sample-sbi.json', 'tools/harness', 'AGENTS.md', 'package.json', 'pnpm-workspace.yaml', '.gitignore']) {
+    for (const path of ['apps', 'prototypes', 'packages', 'docs', '.harness/config', '.harness/acceptance', '.harness/verification', '.harness/rules', '.harness/skills', '.harness/state/sample-sbi.json', 'tools/harness', 'AGENTS.md', 'package.json', 'pnpm-workspace.yaml', '.gitignore']) {
       await mkdir(join(root, path, '..'), { recursive: true });
       // Locally installed dependencies and build output are not fixture inputs; only the files Git would see are copied.
       await cp(join(source, path), join(root, path), { recursive: true, filter: src => !ignored.some(dir => src === dir || src.startsWith(`${dir}/`)) });
@@ -34,9 +34,10 @@ export async function commitFixture(root) {
   await git(root, ['add', '--all']);
   await git(root, ['commit', '--allow-empty', '-m', 'Fixture inputs']);
 }
+// The repository default provider is claude; fixtures use the fake agent unless a test chooses a provider.
 export async function runFixture(options) {
   await commitFixture(options.root);
-  return runHarness(options);
+  return runHarness({ provider: 'fake', ...options });
 }
 // Prototype SBI with an independent acceptance script; promotion=true targets apps/admin and requires Design Approval.
 export async function prototype(root,{promotion=false,failing=false}={}) {

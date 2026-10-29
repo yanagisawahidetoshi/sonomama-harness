@@ -13,6 +13,7 @@ import { recordApiSchemaDecision } from './api-schema-approval.mjs';
 import { githubCli } from './planner-github.mjs';
 import { parseIssueUrl } from './planner.mjs';
 import { startApiMock, mockSchemaPath } from './api-mock.mjs';
+import { checkApiMock } from './api-mock-check.mjs';
 
 const issueUrl = 'https://github.com/acme/app/issues/12';
 const issue = { number: 12, title: 'プロフィールAPIを追加する', body: '## 背景\n受講生が自分のプロフィールを取得する。', html_url: issueUrl, state: 'open', labels: [] };
@@ -202,5 +203,74 @@ describe('API Mock Server', () => {
     it('when a client calls a path outside the OpenAPI then responds 404', () => fixture(root => mockGitHub({}, () => serving(root, async base => {
       assert.equal((await fetch(`${base}/api/v1/unknown`)).status, 404);
     }))));
+  });
+});
+
+// Schema SBI: the api-contract Verifier also starts Prism from the OpenAPI of the run workspace and calls each documented GET.
+describe('Prism Mock check of a Schema SBI', () => {
+  const openapi = (paths, extra = {}) => toYaml({ openapi: '3.1.0', info: { title: 'SONOMAMA API', version: '0.1.0' }, paths, ...extra });
+  const json = (schema, example) => ({ 'application/json': { schema, ...(example === undefined ? {} : { example }) } });
+  const courses = { get: { operationId: 'listCourses', responses: { 200: { description: 'OK', content: json({ type: 'array', items: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } } }, [{ id: 'c1' }]) } } } };
+  const write = (root, text) => writeFile(join(root, mockSchemaPath), text);
+  it('when the OpenAPI of the workspace is valid then Prism starts and each GET endpoint answers its documented status', () => fixture(async root => {
+    const levels = { get: { operationId: 'listLevels', responses: { 200: { description: 'OK', content: json({ type: 'array', items: { type: 'string' } }, ['basic']) } } } };
+    await write(root, openapi({ '/api/v1/courses': courses, '/api/v1/levels': levels }));
+    const result = await checkApiMock({ root });
+    assert.equal(result.status, 'PASS', result.errors.join('; '));
+    assert.deepEqual(result.checked.sort(), ['GET /api/v1/courses 200', 'GET /api/v1/levels 200']);
+  }));
+  // A path parameter gets its value from the OpenAPI itself (example, enum, then type), so a typical GET /courses/{id} is really called.
+  it('when an endpoint has a path parameter with an example then Prism is called with that value', () => fixture(async root => {
+    const course = { get: { operationId: 'getCourse', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', example: 'c1' } }], responses: { 200: { description: 'OK', content: json({ type: 'object', properties: { id: { type: 'string' } } }, { id: 'c1' }) } } } };
+    await write(root, openapi({ '/api/v1/courses/{id}': course }));
+    const result = await checkApiMock({ root });
+    assert.deepEqual([result.status, result.checked], ['PASS', ['GET /api/v1/courses/{id} 200']], result.errors.join('; '));
+  }));
+  it('when a path parameter has only an integer type or an enum then a value is made from it and Prism is called', () => fixture(async root => {
+    const byType = { get: { operationId: 'getLesson', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], responses: { 200: { description: 'OK', content: json({ type: 'object' }, {}) } } } };
+    const byEnum = { get: { operationId: 'getLevel', parameters: [{ name: 'level', in: 'path', required: true, schema: { type: 'string', enum: ['basic', 'advanced'] } }], responses: { 200: { description: 'OK', content: json({ type: 'object' }, {}) } } } };
+    await write(root, openapi({ '/api/v1/lessons/{id}': byType, '/api/v1/levels/{level}': byEnum }));
+    const result = await checkApiMock({ root });
+    assert.deepEqual([result.status, result.checked.sort()], ['PASS', ['GET /api/v1/lessons/{id} 200', 'GET /api/v1/levels/{level} 200']], result.errors.join('; '));
+  }));
+  it('when no value can be made for a path parameter then that endpoint is listed as not called with the reason', () => fixture(async root => {
+    await write(root, openapi({ '/api/v1/courses': courses, '/api/v1/courses/{id}': { get: { operationId: 'getCourse', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', pattern: '^c[0-9]+$' } }], responses: { 200: { description: 'OK' } } } } }));
+    const result = await checkApiMock({ root });
+    assert.equal(result.status, 'PASS');
+    assert.deepEqual(result.skipped.map(s => s.endpoint), ['GET /api/v1/courses/{id}']);
+    assert.match(result.skipped[0].reason, /path parameter id/);
+  }));
+  it('when an endpoint has a security requirement then it is listed as not called with the reason, since the Verifier sends no credential', () => fixture(async root => {
+    await write(root, openapi({ '/api/v1/courses': courses, '/api/v1/me': { get: { operationId: 'getMe', security: [{ bearer: [] }], responses: { 200: { description: 'OK' } } } } }));
+    const result = await checkApiMock({ root });
+    assert.deepEqual([result.status, result.checked, result.skipped.map(s => s.endpoint)], ['PASS', ['GET /api/v1/courses 200'], ['GET /api/v1/me']]);
+    assert.match(result.skipped[0].reason, /security/);
+  }));
+  // Nothing called is nothing confirmed: a Schema of only POST, unresolvable parameters and secured GETs does not pass.
+  it('when no endpoint could be requested from Prism then fails instead of passing with nothing checked', () => fixture(async root => {
+    await write(root, openapi({
+      '/api/v1/users': { post: { operationId: 'createUser', responses: { 201: { description: 'Created' } } } },
+      '/api/v1/users/{id}': { get: { operationId: 'getUser', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', pattern: '^u[0-9]+$' } }], responses: { 200: { description: 'OK' } } } },
+      '/api/v1/me': { get: { operationId: 'getMe', security: [{ bearer: [] }], responses: { 200: { description: 'OK' } } } },
+    }));
+    const result = await checkApiMock({ root });
+    assert.equal(result.status, 'FAIL');
+    assert.deepEqual(result.checked, []);
+    assert.match(result.errors.join('\n'), /1件も/);
+    assert.deepEqual(result.skipped.map(s => s.endpoint).sort(), ['GET /api/v1/me', 'GET /api/v1/users/{id}', 'POST /api/v1/users']);
+  }));
+  it('when Prism cannot load the OpenAPI then fails', () => fixture(async root => {
+    await write(root, 'openapi: 3.1.0\npaths: [not, a, map]\n');
+    assert.equal((await checkApiMock({ root })).status, 'FAIL');
+  }));
+  it('when the OpenAPI refers to a remote document then fails before starting Prism', () => fixture(async root => {
+    await write(root, openapi({ '/api/v1/health': { get: { responses: { 200: { description: 'OK', content: json({ $ref: 'https://example.com/health.json' }) } } } } }));
+    const result = await checkApiMock({ root });
+    assert.equal(result.status, 'FAIL');
+    assert.match(result.errors.join('\n'), /example\.com/);
+  }));
+  it('when the repository configuration is read then the api-contract Verifier runs the Prism Mock check', async () => {
+    const config = JSON.parse(await readFile(new URL('../../.harness/config/harness.json', import.meta.url), 'utf8'));
+    assert.ok(config.verifiers.find(v => v.id === 'api-contract').commands.some(c => c.join(' ') === 'node ../../tools/harness/api-mock-check.mjs'));
   });
 });

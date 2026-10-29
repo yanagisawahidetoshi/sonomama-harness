@@ -48,6 +48,10 @@ export function redactText(input) {
   return text;
 }
 export function hasSecret(text) { return redactText(text) !== String(text); }
+// Harness tests carry redaction fixtures (mail addresses, bearer examples), so only credential-shaped values count there.
+export function hasTrackedCredential(path, text) {
+  return /^tools\/harness\/.*\.test\.mjs$/.test(path) ? /gh[pousr]_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----\r?\n/.test(text) : hasSecret(text);
+}
 export function redact(value) {
   if (typeof value === 'string') {
     if (/^\s*[\[{]/.test(value)) {

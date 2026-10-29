@@ -1,11 +1,15 @@
 // Deterministic SBI Quality Judge. Structural rules are exact; granularity and wording rules are bounded heuristics.
 import { sbiKinds } from './schemas.mjs';
-export const limits = Object.freeze({ acceptanceCriteria: 6, changeAreas: 4, scenarios: 8, purposeSentences: 2 });
+export const limits = Object.freeze({ acceptanceCriteria: 6, changeAreas: 4, scenarios: 8, purposeSentences: 2, estimatedFiles: 10 });
 const vagueTerms = ['など', '等々', '適切', 'いい感じ', 'なるべく', '可能な限り', 'できれば', '使いやすい', 'わかりやすい', '十分'];
 const vagueWords = /\b(etc|appropriate|properly)\b/i;
 // Japanese terminators always end a sentence; ASCII ones only before whitespace or the end, so hosts and versions stay intact.
 const sentenceEnd = /[。！？]|[.!?](?=\s|$)/;
 const blank = value => typeof value !== 'string' || !value.trim();
+// A real test is anything left once static checks, "not needed" and separators are removed: "Vitest + eslint" passes, "lint / tsc のみ" does not.
+const staticOnly = /テスト(?:は)?(?:不要|なし)|no tests?|eslint|rubocop|prettier|lint|formatter|format|フォーマット|type ?check|型チェック|型確認|静的解析|tsc|--\S+|不要|なし|none|n\/a|のみ|だけ|only|and|と/gi;
+const realTest = value => !blank(value) && /[\p{L}\p{N}]/u.test(value.replace(staticOnly, ''));
+const apps = areas => [...new Set(areas.flatMap(area => /^apps\/[^/\s]+/.exec(area.trim())?.[0] ?? []))];
 
 export function judgePlan(sbis, { securityCategories = null } = {}) {
   const findings = [];
@@ -61,8 +65,24 @@ export function judgePlan(sbis, { securityCategories = null } = {}) {
     }
   }
   judgeKinds(sbis, add);
+  judgeGranularity(sbis, add);
+  judgeSchemaSbi(sbis, add);
   for (const cycle of dependencyCycles(sbis)) add(cycle[0], 'dependency-cycle', `依存SBIが循環しています: ${cycle.join(' → ')}`);
   return { status: findings.length ? 'FAIL' : 'PASS', findings };
+}
+
+// An API contract change is one OpenAPI Schema SBI that changes packages/api-schema only. Every other SBI of the PBI depends on it,
+// so the Rails and frontend SBIs start only after the Schema PR is merged (harness:run checks that the Harness PR of the dependency was merged).
+const isSchemaArea = area => /^packages\/api-schema(\/|$)/.test(area.trim());
+function judgeSchemaSbi(sbis, add) {
+  // A validation SBI spans the whole PBI for its E2E, so only an implementation SBI can be the Schema SBI.
+  const schemas = sbis.filter(s => s.kind !== 'validation' && s.changeAreas.some(isSchemaArea));
+  for (const sbi of schemas) if (sbi.changeAreas.some(area => !isSchemaArea(area))) add(sbi.id, 'schema-sbi', 'OpenAPI Schemaの変更は実装と分け、packages/api-schemaだけを変える1件のSBIにしてください');
+  for (const sbi of schemas.slice(1)) add(sbi.id, 'schema-sbi', `OpenAPI Schema SBIは1件にしてください（${schemas.map(s => s.id).join(', ')}）`);
+  if (schemas.length !== 1) return;
+  const [schema] = schemas;
+  const reaches = (id, seen = new Set()) => { if (seen.has(id)) return false; seen.add(id); const deps = sbis.find(s => s.id === id)?.dependsOn ?? []; return deps.includes(schema.id) || deps.some(d => reaches(d, seen)); };
+  for (const sbi of sbis.filter(s => s !== schema && !reaches(s.id))) add(sbi.id, 'schema-sbi', `OpenAPI Schema SBI（${schema.id}）に依存させてください`);
 }
 
 // A PBI is implementation SBIs, then at most one validation SBI when it needs Integration / E2E. Human acceptance is a PBI Gate, not an SBI.
@@ -84,6 +104,34 @@ function judgeKinds(sbis, add) {
     if (missing.length) add(sbi.id, 'kind-dependency', `最終確認SBIはすべての実装SBIに依存してください（不足: ${missing.join(', ')}）`);
     if (extra.length) add(sbi.id, 'kind-dependency', `最終確認SBIは実装SBIだけに依存してください（${extra.join(', ')}）`);
   }
+}
+
+// One implementation SBI is one layer, one PR of about two hours and at most limits.estimatedFiles files, verified by a real test per scenario.
+// Validation spans the whole PBI and its real test is the E2E. Human acceptance is a PBI Gate, not an SBI.
+function judgeGranularity(sbis, add) {
+  for (const sbi of sbis.filter(s => s.kind === 'implementation')) {
+    if (sbi.layers.length !== 1 || sbi.layers.some(blank)) add(sbi.id, 'layer-mixed', `レイヤーは1つにしてください（${sbi.layers.length}件: ${sbi.layers.join(', ') || 'なし'}）`);
+    const touched = apps(sbi.changeAreas);
+    if (touched.length > 1) add(sbi.id, 'layer-mixed', `レイヤーが混在しています: 想定変更範囲が複数のアプリ（${touched.join(', ')}）にまたがります。アプリごとにSBIを分けてください`);
+    if (sbi.estimatedFiles === 0) add(sbi.id, 'granularity', '想定変更ファイル数が0です');
+    if (sbi.estimatedFiles > limits.estimatedFiles && blank(sbi.oversizeReason)) add(sbi.id, 'granularity', `粒度が過大です: 想定変更ファイル数が${sbi.estimatedFiles}ファイル（目安${limits.estimatedFiles}）。SBIを分割するか、分割できない理由をoversizeReasonに書いてください`);
+    if (!blank(sbi.verification.applicationTest) && !realTest(sbi.verification.applicationTest)) add(sbi.id, 'real-test', `Application Testに実テストがありません（lint / typecheckだけでは不可）: ${sbi.verification.applicationTest}`);
+  }
+  for (const sbi of sbis.filter(s => s.kind === 'validation')) {
+    if (!blank(sbi.verification.e2e) && !realTest(sbi.verification.e2e)) add(sbi.id, 'real-test', `最終確認SBIのE2Eに実テストがありません: ${sbi.verification.e2e}`);
+  }
+  for (const sbi of sbis) {
+    for (const scenario of sbi.scenarios) if (!realTest(scenario.test)) add(sbi.id, 'gherkin-test', `Scenario「${scenario.name}」を検証する実テストがありません（lint / typecheckだけでは不可）`);
+  }
+}
+
+// After implementation: a PR may exceed its estimate within limits.estimatedFiles, or stay within an estimate above it that the Planner justified.
+// Anything else, including a missing estimate, fails closed. Not wired into the Completion Judge or CI yet.
+export function judgeChangedFileCount({ estimatedFiles, changedPaths, limit = limits.estimatedFiles }) {
+  const changedFiles = new Set(changedPaths).size;
+  if (!Number.isInteger(estimatedFiles) || estimatedFiles < 0) return { status: 'FAIL', changedFiles, estimatedFiles: null, reason: 'SBIの想定変更ファイル数がないため、変更ファイル数を判定できません' };
+  if (changedFiles > limit && changedFiles > estimatedFiles) return { status: 'FAIL', changedFiles, estimatedFiles, reason: `変更ファイル数が${changedFiles}ファイルで、目安${limit}ファイルとSBIの想定${estimatedFiles}ファイルを超えています` };
+  return { status: 'PASS', changedFiles, estimatedFiles, reason: null };
 }
 
 function dependencyCycles(sbis) {

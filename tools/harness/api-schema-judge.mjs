@@ -1,10 +1,10 @@
 import { hasSecret } from './evidence-protection.mjs';
+import { deriveSecurityImpact } from './api-schema-security.mjs';
 
 // Deterministic API Schema Quality Judge. FAIL keeps a proposal out of Human Review; breaking candidates are reported for the human, not failed.
 export const reservedComponents = Object.freeze(['Error', 'ErrorDetail']);
 export const supportedStatuses = Object.freeze([200, 201, 202, 204, 400, 401, 403, 404, 409, 422, 429, 500, 503]);
 export const limits = Object.freeze({ endpoints: 10, components: 20, propertiesPerComponent: 30 });
-const authNImpact = ['AuthN', 'APIAuthentication'], authZImpact = ['AuthZ', 'APIAuthorization'];
 const credentialName = /password|passwd|secret|credential|api_?key|access_?key|private_?key/i;
 const pathPattern = /^(\/([a-z0-9][a-z0-9_-]*|\{[a-z][A-Za-z0-9]*\}))+$/;
 const label = endpoint => `${endpoint.method} ${endpoint.path}`;
@@ -45,7 +45,6 @@ export function judgeApiSchema(proposal, { securityCategories = null, existing =
   if (!/^v[1-9]\d*$/.test(proposal.version)) add('*', 'version-format', `versionは v1 の形式にしてください（${proposal.version || '空'}）`);
   const prefix = `/api/${proposal.version}/`;
   const routes = new Set(), operationIds = new Map();
-  let authenticated = false, authorized = false;
   for (const endpoint of proposal.endpoints) {
     const target = label(endpoint);
     if (routes.has(target)) add(target, 'endpoint-duplicate', `${target} が重複しています`);
@@ -103,7 +102,6 @@ export function judgeApiSchema(proposal, { securityCategories = null, existing =
     if (![...statuses].some(status => status >= 200 && status < 300)) add(target, 'success-missing', '成功response（2xx）がありません');
 
     const jwt = endpoint.authN === 'bearer-jwt', condition = endpoint.authZ.roles.length > 0 || Boolean(endpoint.authZ.rule?.trim());
-    authenticated ||= jwt; authorized ||= jwt && condition;
     if (jwt && !statuses.has(401)) add(target, 'auth-responses', 'Bearer JWT必須のendpointは401を定義してください');
     if (!jwt && (statuses.has(401) || statuses.has(403))) add(target, 'auth-responses', '公開endpointに401 / 403は定義しません');
     if (!jwt && endpoint.authZ.roles.length) add(target, 'auth-responses', '公開endpointにroleは指定できません');
@@ -169,10 +167,10 @@ export function judgeApiSchema(proposal, { securityCategories = null, existing =
 
   const impact = new Set(proposal.securityImpact);
   for (const category of impact) if (securityCategories && !securityCategories.includes(category)) add('*', 'security-impact', `Security Impact ${category} はsecurity.jsonに定義された分類ではありません`);
-  if (authenticated && !authNImpact.some(c => impact.has(c))) add('*', 'security-impact', `Bearer JWT必須のendpointがあるためSecurity Impactに ${authNImpact.join(' / ')} を宣言してください`);
-  if (authorized && !authZImpact.some(c => impact.has(c))) add('*', 'security-impact', `Rails側の認可条件があるためSecurity Impactに ${authZImpact.join(' / ')} を宣言してください`);
-  const pii = proposal.endpoints.some(e => e.change !== 'remove' && e.pii) || proposal.components.some(c => c.pii);
-  if (pii && !impact.has('PII')) add('*', 'security-impact', 'PIIを扱うためSecurity ImpactにPIIを宣言してください');
+  // The declaration may add categories but never drop one the Harness derives from the existing contract and the proposal.
+  for (const { categories, reason } of deriveSecurityImpact(proposal, existing)) {
+    if (!categories.some(c => impact.has(c))) add('*', 'security-impact', `${reason} のためSecurity Impactに ${categories.join(' / ')} を宣言してください`);
+  }
 
   // Every string the proposal carries ends up in a reviewable file or GitHub comment. Locations are reported, never values.
   const walk = (value, where) => {
