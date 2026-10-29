@@ -7,7 +7,7 @@
 | [architecture/](architecture/README.md) | システムの構成と、機能ごとの設計を書くテンプレート |
 | [security/](security/README.md) | セキュリティ要件と、Harnessで守らせるルールとの対応 |
 | [product/](product/sbi-template.md) | プロダクトの要件と作業単位（SBI）のテンプレート |
-| [adr/](adr/0000-template.md) | 設計上の判断の記録（ADR） |
+| [adr/](adr/README.md) | 設計上の判断の記録（ADR）。状態の意味とテンプレート |
 | [workflows/](workflows/README.md) | 開発の流れの概要と、API仕様を見る・試す手順 |
 
 ## 文書の置き場所の分け方
