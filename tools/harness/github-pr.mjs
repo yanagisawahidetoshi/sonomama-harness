@@ -4,9 +4,9 @@ import { git } from './workspace.mjs';
 
 // GitHub is the Source of Truth for the pull request, its reviews and CI. Only reviews on the Harness tested SHA count as approvals.
 const decisive = new Set(['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED']);
-const isBot = user => user?.type === 'Bot' || /\[bot\]$/.test(user?.login ?? '');
+export const isBot = user => user?.type === 'Bot' || /\[bot\]$/.test(user?.login ?? '');
 // GitHub counts reviews only from people with write access; an unreadable permission never grants an approval but still blocks.
-const canMerge = permission => ['admin', 'write'].includes(permission);
+export const canMerge = permission => ['admin', 'write'].includes(permission);
 export function reviewApprovals({ reviews, headSha, author, permissions }) {
   const latest = new Map();
   for (const review of [...reviews].sort((a, b) => a.id - b.id)) {

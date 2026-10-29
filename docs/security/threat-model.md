@@ -11,7 +11,7 @@
 
 | ルールID | 対象となる変更 | 必ず実行する検証 |
 | --- | --- | --- |
-| SEC-MIGRATION-001 | データベースのマイグレーション | マイグレーションの安全性検査（migration-safety） |
+| SEC-MIGRATION-001 | データベースのマイグレーション | マイグレーションの安全性検査（migration-safety）。破壊的な操作はexpand/contractの例外承認だけで通す（[手順](../workflows/database-migrations.md)） |
 | SEC-SCHEMA-001 | データベースのスキーマ | マイグレーションの安全性検査（migration-safety） |
 | SEC-CICD-001 | CI/CDのセキュリティ設定 | 禁止パターンの検査（forbidden-pattern-check） |
 | SEC-INFRA-001 | インフラのセキュリティ設定 | 禁止パターンの検査（forbidden-pattern-check） |
