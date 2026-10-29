@@ -372,7 +372,8 @@
         "Biome",
         "Vitest",
         "RTL",
-        "build"
+        "build",
+        "Storybook build"
       ],
       "commands": [
         [
@@ -415,6 +416,14 @@
           "--outDir",
           "node_modules/.harness/dist",
           "--emptyOutDir"
+        ],
+        [
+          "pnpm",
+          "run",
+          "build-storybook",
+          "--output-dir",
+          "node_modules/.harness/storybook-static",
+          "--quiet"
         ]
       ],
       "appliesTo": [

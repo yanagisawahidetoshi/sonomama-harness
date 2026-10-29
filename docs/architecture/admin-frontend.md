@@ -79,11 +79,28 @@ components/ComponentName/
 - TypeScript の型名は Tプレフィックスを付ける。
 - 関連する hook は component 配下の `hooks/` に置き、1つの hook に1つの責務を持たせる。
 - ライト・ダークは `styles.ts` とセマンティックな色トークンで対応する。
-- Storybook は未導入。導入後は `ComponentName.stories.tsx` を component の隣に置き、title をディレクトリパスに合わせる。
+- Storybook は `ComponentName.stories.tsx` を component の隣に置き、title をディレクトリパスに合わせる（例: `shared/components/ui/Button`）。`pnpm --filter admin storybook` で確認する。
+
+## Design System（Sparkle Design）
+
+管理画面の Design System には Goodpatch の [Sparkle Design](https://sparkle-design.goodpatch.com/)（`sparkle-design`）を使う。スタイルは Tailwind CSS v4 で当てる。
+
+```text
+Page / Feature → src/shared/components/ui（SONOMAMA UI wrapper）→ sparkle-design → React
+```
+
+- `sparkle-design` を import してよいのは `src/shared/components/ui/**` だけ。Page・Feature・route・providers・それ以外の `shared` は `@/shared/components/ui/<ComponentName>` を使う。subpath（`sparkle-design/input` など）も同じ扱いで、architecture check が `sparkle-design outside shared/components/ui` として FAIL にする。
+- wrapper は薄く保つ。Sparkle Design の props をそのまま受け取り、型も `ComponentProps<typeof SparkleButton>` から導く。props を再定義しない。
+- default props・SONOMAMA 固有の variant・accessibility の補強・deprecated API の吸収など、SONOMAMA 固有の UI 仕様は wrapper 側で吸収する。
+- wrapper は管理画面で実際に使う component だけを、使う時点で追加する。使っていない component を先回りしてまとめて wrap しない。
+- 見た目は Sparkle Design の component と Tailwind のクラスで作る。独自の CSS や別の UI library で Sparkle Design と同じ役割の component を作らない。
+- テーマは `sparkle.config.json` で設定し、`pnpm --filter admin run sparkle:generate` で `src/app/sparkle-design.css` を生成する。生成物は手で編集しない。
+
+`sparkle-design` は React 19 対応の 2.x を使う。2.x はまだ beta なので、`sparkle-design` と `sparkle-design-cli` はどちらも version を固定する。2.x の正式版が出たら上げる。
 
 ## shared に置くもの
 
-`src/shared` には `api/`（shared HTTP client と QueryClient）、`components/`、`hooks/`、`lib/`、`schemas/`、`theme/`、`types/` を置く。業務固有のコードは該当する Feature に置き、`shared` を雑多な置き場にしない。
+`src/shared` には `api/`（shared HTTP client と QueryClient）、`components/`（Sparkle Design の wrapper は `components/ui/`）、`hooks/`、`lib/`、`schemas/`、`theme/`、`types/` を置く。業務固有のコードは該当する Feature に置き、`shared` を雑多な置き場にしない。
 
 Feature のコードを `shared/components` などへ移すのは、複数Featureから実際に使われるようになってからにする。最初から共通化しない。
 

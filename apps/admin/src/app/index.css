@@ -1,0 +1,5 @@
+@import "tailwindcss";
+/* Sparkle Design のカスタム定義（Tailwindの後にインポート） */
+@import "./sparkle-design.css";
+/* npm パッケージのコンテンツスキャン（Tailwind がクラスを検出するために必要） */
+@source "../../node_modules/sparkle-design/dist";

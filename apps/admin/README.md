@@ -2,16 +2,17 @@
 
 運営・CS・MG・講師向け管理画面。React 19 + TypeScript + Vite。業務画面は後続SBIで追加する。
 
-| 用途          | ライブラリ                                                                     |
-| ------------- | ------------------------------------------------------------------------------ |
-| Routing       | TanStack Router                                                                |
-| Server state  | TanStack Query (staleTime 5分 / gcTime 10分 / 4xxはretryなし・その他は最大3回) |
-| HTTP          | Axios (`src/shared/api`)                                                       |
-| Form          | React Hook Form + Zod (`@hookform/resolvers`)                                  |
-| Lint / Format | Biome (ESLint / Prettierは使わない)                                            |
-| Test          | Vitest + React Testing Library + jsdom                                         |
+| 用途          | ライブラリ                                                                       |
+| ------------- | -------------------------------------------------------------------------------- |
+| Routing       | TanStack Router                                                                  |
+| Server state  | TanStack Query (staleTime 5分 / gcTime 10分 / 4xxはretryなし・その他は最大3回)   |
+| HTTP          | Axios (`src/shared/api`)                                                         |
+| Form          | React Hook Form + Zod (`@hookform/resolvers`)                                    |
+| UI            | Sparkle Design (`sparkle-design`) + Tailwind CSS v4 (`src/shared/components/ui`) |
+| Lint / Format | Biome (ESLint / Prettierは使わない)                                              |
+| Test          | Vitest + React Testing Library + jsdom                                           |
 
-UI component libraryはDesign System方針が決まるまで導入しない。
+UIは `@/shared/components/ui/<ComponentName>` の wrapper 経由で使い、`sparkle-design` を直接importしない。規約は [Architecture Contract](../../docs/architecture/admin-frontend.md#design-systemsparkle-design)。
 
 ## 前提
 
@@ -35,7 +36,12 @@ pnpm --filter admin lint          # biome lint
 pnpm --filter admin format:check  # biome format
 pnpm --filter admin check         # biome check (lint + format + import整列)
 pnpm --filter admin test
+pnpm --filter admin storybook        # http://localhost:6007
+pnpm --filter admin build-storybook
+pnpm --filter admin run sparkle:generate  # sparkle.config.json → src/app/sparkle-design.css
 ```
+
+`sparkle:generate` は `index.html` のフォント読込ブロックも更新する。変わったら `.storybook/preview-head.html` に同じ内容を写す。
 
 自動修正は `pnpm --filter admin exec biome check --write .`。
 
