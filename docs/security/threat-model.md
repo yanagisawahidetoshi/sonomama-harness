@@ -42,7 +42,7 @@ untrusted applicationのコンテナは次の条件で起動する。ローカ�
 - node_modulesとpnpm storeはverifierごとの使い捨てvolumeに置き、コンテナ内でinstallする。
 - Dockerが使えないとき、imageを作れないとき、コンテナを起動できないときは`FAIL`（`isolation unavailable`）にする。ホストで代わりに実行しない。
 
-Rails と migration-safety（Docker Compose）はコンテナの中から入れ子で起動できない。trusted HarnessがComposeを起動し、その前にworkspaceのCompose fileを検査する。workspace外やHarness状態のbind mount、`privileged`等の特権設定、`env_file`、environment以外での環境変数展開は拒否する。Composeの環境変数はDocker CLIに必要なものと、CIが指定するBuildKit cacheの場所（`HARNESS_BUILD_CACHE_FROM`・`HARNESS_BUILD_CACHE_TO`）だけにする。Compose fileのcache設定はこの変数の参照だけを許し、ホストのパスをAgentに選ばせない。同じverifierに並ぶ`tools/harness/*.mjs`のスクリプトは、`isolation: harness`と同じ条件でホストで動かす。Railsコンテナ内はrootのまま動く。
+Rails・migration-safety・rails-authz-test（Docker Compose）はコンテナの中から入れ子で起動できない。trusted HarnessがComposeを起動し、その前にworkspaceのCompose fileを検査する。workspace外やHarness状態のbind mount、`privileged`等の特権設定、`env_file`、environment以外での環境変数展開は拒否する。Composeの環境変数はDocker CLIに必要なものと、CIが指定するBuildKit cacheの場所（`HARNESS_BUILD_CACHE_FROM`・`HARNESS_BUILD_CACHE_TO`）だけにする。Compose fileのcache設定はこの変数の参照だけを許し、ホストのパスをAgentに選ばせない。同じverifierに並ぶ`tools/harness/*.mjs`のスクリプトは、`isolation: harness`と同じ条件でホストで動かす。Composeの各コマンドには、workspaceのCompose fileの後にHarnessが作るoverrideを重ねる。workspaceから`build`するサービス（`api`）は、Compose fileに`user: root`と書いてあってもホストのuid:gid（rootではない）で動き、HOMEはコンテナの`/tmp`になる。`/rails/tmp`と`/rails/log`はimageの側で誰でも書けるようにしてある（sticky bit付き）。書けなければVerifierは失敗する。imageをpullするだけのサービス（`db`のpostgres）は、image自身が決めた実行ユーザー（起動処理の後に`postgres`ユーザーへ切り替わる）のまま動かす。
 
 `api-contract`のようにHarnessのスクリプトがworkspaceのファイルを読むだけのverifierは、`isolation: harness`としてホストで動かす。対象は`tools/harness/*.mjs`だけで、環境変数は`PATH`と`HARNESS_BASE_REF`に限る。
 

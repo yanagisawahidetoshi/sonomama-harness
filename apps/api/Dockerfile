@@ -14,5 +14,9 @@ RUN bundle install
 
 COPY . .
 
+# Verifiers run this image as the host user (Harness Compose override), not root. The tmp and log volumes start from these
+# directories, so any user may write there; the sticky bit keeps users from removing each other's files.
+RUN mkdir -p tmp log && chmod 1777 tmp log
+
 EXPOSE 3000
 CMD ["bin/rails", "server", "-b", "0.0.0.0", "-p", "3000"]

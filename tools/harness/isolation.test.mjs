@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, chmod, readFile, rm, stat } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fixture } from './test-fixture.mjs';
@@ -9,6 +10,8 @@ import { verify } from './verifier.mjs';
 import { verifySecurity } from './security-enforcement.mjs';
 import { configSchema } from './schemas.mjs';
 import { execute } from './io.mjs';
+import { composeOverride } from './isolation.mjs';
+import { parse as parseYaml } from 'yaml';
 // Built at runtime so the literal never looks like a committed credential.
 const token = 'ghp_' + 'x'.repeat(36);
 const credentials = { GH_TOKEN: token, GITHUB_TOKEN: token, AWS_ACCESS_KEY_ID: 'AKIA' + 'X'.repeat(16), AWS_SECRET_ACCESS_KEY: 'aws-secret-value', ANTHROPIC_API_KEY: 'anthropic-secret-value' };
@@ -224,6 +227,42 @@ describe('Verifier isolation', () => {
     }))));
   });
 
+  // #134: a service built from the workspace runs as the host user whatever the workspace Compose file says; pulled images keep their own user.
+  describe('given the services of a Compose file', () => {
+    const user = `${process.getuid()}:${process.getgid()}`;
+    it('when the Harness override is made then every service built from the workspace runs as the host user with a writable HOME', () => {
+      const override = parseYaml(composeOverride(readFileSync(new URL('../../compose.yaml', import.meta.url), 'utf8')));
+      assert.deepEqual(override.services.api, { user, environment: { HOME: '/tmp' } });
+    });
+    it('when a service only pulls an image then the override leaves its user to the image', () => {
+      const override = parseYaml(composeOverride(readFileSync(new URL('../../compose.yaml', import.meta.url), 'utf8')));
+      assert.equal(override.services.db, undefined);
+    });
+    it('when the workspace Compose file asks for root then the override still names the host user', () => {
+      const override = parseYaml(composeOverride('services:\n  api:\n    build: ./apps/api\n    user: root\n'));
+      assert.equal(override.services.api.user, user);
+      assert.notEqual(override.services.api.user.split(':')[0], '0');
+    });
+  });
+  describe('given a Compose based verifier run through the Harness override', () => {
+    it('when verifying then every Compose command loads the workspace file first and the Harness override after it', () => fixture(async root => fakeDocker(async ({ docker, calls }) => {
+      const { config } = await check(root);
+      config.isolation = { docker };
+      await writeFile(join(root, 'compose.yaml'), await readFile(new URL('../../compose.yaml', import.meta.url), 'utf8'));
+      Object.assign(config.verifiers.find(v => v.id === 'rails'), { commands: [['docker', 'compose', '-f', '../../compose.yaml', 'build', 'api'], ['docker', 'compose', '-f', '../../compose.yaml', 'run', '--rm', 'api', 'true']] });
+      const result = await verify({ root, workspace: root, config, sbi, files: [{ path: 'apps/api/app.rb' }] });
+      assert.equal(result.checks.find(c => c.id === 'rails').status, 'PASS');
+      const composed = (await calls()).filter(c => c.args[0] === 'compose');
+      assert.equal(composed.length, 2);
+      for (const call of composed) {
+        const files = call.args.flatMap((a, i) => call.args[i - 1] === '-f' ? [a] : []);
+        assert.equal(files.length, 2, call.args.join(' '));
+        assert.equal(files[0], '../../compose.yaml');
+        assert.match(files[1], /harness-override\.yaml$/);
+      }
+    })));
+  });
+
   describe('given a Compose based verifier that also runs a Harness script', () => {
     it('when verifying then runs the Harness script on the host without credentials and Compose only after checking the file', () => fixture(async root => fakeDocker(async ({ docker, calls }) => withCredentials(async () => {
       const { config } = await check(root);
@@ -290,6 +329,24 @@ describe('Verifier isolation', () => {
 });
 
 describe('Verifier isolation with a real Docker daemon', () => {
+  describe('given a Compose service built from the workspace whose Compose file asks for root', () => {
+    it('when a Compose security verifier runs it then the command runs as the host user, not root', () => fixture(async root => {
+      await mkdir(join(root, 'probe'), { recursive: true });
+      await writeFile(join(root, 'probe/Dockerfile'), 'FROM node:22.23.4-bookworm-slim\n');
+      await writeFile(join(root, 'compose.yaml'), 'services:\n  probe:\n    build:\n      context: ./probe\n    user: root\n');
+      const config = { timeoutMs: 300000, securityVerifiers: [{ id: 'probe', directory: '.', isolation: 'compose', network: true, commands: [['docker', 'compose', '-f', 'compose.yaml', 'run', '--rm', 'probe', 'sh', '-c', 'echo "UID $(id -u) HOME $HOME"'], ['docker', 'compose', '-f', 'compose.yaml', 'down']] }] };
+      const result = await verifySecurity({ workspace: root, sbi, assessment: { requiredVerifiers: ['probe'] }, policy: { verifiers: [] }, config, headSha: 'x' });
+      const checked = result.checks.find(c => c.id === 'probe');
+      if (!(await execute('docker', ['info'], { timeoutMs: 30000 })).ok) {
+        assert.equal(checked.status, 'FAIL');
+        return;
+      }
+      assert.equal(checked.status, 'PASS', JSON.stringify(checked.processes?.map(p => p.stderr)));
+      const output = checked.processes.map(p => p.stdout).join('');
+      assert.match(output, new RegExp(`UID ${process.getuid()} HOME /tmp`));
+      assert.doesNotMatch(output, /UID 0\b/);
+    }));
+  });
   describe('given a malicious application test in a workspace that holds Harness trust state', () => {
     it('when verifying then it cannot read credentials, the approval key, API Schema state, the host HOME or reach the network', () => fixture(async root => withCredentials(async () => {
       const outside = await mkdtemp(join(tmpdir(), 'harness-host-only-'));
