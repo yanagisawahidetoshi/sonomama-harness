@@ -14,10 +14,10 @@ Rails API・Expo・React adminの3アプリは開発環境まで構築済みで�
 | apps/mobile | Expo（受講生アプリ）。Jest・Biome・expo-doctorを接続済み。業務画面は未実装 | [apps/mobile/README.md](apps/mobile/README.md) |
 | apps/admin | React + Vite（管理画面）。Vitest・Biome・buildを接続済み。業務画面は未実装 | [apps/admin/README.md](apps/admin/README.md) |
 | prototypes/web・mobile | デザイナー用の試作workspace。軽量ゲートで検証する | [Prototype Lane](#prototype-lane--production-lane) |
-| packages/api-schema | OpenAPI 3.1のSSOTの置き場所。`openapi.yaml`はまだ無い（最初のOpenAPI Schema SBIで追加する）。認証は特定Providerに依存しない`bearer-jwt` / `bearerAuth` | [packages/api-schema/README.md](packages/api-schema/README.md) |
+| packages/api-schema | OpenAPI 3.1のSSOTの置き場所。`openapi.yaml`はまだ無い（最初のOpenAPI Schema SBIで追加する）。Bearer JWT（`bearer-jwt` / `bearerAuth`）はProvider非依存 | [packages/api-schema/README.md](packages/api-schema/README.md) |
 | Harness | 実装ループ、Risk・承認・MERGE_ALLOWED判定、PBI → SBI Planner、API Schema Planner、GitHub PR Adapter | 本README、[.ai/workflows/](.ai/workflows/) |
 | CI | SBIと差分から必要なVerifierを選び、matrixで並列実行する。`harness` jobがCompletion Judge（Trusted AcceptanceとSecurity Verifierも実行）。Production変更はSBI Issue由来のRunが必須。必須チェック名は`harness` | [.ai/workflows/ci.md](.ai/workflows/ci.md) |
-| 認証 | Auth Providerは未決定。Provider固有のSDK・gemは入れていない | [apps/api/README.md](apps/api/README.md#認証) |
+| Auth Provider | 未決定。Provider固有のSDK・gemは入れていない | [apps/api/README.md](apps/api/README.md) |
 | GitHub Ruleset | 定義は[.github/rulesets/main.json](.github/rulesets/main.json)。GitHubへ適用済み（ruleset id 26088284）。PR必須・`harness`必須・force push / 削除禁止・必要な承認数0（人数はHarnessが判定） | [docs/workflows/github-ruleset.md](docs/workflows/github-ruleset.md) |
 
 ## 通常の開発フロー
