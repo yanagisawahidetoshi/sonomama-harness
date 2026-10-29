@@ -83,6 +83,7 @@ ADR-0001は、PRのbaseをrunのbaselineに固定し、mainが進んだら`base_
 - `pnpm harness:reverify <PR URL>`を追加する。手順は[pull-request.md](../../.ai/workflows/pull-request.md)。
 - GitHub PR Adapterに、PR本文の更新（`PATCH /pulls/{number}`）を追加する。
 - run stateに`kind: reverify`と`reverify`（親run、旧tested SHA、snapshot digest、公開の段階、競合パス、旧runの照合結果）を追加する。escalation codeに`REVERIFY_CONFLICT`を追加する。
+- API Schema Approvalは、`harness:run`の実行・merge判定の経路では参照していない（`api:mock`と旧API Schema Plannerだけが読む）。再検証でも同じで、契約の差分は`api-contract` Verifierが候補に対して実行し直す。
 - GitHubのPRの`base.sha`は、mainが進んだ後にHEADがpushされると更新される（PR #131の観測による推定。GitHubの文書では未確認）。そのため`pull.baseSha === baseline`の条件は変えていない。
 
 ## 検証方法
