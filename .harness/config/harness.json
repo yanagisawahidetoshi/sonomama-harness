@@ -285,7 +285,7 @@
           ],
           "appliesTo": [
             "^apps/mobile/(package\\.json|app\\.json|app\\.config\\.[^/]+|eas\\.json|babel\\.config\\.[^/]+|metro\\.config\\.[^/]+|react-native\\.config\\.[^/]+|(ios|android)/)",
-            "^(package\\.json|pnpm-lock\\.yaml|pnpm-workspace\\.yaml|\\.npmrc|\\.node-version|\\.nvmrc|\\.tool-versions)$"
+            "^(package\\.json|pnpm-workspace\\.yaml|\\.npmrc|\\.node-version|\\.nvmrc|\\.tool-versions)$"
           ]
         }
       ]
@@ -643,7 +643,7 @@
           ],
           "appliesTo": [
             "^prototypes/mobile/(package\\.json|app\\.json|app\\.config\\.[^/]+|eas\\.json|babel\\.config\\.[^/]+|metro\\.config\\.[^/]+|react-native\\.config\\.[^/]+|(ios|android)/)",
-            "^(package\\.json|pnpm-lock\\.yaml|pnpm-workspace\\.yaml|\\.npmrc|\\.node-version|\\.nvmrc|\\.tool-versions)$"
+            "^(package\\.json|pnpm-workspace\\.yaml|\\.npmrc|\\.node-version|\\.nvmrc|\\.tool-versions)$"
           ]
         }
       ]

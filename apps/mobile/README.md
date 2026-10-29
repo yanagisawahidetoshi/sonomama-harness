@@ -126,5 +126,5 @@ Provider固有SDK・token保存・auth context・login画面は導入してい�
 
 ## Harness
 
-`.harness/config/harness.json` の `expo` verifierが `typecheck` / `check` / `test` / `doctor` を実行する。`doctor`（expo-doctor）は `package.json`・`app.json`・`eas.json`・`metro.config.*`・`ios/`・`android/`・lockfileなど依存とnative設定の変更があるときだけ実行する。
+`.harness/config/harness.json` の `expo` verifierが `typecheck` / `check` / `test` / `doctor` を実行する。`doctor`（expo-doctor）は `package.json`・`app.json`・`eas.json`・`metro.config.*`・`ios/`・`android/`など依存とnative設定の変更があるときだけ実行する。
 受け入れ条件は `.harness/verification/mobile-env.mjs` で検証する。

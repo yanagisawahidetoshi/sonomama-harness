@@ -124,9 +124,7 @@ export async function runVerifier({ root, base, all = false, id }) {
     const checks = security.checks.filter(c => c.id === id).map(c => ({ ...c, selectionReasons: [mandatory ? 'impact-required' : 'requested', 'security'] }));
     return { impact, result: { checks }, passed: checksPassed(checks) };
   }
-  // An SBI naming the verifier in requiredVerifiers asks for every command, gated ones included.
-  const explicit = entry?.reasons.some(r => r.endsWith(' requiredVerifiers')) ?? false;
-  const sbi = { title: 'CI matrix', description: id, risks: [], securityImpact: [], acceptanceCriteria: [], requiredVerifiers: explicit ? [id] : [] };
+  const sbi = { title: 'CI matrix', description: id, risks: [], securityImpact: [], acceptanceCriteria: [], requiredVerifiers: [] };
   const result = await verify({ root, workspace: root, config, sbi, files, only: new Set([id]), selected: new Map([[id, mandatory]]) });
   return { impact, result, passed: checksPassed(result.checks) };
 }

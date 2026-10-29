@@ -489,7 +489,7 @@ Security Ruleから一般VerifierのIDを要求する場合も同じworktree上�
 `pnpm harness:demo --full` / `pnpm harness:run --full`はlane内の全アプリVerifierを選択する。
 このモードでも未生成の任意placeholderはSKIPできる。AC・Security必須チェックは引き続き省略不可。
 CIはこのfullモードを使う。アプリ実装・依存環境ができたらcommandsを接続する。
-`gatedCommands`に挙げたcommand（expo-doctor）は、そのappliesToに一致する変更があるときか、SBI.requiredVerifiers・Security・ACで指定されたときだけ実行する。fullモードでも実行しない。詳細は[.ai/workflows/ci.md](.ai/workflows/ci.md)。
+`gatedCommands`に挙げたcommand（expo-doctor）は、そのappliesToに一致する変更があるときだけ実行する。SBI.requiredVerifiers・Security・ACでVerifierが選ばれても実行条件は変わらない。fullモードでも実行しない。詳細は[.ai/workflows/ci.md](.ai/workflows/ci.md)。
 
 ## Prototype Lane / Production Lane
 
