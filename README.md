@@ -2,9 +2,23 @@
 
 SBI単位で「実装 → 検証 → 修正」を回し、Security・Risk・人間の承認からマージ可否まで判定するローカル基盤。
 
-Rails API + Expo + React adminの将来構成に向けた、ローカルLoop Engineering基盤。
-アプリ本体はplaceholder。クラウドFactory、CI/CD、実際のmergeは実装しない。
+Rails API・Expo・React adminの3アプリは開発環境まで構築済みで、業務機能は後続のSBIで追加する。
 このリポジトリはHarness専用。既存の動画PoC・参照ファイル・実行履歴・秘密情報は含めない。
+実際のmergeとクラウドFactoryは実装しない。
+
+## 現在の実装状況
+
+| 対象 | 状況 | 詳細 |
+| --- | --- | --- |
+| apps/api | Rails API mode。Docker Compose・RSpec・RuboCop・Brakeman等を接続済み。業務APIは未実装 | [apps/api/README.md](apps/api/README.md) |
+| apps/mobile | Expo（受講生アプリ）。Jest・Biome・expo-doctorを接続済み。業務画面は未実装 | [apps/mobile/README.md](apps/mobile/README.md) |
+| apps/admin | React + Vite（管理画面）。Vitest・Biome・buildを接続済み。業務画面は未実装 | [apps/admin/README.md](apps/admin/README.md) |
+| prototypes/web・mobile | デザイナー用の試作workspace。軽量ゲートで検証する | [Prototype Lane](#prototype-lane--production-lane) |
+| packages/api-schema | OpenAPI 3.1のSSOTの置き場所。`openapi.yaml`はまだ無い（最初のOpenAPI Schema SBIで追加する）。認証は特定Providerに依存しない`bearer-jwt` / `bearerAuth` | [packages/api-schema/README.md](packages/api-schema/README.md) |
+| Harness | 実装ループ、Risk・承認・MERGE_ALLOWED判定、PBI → SBI Planner、API Schema Planner、GitHub PR Adapter | 本README、[.ai/workflows/](.ai/workflows/) |
+| CI | SBIと差分から必要なVerifierを選び、matrixで並列実行する。`harness` jobがCompletion Judge（Trusted AcceptanceとSecurity Verifierも実行）。Production変更はSBI Issue由来のRunが必須。必須チェック名は`harness` | [.ai/workflows/ci.md](.ai/workflows/ci.md) |
+| 認証 | Auth Providerは未決定。Provider固有のSDK・gemは入れていない | [apps/api/README.md](apps/api/README.md#認証) |
+| GitHub Ruleset | 定義は[.github/rulesets/main.json](.github/rulesets/main.json)。GitHubへ適用済み（ruleset id 26088284）。PR必須・`harness`必須・force push / 削除禁止・必要な承認数0（人数はHarnessが判定） | [docs/workflows/github-ruleset.md](docs/workflows/github-ruleset.md) |
 
 ## 通常の開発フロー
 
@@ -59,7 +73,7 @@ FAILED・ESCALATED・REJECTED・CI以外の理由のBLOCKEDはexit 2、PR作成�
 | 場所 | 役割 |
 | --- | --- |
 | apps/api・mobile・admin | Rails / Expo / Reactのアプリ |
-| packages/api-schema | 将来のOpenAPI SSOT |
+| packages/api-schema | API契約（OpenAPI）のSSOT |
 | .harness/config/harness.json | provider、閾値、Verifier Registry、Semantic Review設定 |
 | .harness/state/sample-sbi.json | Gherkin、AC、許可ファイル、risk |
 | .harness/rules/policy.json | Human Gateと変更許可のポリシー |
@@ -115,9 +129,9 @@ ACは組み込みsample-bddまたは`trust: "acceptance"`と`trustedScript`で�
 `.harness/verification/*.mjs`の独立したassertionで検証する。スクリプトは第1引数のworktreeを検証し、
 成功時に`{"acceptance":["AC-ID"]}`をJSON出力する。Agentが変更できるテストへの委譲や自己申告は不可。
 
-| adapter | 未生成判定marker | 接続予定 |
+| adapter | 未生成判定marker | 接続状況 |
 | --- | --- | --- |
-| rails | apps/api/Gemfile | 接続済み: Docker Compose経由でbuild / db:prepare / RSpec / RuboCop / Brakeman / Bundler Audit / Zeitwerk。ACは`api-acceptance`。OpenAPI contractは未接続 |
+| rails | apps/api/Gemfile | 接続済み: Docker Compose経由でbuild / db:prepare / RSpec / RuboCop / Brakeman / Bundler Audit / Zeitwerk。ACは`api-acceptance`。api-contractがRailsのroute manifestと契約のmethod + pathを照合する。request / response bodyの照合は未実装（[#99](https://github.com/yanagisawahidetoshi/sonomama-harness/issues/99)でSpike） |
 | expo | apps/mobile/package.json | 接続済み: install / TypeScript / Biome / Jest + RNTL / expo-doctor（依存・native設定の変更時だけ）。ACは`mobile-acceptance`。Maestroはローカルのみ |
 | admin | apps/admin/package.json | 接続済み: install / TypeScript / Biome / Vitest + RTL / build。ACは`admin-acceptance` |
 
@@ -127,7 +141,7 @@ allowMissing=false、またはACがそのadapterを要求する場合は必須�
 markerあり・commands未設定もFAIL。**対象となる必須チェックはすべてPASSが必要。**
 
 commandsは引数配列で指定する。例は`[["bundle", "exec", "rspec"]]`。
-cwdは常に`<run>/workspace/<directory>`。将来のアプリを生成したら必要な全検証を登録する。
+cwdは常に`<run>/workspace/<directory>`。アプリに検証を追加したら、ここに登録する。
 SBI固有のテストは任意のverifier IDとacceptanceIdsで追加できる。
 
 ## ReviewerとSecurity Check
@@ -308,7 +322,7 @@ resumeは未着手のゲート待ちと実装DONE後の承認再評価だけに�
 現行ローカルCLIは単一OSユーザーの識別であり、同じアカウントを共有する実際の人数は認証しない。
 LEVEL 3を複数人で承認する本運用には、認証済みの別人を返すidentityProvider/承認adapterが必要。
 テストでは信頼する模擬adapterで2人を確認する。ローカルのファイル所有者そのものを敵とする隔離ではない。
-`recordDecision`のidentityProviderと、純粋なRisk/Merge Judgeを将来のGitHub等の接続点にする。
+`recordDecision`のidentityProviderと、純粋なRisk/Merge Judgeが承認の接続点。GitHub PR modeでは、ローカル台帳の代わりにGitHub Reviewを実装後の承認として判定に使う。
 署名鍵を含む.harness/state/humanは共有物やリポジトリに含めない。
 
 ## Evidence
@@ -328,7 +342,7 @@ LEVEL 3を複数人で承認する本運用には、認証済みの別人を返�
   merge-decision.json
   escalation.json               # 異常停止時。reasonCodeを併記
   health-metrics.json           # Observer用の観測データ。判定には使わない
-  workspace/                    # 独立Git、アプリplaceholder、生成成果物
+  workspace/                    # 独立Git、アプリ、生成成果物
   iteration-N/
     prompt.txt
     agent.log
@@ -383,9 +397,9 @@ Reviewer名・prompt・agent応答・秘密値もMetricsに含めず、他のEvi
 ## provider切り替え
 
 ```sh
-pnpm harness:run --sbi PATH                    # Claude（既定）
-pnpm harness:run --sbi PATH --provider codex   # Codexだけ使える場合
-pnpm harness:run --provider fake --sbi .harness/state/sample-sbi.json   # Harness自己テスト用。PRは作らない
+pnpm harness:run <SBI Issue URL>                    # Claude（既定）
+pnpm harness:run <SBI Issue URL> --provider codex   # Codexだけ使える場合
+pnpm harness:run --provider fake --sbi .harness/state/sample-sbi.json   # Harness自己テスト用（SBI JSON指定）。PRは作らない
 ```
 
 既定値はharness.jsonのprovider（claude）。demoは常にfake。provider自動検出はしない。
@@ -417,7 +431,9 @@ GitHub Issue (PBI) → PBI Reader → SBI Decomposer（codex / claude）→ SBI 
 
 GitHubアクセスは認証済みの`gh` CLIを使う。providerはcodexまたはclaudeを明示するか、harness.jsonのproviderを使う。
 fakeは公開先がGitHubのため拒否する。`--dry-run`・`--publish`は設けない。
-Quality Judgeは決定的なルールで、粒度（受け入れ要件6件・変更範囲4領域以内）、目的が2文以内、受け入れ要件の曖昧語、
+SBIには種類（kind）がある。implementation（実装SBI）と、Integration / E2Eが必要なPBIだけ1件まで持てるvalidation（最終確認SBI、実API / Rails / DB接続のMaestro E2E）の2つ。
+人間確認はSBIにせず、PBI Human Acceptance Gateとして扱う（`pbi-acceptance`を台帳へ記録するCLIとE2E Evidenceの保存は未実装）。
+Quality Judgeは決定的なルールで、粒度（受け入れ要件6件以内。implementationは変更範囲4領域以内・レイヤー1つ・想定変更ファイル1以上で、10超は理由が必須）、実テスト（implementationはApplication TestとScenarioごとのtest、validationはE2E）、目的が2文以内、受け入れ要件の曖昧語、
 Gherkinと受け入れ要件の対応、依存SBIの存在と循環、変更範囲・Risk/Security・検証方法の記載を検査する。
 Security Impactを宣言したSBIのRisk candidateはL3。最終Risk判定はExecution Harnessが行う。
 
@@ -488,7 +504,7 @@ Security Ruleから一般VerifierのIDを要求する場合も同じworktree上�
 
 `pnpm harness:demo --full` / `pnpm harness:run --full`はlane内の全アプリVerifierを選択する。
 このモードでも未生成の任意placeholderはSKIPできる。AC・Security必須チェックは引き続き省略不可。
-CIはこのfullモードを使う。アプリ実装・依存環境ができたらcommandsを接続する。
+CIはmainへのpushで全Verifierを実行し、PRではSBIと差分から選ぶ（[.ai/workflows/ci.md](.ai/workflows/ci.md)）。
 `gatedCommands`に挙げたcommand（expo-doctor）は、そのappliesToに一致する変更があるときだけ実行する。SBI.requiredVerifiers・Security・ACでVerifierが選ばれても実行条件は変わらない。fullモードでも実行しない。詳細は[.ai/workflows/ci.md](.ai/workflows/ci.md)。
 
 ## Prototype Lane / Production Lane
@@ -502,7 +518,7 @@ CIはこのfullモードを使う。アプリ実装・依存環境ができた�
 
 機械設定は`.harness/config/lanes.json`。人物のroleではなく変更パスで決める。
 混在・未知のパスはProduction。apps/**とpackages/**は設定でprototypeへ降格できない。
-試作専用コンポーネントはprototypes配下に置く。Rails / Expo / React本体は今回も未生成。
+試作専用コンポーネントはprototypes配下に置く。
 
 通常の試作はtypecheck・lint・format:check・build・secret-scanが必須。
 prototypeのpackage.jsonにはこの4スクリプトを用意する。mobileのbuildはExpo exportに接続する。
@@ -528,7 +544,7 @@ Design Approvalは実装前Human GateやMerge Approvalの代わりにはなら�
 
 ## Git worktreeの保持と片付け
 
-runのHEADを`refs/harness/runs/<run-id>`で保持するので、レビュー・将来のPR Adapterも同じSHAを参照できる。
+runのHEADを`refs/harness/runs/<run-id>`で保持するので、レビューとPR Adapterは同じSHAを参照する。
 元リポジトリのHEADが進んだ場合、dirty workspace、検証ソースの変更、入力の変更があれば承認を再利用しない。
 現在のLocal Phaseではresume・merge可否の再判定もroot HEAD==baselineを要求する。
 別PRをpullしただけでも既存runは無効になるため、新しいHEADでrunと承認を作り直す。
@@ -548,11 +564,11 @@ cleanで所有関係を確認できたworktreeだけを削除する。証跡・r
 
 Nodeは`.node-version`、pnpmはpackage.jsonのpackageManagerに固定。`pnpm install --frozen-lockfile`後のprepareで
 version管理された`.githooks/pre-push`を設定する。必要なら`pnpm hooks:install`で再設定できる。
-push前にharness:checkを必ず実行し、続けて`harness:push-gate`がImpact Analysisで選んだVerifierだけを実行する。
-Harness本体などFull Gate対象の変更や、push先との差分を特定できない場合はharness:test全件を実行する。どれかが失敗するとpushを止める。
+push前にharness:checkを必ず実行し、続けて`harness:push-gate`が、push対象のSHAをdetached worktreeに取り出してImpact Analysisで選んだVerifierだけを実行する（working treeの未commit変更は検証対象にならない）。
+Harness本体などFull Gate対象の変更、toolchain（`.node-version`・root `package.json`等）の変更や、push先との差分を特定できない場合はharness:test全件を実行する。どれかが失敗するとpushを止める。
 `--no-verify`は通常手順にしない。
 
 GitHub ActionsはSBIと差分から必要なVerifierを並列実行し、Full Gate対象ならharness:testとharness:demo --fullも実行する。
 最終の品質ゲートはCIの`harness`チェック（Completion Judge）。詳細は[.ai/workflows/ci.md](.ai/workflows/ci.md)。Actionsはcommit SHA固定、読取専用権限、checkout認証情報を保存しない。
-ローカルhookは回避可能なので、チーム運用ではRuleset / branch protectionで成功チェックを必須にする。
-これは次の設定段階。hook・CI・Harnessのどれにもmerge機能はない。
+ローカルhookは回避できるので、mainのRulesetで`harness`の成功とPR経由を必須にしている（適用済み。[docs/workflows/github-ruleset.md](docs/workflows/github-ruleset.md)）。
+hook・CI・Harnessのどれにもmerge機能はない。
