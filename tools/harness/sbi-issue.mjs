@@ -69,6 +69,11 @@ export function sbiFromIssue({ ref, issue, config }) {
   const security = risk?.map(l => /^Security: (.+)$/.exec(l.trim())?.[1]).find(Boolean);
   if (parts.has('Risk / Security Impact') && (!candidate || !security)) problems.push('## Risk / Security Impact にRiskとSecurityがありません');
   const securityImpact = (security ?? '').split(/,\s*/).map(s => s.trim()).filter(s => s && s !== 'None');
+  // Optional for Issues planned before these sections existed: the kind defaults to implementation, and a missing
+  // expected number of changed files makes the Completion Judge fail closed instead of blocking the Run here.
+  const kind = section('種類').map(l => /（(implementation|validation)）\s*$/.exec(l.trim())?.[1]).find(Boolean) ?? 'implementation';
+  const estimate = section('想定変更ファイル数').find(l => l.trim())?.trim();
+  const estimatedFiles = /^\d+$/.test(estimate ?? '') ? Number(estimate) : null;
 
   // Trusted Acceptance is written, reviewed and registered by a human before ready. Every criterion needs exactly one registration.
   const registered = config.verifiers.filter(v => v.trust === 'acceptance' && v.sbiIssue === ref.number);
@@ -81,11 +86,11 @@ export function sbiFromIssue({ ref, issue, config }) {
   for (const id of new Set(registered.flatMap(v => v.acceptanceIds))) if (!criteria.some(c => c.id === id)) problems.push(`登録済みのTrusted Acceptance ${id} はIssueの受け入れ要件にありません`);
   if (problems.length) throw new Error([`SBI Issue ${ref.url} からExecution SBIを作れません。Runは開始していません。`, ...problems.map(p => `- ${p}`)].join('\n'));
   return {
-    id: `ISSUE-${ref.number}`, title: issue.title, description: purpose,
+    id: `ISSUE-${ref.number}`, kind, title: issue.title, description: purpose,
     gherkin: [`Feature: ${issue.title}`, ...gherkin.map(line => line.trim() ? `  ${line}` : '')].join('\n'),
     acceptanceCriteria, allowedFiles: [], allowedDirs, risks: securityImpact, ambiguous: false, requiresDesignDecision: false,
     securityImpact, requiredSecurityRules: [], requiredVerifiers: [], affectedAreas: [], preImplementationGate: false,
-    minimumRiskLevel: candidate === 'L3' || securityImpact.length ? 3 : 2, issueUrl: ref.url, pbiUrl: markerPattern.exec(issue.body ?? '')?.[1],
+    minimumRiskLevel: candidate === 'L3' || securityImpact.length ? 3 : 2, estimatedFiles, issueUrl: ref.url, pbiUrl: markerPattern.exec(issue.body ?? '')?.[1],
   };
 }
 

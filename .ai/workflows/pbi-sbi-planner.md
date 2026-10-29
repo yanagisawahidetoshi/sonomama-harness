@@ -41,7 +41,7 @@ SBI Quality Judgeは次を検査し、満たさなければIssueを作成しな�
 | validation | 制約なし（PBI全体を通す） | 制約なし | E2EとScenarioごとのtestが必須 |
 
 2時間の目安はPlannerの判断基準で、Judgeは機械判定しない。
-実装後PRの変更ファイル数を想定と比べる`judgeChangedFileCount`（10と想定の両方を超えたらFAIL）はあるが、Completion Judge・CIにはまだ組み込んでいない。
+実装後PRの変更ファイル数は、CIのCompletion Judgeが`judgeChangedFileCount`でIssueの想定と比べ、10と想定の両方を超えたらFAILにする（[ci.md](ci.md)）。
 
 ## 失敗時
 
