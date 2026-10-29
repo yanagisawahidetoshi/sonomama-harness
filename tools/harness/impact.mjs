@@ -37,6 +37,11 @@ export function analyzeImpact({ config, sbis = [], files = [], all = false }) {
     if (sbis.length && !fromSbi.has(v.id)) select(v.id, 'diff-not-in-sbi', false);
   }
   if (all) for (const v of apps) select(v.id, 'all', false);
+  // A gated command (expo-doctor) is named with the path that makes it run, so the log shows why it ran or why it did not.
+  for (const v of apps) for (const gate of v.gatedCommands ?? []) {
+    const path = firstMatch(gate.appliesTo, files);
+    if (path) select(v.id, `gate:${gate.command.join(' ')}:${path}`, false);
+  }
   // A shared runtime or package manager change can break any app, so it selects every application verifier and the Full Gate.
   const toolchainPath = firstMatch(config.impact?.toolchain, files);
   if (toolchainPath) for (const v of apps) select(v.id, `toolchain:${toolchainPath}`, false);
@@ -109,7 +114,8 @@ export async function loadImpact({ root, base, all = false }) {
 // The matrix job: one verifier, mandatory only when an SBI asked for it, so a cross-layer contract without a document stays a placeholder SKIP.
 export async function runVerifier({ root, base, all = false, id }) {
   const { config, files, impact } = await loadImpact({ root, base, all });
-  const mandatory = impact.verifiers.find(v => v.id === id)?.mandatory ?? false;
+  const entry = impact.verifiers.find(v => v.id === id);
+  const mandatory = entry?.mandatory ?? false;
   // A Security Verifier connected in harness.json runs the same way as in the Harness run; without commands it stays NOT_CONFIGURED and fails.
   if (config.securityVerifiers.some(v => v.id === id)) {
     const policy = securityPolicySchema.parse(await readJson(join(root, '.harness/rules/security.json')));
