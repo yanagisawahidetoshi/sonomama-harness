@@ -2,17 +2,17 @@
 
 ## run の流れ
 
-1. SBIにGherkin、AC、許可ファイル、riskを記載する。ACを信頼するVerifier Registryへ対応付ける。
+1. 通常は`pnpm planner:sbi <PBI URL>`で作ったSBI Issueをレビューし、ACごとのTrusted Acceptanceを`.harness/acceptance/sbi-<番号>.json`に登録して`ready`にする（[pbi-sbi-planner.md](pbi-sbi-planner.md)）。SBI JSONは書かない。
 2. pnpm harness:checkで検証する。
-3. pnpm harness:demoまたはpnpm harness:runを実行する。
-4. WAITING_FOR_HUMAN_GATEなら、人間が設計・作業範囲を確認し、approve --phase gateを実行する。
-   WAITING_FOR_DESIGN_APPROVALなら、試作採用の設計を確認し、approve --phase designを実行する。
-5. approveの記録後、Harnessがrunを再開する。失敗は修正→再検証。連続3回失敗などはESCALATED。
+3. `pnpm harness:run <SBI Issue URL>`を実行する。IssueからSBIを組み立て、Run開始時のsnapshotを保存する。デモは`pnpm harness:demo`（サンプルSBI）。
+4. WAITING_FOR_HUMAN_GATEなら、人間が設計・作業範囲を確認し、`pnpm harness:approve <SBI Issue URL> --phase gate`を実行する。
+   WAITING_FOR_DESIGN_APPROVALなら、試作採用の設計を確認し、`--phase design`で実行する。
+5. approveの記録後、Harnessがrunを自動で再開する（`harness:resume`は不要）。失敗は修正→再検証。連続3回失敗などはESCALATED。
 6. executionStatus=DONEになると、Harnessがtested SHAでPRを作る（fake providerを除く）。GitHub Reviewで承認する（[pull-request.md](pull-request.md)）。
    PRを作らないLocal modeでは、LEVEL 2は1人、LEVEL 3は異なる2人以上がapprove --phase mergeで承認する。
 7. 判定の更新が要るときだけ、保守用のresume --run IDでMERGE_ALLOWEDとautoMergeEligibleを確認する。
    merge判定の一時エラーはRETRYABLE（executionStatusはDONEのまま）。原因を解消してresumeし直す。
-8. 実際のmergeは人間または別の将来adapterが行う。このHarnessはmergeしない。
+8. 実際のmergeは人間が行う。このHarnessはmergeしない。
 
 ゲート承認とマージ承認は別purpose・別context。使い回せない。
 証跡approvals.jsonを編集しても承認にならない。人間用CLIの署名付き台帳を使う。
@@ -21,7 +21,7 @@ OSユーザーの別名は別人として数えない。複数人の本運用に
 SHA・source・SBI・Rules・検証コードが変わったら新規runで再検証・再承認する。
 途中iterationはresumeしない。承認待ちだけを再開・再評価する。
 承認撤回後もresumeでMERGE_ALLOWEDを取り消せる。
-PBI → SBI Plannerは[pbi-sbi-planner.md](pbi-sbi-planner.md)。API変更を伴うSBIは実装前に[api-schema.md](api-schema.md)でAPI契約を承認する。Ruleset・CODEOWNERSの設定と実mergeは対象外。
+PBI → SBI Plannerは[pbi-sbi-planner.md](pbi-sbi-planner.md)。API変更を伴うSBIは実装前に[api-schema.md](api-schema.md)でAPI契約を承認する。Harnessは実mergeを行わず、GitHubのRuleset・CODEOWNERSも変更しない（mainのRulesetは人が適用済み）。
 
 ## ローカル開発とPR品質ゲート
 
@@ -31,7 +31,7 @@ PBI → SBI Plannerは[pbi-sbi-planner.md](pbi-sbi-planner.md)。API変更を伴
 4. harness:checkとharness:testの成功後、cleanなcommitからharness:demo --fullを実行する。
 5. push時にcheckと、差分に応じたVerifier（Full Gate対象ならtest全件）が自動実行される。CIはSBIと差分から必要なVerifierだけを並列実行する（[ci.md](ci.md)）。
 6. 元リポジトリのHEADを変える前にrunをレビューする。変更後は承認を再利用せず、新規runで再検証する。
-7. 人間が最終mergeする。現在はMERGE_ALLOWED判定まで。Rulesetの必須チェック指定は別途設定する。
+7. 人間が最終mergeする。HarnessはMERGE_ALLOWED判定まで。mainのRulesetは適用済みで、PR経由と`harness`の成功を必須にしている（[github-ruleset.md](../../docs/workflows/github-ruleset.md)）。
 
 Application Testは許可scopeで修正可能。Trusted Acceptanceは.harness/verificationまたはtools/harnessで保護する。
 Verifierは差分のappliesToとlaneで選び、AC・Security・明示必須指定を優先する。任意の非該当だけSKIPできる。
