@@ -51,7 +51,7 @@ pnpm --filter mobile doctor        # expo-doctor (Expo依存の整合確認)
 ## Expo Go と development build
 
 通常開発はExpo Goを主対象にする。`pnpm --filter mobile start` は `expo start --go` で起動し、`i` / `a` でSimulator / EmulatorのExpo Goを開く。
-`expo-dev-client` を入れるとExpo Goで開けなくなるため、初期依存には入れない。
+`expo-dev-client` は初期フェーズでは不要なので依存に入れない。入れると `expo start` の既定がdevelopment buildになるが、`start` scriptは `--go` でExpo Goを明示している。
 
 development buildはMaestroのIntegration / E2Eと、Expo Goで扱えないnative機能の確認に使う。
 native moduleが必要になった時点で、Expo Goを続けるかを判断し直す。
@@ -69,7 +69,11 @@ bundle identifier / application id は暫定で `com.sonomama.student.dev`。
 
 ## テストレイヤー
 
-MaestroはMobile Integration / E2Eの必須ツールとする。ただし全PRで無条件には実行せず、Harness / CIのrequired checkにも含めない。
+MaestroはMobile Integration / E2Eの必須ツールとする。通常のmobile Verifier（`expo`）には入れず、Maestroが必要なSBIでだけ専用のrequired VerifierとしてCIで実行する。全Mobile PRで無条件には実行しない。専用Verifierは #68 で実装する（未実装）。
+
+- implementation SBI: Mock API + Maestro
+- validation SBI: 実API + Rails + DB + Maestro
+- CI: GitHub ActionsのUbuntu + Android Emulator。development buildのAPKはartifact / cacheを再利用し、native fingerprintが変わったときだけ作り直す。iOSのCIは対象外
 
 | レイヤー                 | 主なツール                                    | 実行環境                           |
 | ------------------------ | --------------------------------------------- | ---------------------------------- |
@@ -95,7 +99,7 @@ maestro test apps/mobile/.maestro/smoke.yaml   # repo rootから
 ```
 
 `smoke.yaml` はアプリを起動し、初期画面の `testID="home-title"` と `SONOMAMA` が表示されることだけを確認する。
-Harness / CIのrequired checkには含めない。
+通常のmobile Verifier（`expo`）では実行しない。
 
 ### Android Emulator
 
