@@ -9,12 +9,15 @@ PBI（プロダクトバックログの項目）を受け取ってからmergeす
 5. PRをレビューする: 検証に通ったcommitをPRにし、人がGitHubでレビューする。必要な承認の人数は変更のリスクで決まり、レベル2は1人、レベル3は別々の2人以上になる。
 6. 人がmergeする: Harnessが出すのは「mergeしてよい」という判定（MERGE_ALLOWED）までで、mergeは人が行う。
 
+Design System導入、dependency、refactor、tooling、Storybook、build設定など、プロダクト仕様を直接変更しないProduction領域の技術変更はSBIに分けず、[Engineering Change](engineering-changes.md)として承認済みIssueを起点にできる。Verifier・Security・Risk・Human Reviewは通常どおり行う。
+
 デザイナーの試作（prototypes/）を本番に採用する場合は、試作のデザインを人が承認してから、新しいSBIで本番のアプリに実装し直す。試作が検証に通っても、本番の実装を承認したことにはならない。
 
 ## このディレクトリの手順書
 
 - [api-docs.md](api-docs.md): API仕様をブラウザで見る
 - [api-mock.md](api-mock.md): 承認済みのAPI仕様から、ローカルでモックサーバを起動する
+- [engineering-changes.md](engineering-changes.md): SBIを必要としないProduction領域の技術変更を扱う
 - [dependency-updates.md](dependency-updates.md): AdminとRails APIのdependency更新をRenovateのPRで受け取る
 - [github-ruleset.md](github-ruleset.md): mainのGitHub Rulesetを適用・確認する
 
