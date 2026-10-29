@@ -134,8 +134,6 @@ Option Aでは、3と4が「CSから初期パスワードを受け取ってロ�
 
 ## 関連資料
 
-- Issue #110
-- Issue #107（ADRテンプレートの拡充）
 - [docs/security/authorization.md](../security/authorization.md)
 - 今後作成する予定: AWS / GCP選定のADR、認証基盤選定のADR
 
