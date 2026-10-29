@@ -314,11 +314,12 @@ RSpec.describe "API contract for request specs", type: :request do
 
     context "when the response carries PII and the request carries a token" do
       it "names the property without printing the token, the value or the body", :aggregate_failures do
-        get "/students/s-1", headers: { "Authorization" => "Bearer secret-token-value" }
+        opaque = "fixture-#{SecureRandom.hex(8)}"
+        get "/students/s-1", headers: { "HTTP_AUTHORIZATION" => "Bearer #{opaque}" }
 
         message = contract_failure
         expect(message).to include("/guardianEmail")
-        expect(message).not_to include("secret-token-value", "guardian-at-example", "Taro")
+        expect(message).not_to include(opaque, "guardian-at-example", "Taro")
       end
     end
   end
