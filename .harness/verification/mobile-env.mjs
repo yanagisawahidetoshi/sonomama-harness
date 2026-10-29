@@ -92,10 +92,16 @@ try {
       const expo = JSON.parse(read('.harness/config/harness.json')).verifiers.find(v => v.id === 'expo');
       for (const script of ['typecheck', 'check', 'test', 'doctor']) assert.ok(hasCommand(expo.commands, ['pnpm', 'run', script]), script);
     }],
-    ['MOBILE-AC-16', 'Given the Harness, When verifying mobile, Then Maestro is not a required command', () => {
-      const config = JSON.parse(read('.harness/config/harness.json'));
-      for (const v of config.verifiers) for (const c of v.commands) assert.doesNotMatch(c.join(' '), /maestro/i, v.id);
+    ['MOBILE-AC-16', 'Given the Harness, When verifying mobile, Then Maestro stays out of the normal mobile verifier and is required only for Maestro-target SBIs', () => {
+      const expo = JSON.parse(read('.harness/config/harness.json')).verifiers.find(v => v.id === 'expo');
+      for (const c of expo.commands) assert.doesNotMatch(c.join(' '), /maestro/i, 'expo');
       forbids(/maestro/i, 'Maestro is an external CLI');
+      const readme = read('apps/mobile/README.md');
+      assert.match(readme, /通常のmobile Verifier（`expo`）には入れず/);
+      assert.match(readme, /implementation SBI: Mock API \+ Maestro/);
+      assert.match(readme, /validation SBI: 実API \+ Rails \+ DB \+ Maestro/);
+      for (const term of ['Android Emulator', 'native fingerprint']) assert.ok(readme.includes(term), term);
+      assert.doesNotMatch(readme, /required checkにも含めない/);
     }],
     ['MOBILE-AC-17', 'Given the app, When listing dependencies, Then no auth provider SDK is installed', () => {
       forbids(/amplify|cognito|firebase|google-auth|@react-oauth|oidc|auth0|@clerk|supabase|expo-auth-session/i, 'Auth provider SDK must not be installed');
@@ -147,8 +153,9 @@ try {
       assert.match(scripts.android, /\bexpo run:android\b/);
       assert.match(read('apps/mobile/README.md'), /development buildはMaestroのIntegration \/ E2Eと、Expo Goで扱えないnative機能/);
     }],
-    ['MOBILE-AC-28', 'Given the app, When listing dependencies, Then expo-dev-client is not installed so Expo Go keeps working', () => {
-      forbids(/^expo-dev-client$/, 'expo-dev-client must not be an initial dependency');
+    ['MOBILE-AC-28', 'Given the initial phase, When listing dependencies, Then expo-dev-client is not added because nothing needs it yet', () => {
+      forbids(/^expo-dev-client$/, 'expo-dev-client is not needed in the initial phase');
+      assert.doesNotMatch(read('apps/mobile/README.md'), /expo-dev-client` を入れるとExpo Goで開けなくなる/);
     }],
   ];
   const acceptance = [];
