@@ -74,6 +74,9 @@ describe('Security Impact Classifier', () => {
       assert.ok(result.matchedRules.includes('SEC-AUTHZ-001'));
       assert.ok(result.requiredVerifiers.includes('rails-authz-test'));
     });
+    it('when its code sample logs an email then still requires the PII log check', () => {
+      assert.ok(doc('`logger.info(user.email)`').requiredVerifiers.includes('pii-log-check'));
+    });
     it('when source code names authorization.md then still requires the authorization test', () => {
       const result = assess([{ path: 'apps/api/lib/policy_docs.rb', status: 'A', added: "POLICY = 'docs/security/authorization.md'" }]);
       assert.ok(result.matchedRules.includes('SEC-AUTHZ-001'));
