@@ -25,18 +25,19 @@ const unavailable = (reason, process) => ({ status: 'FAIL', reason: `isolation u
 const outcome = processes => ({ status: processes.every(p => p.ok) ? 'PASS' : 'FAIL', processes });
 const inside = (parent, path) => { const rel = relative(parent, path); return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel)); };
 
-export async function runIsolated({ workspace, adapter, config, cwd }) {
+// commands is the selection the caller made (gated commands removed); it defaults to every configured command.
+export async function runIsolated({ workspace, adapter, config, cwd, commands = adapter.commands }) {
   const docker = config.isolation?.docker || 'docker', timeoutMs = config.timeoutMs;
   const mode = adapter.isolation || 'container';
   if (mode === 'harness') {
     const processes = [];
-    for (const [command, ...args] of adapter.commands) processes.push(await execute(command, args, { cwd, timeoutMs, env: harnessEnv() }));
+    for (const [command, ...args] of commands) processes.push(await execute(command, args, { cwd, timeoutMs, env: harnessEnv() }));
     return outcome(processes);
   }
   // Fail closed: without a reachable daemon nothing untrusted runs, and the check cannot pass.
   const ready = await execute(docker, ['info', '--format', '{{.ServerVersion}}'], { env: dockerCliEnv(), timeoutMs: 30000 });
   if (!ready.ok) return unavailable('docker is not available', ready);
-  return mode === 'compose' ? compose({ workspace, adapter, docker, cwd, timeoutMs }) : container({ workspace, adapter, docker, cwd, timeoutMs });
+  return mode === 'compose' ? compose({ workspace, commands, docker, cwd, timeoutMs }) : container({ workspace, adapter, commands, docker, cwd, timeoutMs });
 }
 
 async function ensureImage(docker) {
@@ -69,7 +70,7 @@ async function secretPaths(workspace, directory = '') {
   return found;
 }
 
-async function container({ workspace, adapter, docker, cwd, timeoutMs }) {
+async function container({ workspace, adapter, commands, docker, cwd, timeoutMs }) {
   if (/[,=]/.test(workspace) || !inside(workspace, cwd)) return unavailable('workspace path cannot be mounted');
   const image = await ensureImage(docker);
   if (!image) return unavailable('verifier image could not be built');
@@ -98,7 +99,7 @@ async function container({ workspace, adapter, docker, cwd, timeoutMs }) {
     if (!prepared.ok) return unavailable('container volumes could not be prepared', prepared);
     const workdir = ['/workspace', relative(workspace, cwd)].filter(Boolean).join('/');
     const processes = [];
-    for (const [command, ...args] of adapter.commands) processes.push(await execute(docker, ['exec', '-w', workdir, name, command, ...args], { env: dockerCliEnv(), timeoutMs }));
+    for (const [command, ...args] of commands) processes.push(await execute(docker, ['exec', '-w', workdir, name, command, ...args], { env: dockerCliEnv(), timeoutMs }));
     return outcome(processes);
   } finally {
     await execute(docker, ['rm', '-f', '-v', name], { env: dockerCliEnv(), timeoutMs: 60000 });
@@ -130,12 +131,17 @@ export function validateCompose(workspace, file, text) {
   for (const [id, service] of Object.entries(model.services || {})) {
     for (const [key, value] of Object.entries(service || {})) {
       if (!serviceKeys.has(key)) bad(`services.${id}.${key} is not permitted`);
-      strings(value, key === 'environment', `services.${id}.${key}`);
+      if (key !== 'build') strings(value, key === 'environment', `services.${id}.${key}`);
     }
     if (service.build !== undefined) {
       const build = typeof service.build === 'string' ? { context: service.build } : service.build;
-      if (Object.keys(build).some(k => !['context', 'dockerfile'].includes(k))) bad(`services.${id}.build options are not permitted`);
+      if (Object.keys(build).some(k => !['context', 'dockerfile', 'cache_from', 'cache_to'].includes(k))) bad(`services.${id}.build options are not permitted`);
+      strings({ context: build.context, dockerfile: build.dockerfile }, false, `services.${id}.build`);
       hostPath(build.context, `services.${id}.build.context`);
+      // The BuildKit cache location is a host path, so only the Harness (CI) may choose it; the default stays inside the project.
+      for (const key of ['cache_from', 'cache_to']) for (const entry of build[key] || []) {
+        if (typeof entry !== 'string' || !new RegExp(`^\\$\\{HARNESS_BUILD_CACHE_${key === 'cache_from' ? 'FROM' : 'TO'}(?::-type=(?:inline|local,src=[A-Za-z0-9._-]+))?\\}$`).test(entry)) bad(`services.${id}.build.${key} must be the Harness build cache setting`);
+      }
     }
     for (const volume of service.volumes || []) {
       const source = typeof volume === 'string' ? (volume.includes(':') ? volume.split(':')[0] : null) : volume.source;
@@ -146,12 +152,12 @@ export function validateCompose(workspace, file, text) {
     for (const port of service.ports || []) if (!(typeof port === 'string' ? port.startsWith('127.0.0.1:') : port.host_ip === '127.0.0.1')) bad(`services.${id}.ports must publish on 127.0.0.1 only`);
   }
 }
-async function compose({ workspace, adapter, docker, cwd, timeoutMs }) {
+async function compose({ workspace, commands, docker, cwd, timeoutMs }) {
   const temp = await mkdtemp(join(tmpdir(), 'sonomama-isolation-'));
   try {
     const empty = join(temp, 'empty');
     await writeFile(empty, '');
-    for (const [, , , file] of adapter.commands.filter(isComposeCommand)) {
+    for (const [, , , file] of commands.filter(isComposeCommand)) {
       const path = resolve(cwd, file);
       try {
         if (!inside(workspace, path)) throw new Error('Compose file must be inside the workspace');
@@ -161,9 +167,9 @@ async function compose({ workspace, adapter, docker, cwd, timeoutMs }) {
     const processes = [];
     // An empty --env-file keeps a workspace .env out of interpolation.
     // Harness scripts in the list (schema-checked) run on the host like isolation: harness.
-    for (const command of adapter.commands) {
+    for (const command of commands) {
       const [name, sub, ...args] = command;
-      processes.push(isComposeCommand(command) ? await execute(docker, [sub, '--env-file', empty, ...args], { cwd, timeoutMs, env: dockerCliEnv() })
+      processes.push(isComposeCommand(command) ? await execute(docker, [sub, '--env-file', empty, ...args], { cwd, timeoutMs, env: { ...dockerCliEnv(), ...pick(['HARNESS_BUILD_CACHE_FROM', 'HARNESS_BUILD_CACHE_TO']) } })
         : await execute(name, [sub, ...args], { cwd, timeoutMs, env: harnessEnv() }));
     }
     return outcome(processes);
