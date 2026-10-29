@@ -80,7 +80,7 @@ export function judgeCi({ impact, needs, acceptance, security, source }) {
     if (wanted ? result !== 'success' : !['success', 'skipped'].includes(result)) reasons.push(`${job}: ${result}`);
   };
   expect('impact', true);
-  if (impact.sbiRequired && source?.status !== 'PASS') reasons.push(...(source?.reasons.length ? source.reasons : ['production source: not evaluated']));
+  if (impact.sbiRequired && source?.status !== 'PASS') reasons.push(...(source?.reasons.length ? source.reasons : ['sbi source: not evaluated']));
   expect('verifiers', impact.requiredVerifiers.length > 0);
   expect('harness-test', impact.fullGate);
   expect('harness-demo', impact.fullGate);
@@ -177,7 +177,7 @@ export function describeJudge({ needs, acceptance, checks, security }) {
 export function describeImpact(impact) {
   return [
     `SBI: ${impact.sbis.join(', ') || '(none; diff only)'}`,
-    `Production source required: ${impact.sbiRequired ? `yes (${impact.sbiRequiredReasons.join(', ')})` : 'no (no production path changed)'}`,
+    `SBI required: ${impact.sbiRequired ? `yes (${impact.sbiRequiredReasons.join(', ')})` : 'no (no production path changed)'}`,
     `Affected areas: ${impact.affectedAreas.join(', ') || '(none)'}`,
     ...impact.verifiers.map(v => `Verifier ${v.id}${v.mandatory ? ' [mandatory]' : ''}: ${v.reasons.join(', ')}`),
     `Acceptance (Completion Judge): ${impact.acceptanceVerifiers.join(', ') || '(none)'}`,
