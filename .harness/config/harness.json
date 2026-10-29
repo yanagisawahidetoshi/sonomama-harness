@@ -831,6 +831,66 @@
       ],
       "isolation": "compose",
       "network": true
+    },
+    {
+      "id": "rails-authz-test",
+      "directory": ".",
+      "commands": [
+        [
+          "node",
+          "tools/harness/authorization-specs.mjs"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "compose.yaml",
+          "build",
+          "api"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "compose.yaml",
+          "run",
+          "--rm",
+          "-e",
+          "RAILS_ENV=test",
+          "-e",
+          "DATABASE_URL=postgres://postgres@db:5432/sonomama_authz_test",
+          "api",
+          "bin/rails",
+          "db:prepare"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "compose.yaml",
+          "run",
+          "--rm",
+          "-e",
+          "RAILS_ENV=test",
+          "-e",
+          "DATABASE_URL=postgres://postgres@db:5432/sonomama_authz_test",
+          "api",
+          "bundle",
+          "exec",
+          "ruby",
+          "-e",
+          "require \"rspec/core\"; RSpec.configure { |c| c.fail_if_no_examples = true }; exit RSpec::Core::Runner.run([\"spec/authorization\"])"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "compose.yaml",
+          "down"
+        ]
+      ],
+      "isolation": "compose",
+      "network": true
     }
   ],
   "semanticReview": {
