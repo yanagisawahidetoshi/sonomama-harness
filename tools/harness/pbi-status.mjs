@@ -62,13 +62,14 @@ export async function collectPbiStatus({ root, pbiUrl, config, github = githubCl
     const where = `SBI ${sbi.id}（#${sbi.number}）`;
     const pull = await attempt(`${where} のHarness PR`, () => mergedHarnessPull({ ref, dependency: { number: sbi.number }, base, github }), undefined);
     const row = { ...sbi, merged: Boolean(pull), pullRequest: pull ? { number: pull.number, url: `https://github.com/${ref.owner}/${ref.repo}/pull/${pull.number}`, headSha: pull.head?.sha ?? null } : null,
-      requiredVerifiers: null, e2e: null, status: null };
+      requiredVerifiers: null, e2e: null, evidence: 'UNREADABLE', status: null };
     output.sbis.push(row);
     let read;
     try { read = await evidence.read({ sbi, pull: pull ?? null }); } catch (error) { problems.push(`${where} のMaestro E2E Evidenceを読めません（${error.message}）`); }
     if (read && !read.connected) problems.push(`${where}: ${read.reason}`);
     const e2e = read?.connected ? read.e2e ?? null : null;
     row.e2e = e2e;
+    if (read) row.evidence = read.connected ? 'CONNECTED' : 'NOT_CONNECTED';
     if (sbi.kind === 'validation') {
       if (read?.connected) results[sbi.id] = { e2e, evidenceDigest: read.evidenceDigest };
       continue;
@@ -106,7 +107,8 @@ const mark = ok => ok ? '✅' : '❌';
 export function renderPbiStatus(result) {
   const sbiLine = s => [`${mark(s.status === 'DONE')} ${s.id} ${s.kind} (#${s.issueUrl.split('/').pop()})`,
     ...(s.kind === 'implementation' ? [s.merged ? `merged PR #${s.pullRequest.number}` : 'not merged', `verifier ${s.requiredVerifiers ?? '-'}`] : []),
-    s.e2e ? `E2E ${s.e2e.api} ${s.e2e.status}` : s.kind === 'validation' ? 'E2E -' : 'E2E none'].join(' / ');
+    s.evidence === 'NOT_CONNECTED' ? 'E2E 未接続' : s.evidence === 'UNREADABLE' ? 'E2E unreadable'
+      : s.e2e ? `E2E ${s.e2e.api} ${s.e2e.status}` : s.kind === 'validation' ? 'E2E -' : 'E2E none'].join(' / ');
   return [
     `PBI: #${result.pbi.number} ${result.pbi.title ?? '(unreadable)'}`, `Status: ${result.status}`, '',
     'SBI', ...(result.sbis.length ? result.sbis.map(sbiLine) : ['❌ none']), '',
