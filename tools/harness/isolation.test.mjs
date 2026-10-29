@@ -180,6 +180,8 @@ describe('Verifier isolation', () => {
       ['interpolates the host environment outside environment values', 'services:\n  api:\n    image: ruby\n    volumes:\n      - ${HOME}:/home\n'],
       ['runs privileged', 'services:\n  api:\n    image: ruby\n    privileged: true\n'],
       ['shares the host network', 'services:\n  api:\n    image: ruby\n    network_mode: host\n'],
+      ['exports the build cache to a host path of its own choosing', 'services:\n  api:\n    build:\n      context: ./apps/api\n      cache_to: ["type=local,dest=/home/runner/.ssh"]\n'],
+      ['defaults the build cache to a path outside the workspace', 'services:\n  api:\n    build:\n      context: ./apps/api\n      cache_from: ["${HARNESS_BUILD_CACHE_FROM:-type=local,src=/etc}"]\n'],
     ]) {
       it(`when the Compose file ${name} then fails closed before starting Compose`, () => fixture(async root => fakeDocker(async ({ docker, calls }) => {
         const { config } = await check(root);
@@ -204,6 +206,21 @@ describe('Verifier isolation', () => {
       assert.equal(composed.length, 1);
       for (const name of Object.keys(credentials)) assert.equal(composed[0].env[name], undefined, name);
       assert.equal(composed[0].env.HOME, undefined);
+    }))));
+    it('when the Harness sets the BuildKit cache location then Compose receives only that trusted setting', () => fixture(async root => fakeDocker(async ({ docker, calls }) => withCredentials(async () => {
+      const previous = process.env.HARNESS_BUILD_CACHE_FROM;
+      process.env.HARNESS_BUILD_CACHE_FROM = 'type=local,src=/ci/cache';
+      try {
+        const { config } = await check(root);
+        config.isolation = { docker };
+        await writeFile(join(root, 'compose.yaml'), await readFile(new URL('../../compose.yaml', import.meta.url), 'utf8'));
+        compose(config, 'compose.yaml');
+        const result = await verify({ root, workspace: root, config, sbi, files: [{ path: 'apps/api/app.rb' }] });
+        assert.equal(result.checks.find(c => c.id === 'rails').status, 'PASS');
+        const composed = (await calls()).find(c => c.args[0] === 'compose');
+        assert.equal(composed.env.HARNESS_BUILD_CACHE_FROM, 'type=local,src=/ci/cache');
+        assert.equal(composed.env.GH_TOKEN, undefined);
+      } finally { if (previous === undefined) delete process.env.HARNESS_BUILD_CACHE_FROM; else process.env.HARNESS_BUILD_CACHE_FROM = previous; }
     }))));
   });
 
