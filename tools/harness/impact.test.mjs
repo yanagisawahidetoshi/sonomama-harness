@@ -454,6 +454,19 @@ describe('CI Completion Judge for Trusted Acceptance and Security', () => {
       assert.ok(judged.reasons.includes('security: migration-safety NOT_CONFIGURED'));
     }));
 
+    it('when only an ADR describes authorization then passes with the authorization test skipped as not applicable', () => fixture(async root => {
+      await branch(root, async root => {
+        await mkdir(join(root, 'docs/adr'), { recursive: true });
+        await writeFile(join(root, 'docs/adr/0009-invitation.md'), '# Invitation\n\nThis endpoint requires authorization.\n');
+      });
+      const judged = await judgeBranch(root);
+      assert.equal(judged.security.requiredVerifiers.includes('rails-authz-test'), false);
+      assert.equal(status(judged, 'rails-authz-test'), 'SKIP');
+      assert.equal(status(judged, 'secret-scan'), 'PASS');
+      assert.equal(status(judged, 'forbidden-pattern-check'), 'PASS');
+      assert.equal(judged.status, 'PASS');
+    }));
+
     it('when the SBI requires an application verifier then takes its result from the verifier matrix', () => fixture(async root => {
       // An SBI built from an Issue requires no application verifier, so a hand-written SBI JSON on the same branch asks for it.
       await branch(root, async root => {
