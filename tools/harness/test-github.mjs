@@ -99,11 +99,20 @@ export const githubMock = defaults => async (state, test) => {
         // The head SHA is whatever the pushed branch points to in the bare remote.
         const sha = require('node:child_process').execFileSync('git', ['--git-dir', state.bare, 'rev-parse', 'refs/heads/' + body.head], { encoding: 'utf8' }).trim();
         const baseSha = require('node:child_process').execFileSync('git', ['--git-dir', state.bare, 'rev-parse', 'refs/heads/' + body.base], { encoding: 'utf8' }).trim();
-        const pull = { number, title: body.title, body: body.body, state: 'open', merged: false, html_url: 'https://github.com/acme/app/pull/' + number, user: { login: state.viewer, type: 'User' }, head: { ref: body.head, sha }, base: { ref: body.base, sha: baseSha } };
+        const pull = { number, title: body.title, body: body.body, state: 'open', merged: false, html_url: 'https://github.com/acme/app/pull/' + number, user: { login: state.viewer, type: 'User' }, head: { ref: body.head, sha, repo: { full_name: 'acme/app' } }, base: { ref: body.base, sha: baseSha } };
         state.pulls.push(pull); process.stdout.write(JSON.stringify(pull));
       } else if (method === 'GET' && (m = endpoint.match(/^repos\\/acme\\/app\\/pulls\\/(\\d+)$/))) {
         const pull = state.pulls.find(p => p.number === Number(m[1])); if (!pull) fail('gh: Not Found (HTTP 404)');
+        // livePulls: the head follows the pushed branch, and a push refreshes base.sha to the merge base, as PR #131 showed on GitHub.
+        if (state.livePulls) {
+          const sha = args => require('node:child_process').execFileSync('git', ['--git-dir', state.bare, ...args], { encoding: 'utf8' }).trim();
+          pull.head.sha = sha(['rev-parse', 'refs/heads/' + pull.head.ref]);
+          pull.base.sha = sha(['merge-base', 'refs/heads/' + pull.base.ref, pull.head.sha]);
+        }
         process.stdout.write(JSON.stringify(pull));
+      } else if (method === 'PATCH' && (m = endpoint.match(/^repos\\/acme\\/app\\/pulls\\/(\\d+)$/))) {
+        const pull = state.pulls.find(p => p.number === Number(m[1])); if (!pull) fail('gh: Not Found (HTTP 404)');
+        Object.assign(pull, JSON.parse(input)); process.stdout.write(JSON.stringify(pull));
       } else if (method === 'GET' && (m = endpoint.match(/^repos\\/acme\\/app\\/pulls\\/(\\d+)\\/reviews$/))) {
         process.stdout.write(JSON.stringify(page(state.reviews[m[1]] || [])));
       } else if (method === 'GET' && (m = endpoint.match(/^repos\\/acme\\/app\\/commits\\/([0-9a-f]+)\\/check-runs$/))) {

@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { check, runHarness, resumeRun, cleanupRun, openPullRequest, approveRun, runExitCode } from './index.mjs';
+import { check, runHarness, resumeRun, cleanupRun, openPullRequest, approveRun, runExitCode, reverifyPullRequest } from './index.mjs';
 import { withEvidenceProtection, redactText } from './evidence-protection.mjs';
 import { exportRun } from './review-export.mjs';
 import { planIssue } from './planner.mjs';
@@ -33,6 +33,8 @@ User-facing:
   pnpm harness:pbi-status PBI_URL [--json]          PBIのSBI・Evidence・受け入れ・blockerを集めてDONE / NOT_DONEと理由を表示する
   pnpm harness:pbi-accept PBI_URL --evidence DIGEST [--decision approve|revoke|request-changes]
                                                      pbi-statusが表示したEvidence digestに対するPBI Human Acceptanceを署名付き台帳へ記録する
+  pnpm harness:reverify PR_URL                       mainが進んだPRを、実装を保持したまま最新mainと統合して再検証し、同じPRを更新する
+                                                     （PR HEADと最新mainが前回PASSしたrunのままなら何もせずAlready verifiedを表示）
 API design (API契約を設計するときだけ):
   OpenAPI SchemaはPlannerが作るSchema SBI（packages/api-schemaだけを変える）として pnpm harness:run SBI_URL で作る
   pnpm api:mock ISSUE_URL [--dynamic] | pnpm api:docs [--port PORT]
@@ -58,10 +60,10 @@ async function printVerifier({ root: workspace = root, base, all, id }) {
 await withEvidenceProtection(root, async () => {
 try {
   const [command, ...args] = process.argv.slice(2);
-  const allowed = { check: ['--sbi'], demo: ['--sbi', '--full'], run: ['--provider', '--sbi', '--full'], plan: ['--provider'], 'spec-approve': ['--decision'], 'api-schema': ['--provider'], 'api-schema-approve': ['--decision'], 'api-schema-status': [], 'api-mock': ['--dynamic'], 'api-docs': ['--port'], cleanup:['--run'], impact: ['--base', '--all'], verify: ['--base', '--all', '--verifier'], judge: ['--base', '--all'], 'push-gate': [], resume: ['--run'], pr: ['--run'], approve: ['--run', '--phase', '--decision'], export: ['--run','--out'], 'pbi-status': ['--json'], 'pbi-accept': ['--evidence', '--decision'], 'pbi-plan': [], 'pbi-plan-approve': ['--decision'] };
+  const allowed = { check: ['--sbi'], demo: ['--sbi', '--full'], run: ['--provider', '--sbi', '--full'], plan: ['--provider'], 'spec-approve': ['--decision'], 'api-schema': ['--provider'], 'api-schema-approve': ['--decision'], 'api-schema-status': [], 'api-mock': ['--dynamic'], 'api-docs': ['--port'], cleanup:['--run'], impact: ['--base', '--all'], verify: ['--base', '--all', '--verifier'], judge: ['--base', '--all'], 'push-gate': [], resume: ['--run'], pr: ['--run'], reverify: [], approve: ['--run', '--phase', '--decision'], export: ['--run','--out'], 'pbi-status': ['--json'], 'pbi-accept': ['--evidence', '--decision'], 'pbi-plan': [], 'pbi-plan-approve': ['--decision'] };
   if (!allowed[command]) throw new Error(usage);
   const options = {};
-  const positional = ['plan', 'spec-approve', 'api-schema', 'api-schema-approve', 'api-schema-status', 'api-mock', 'run', 'approve', 'pbi-status', 'pbi-accept', 'pbi-plan', 'pbi-plan-approve'].includes(command) && args.length && !args[0].startsWith('--') ? args.shift() : null;
+  const positional = ['plan', 'spec-approve', 'api-schema', 'api-schema-approve', 'api-schema-status', 'api-mock', 'run', 'approve', 'reverify', 'pbi-status', 'pbi-accept', 'pbi-plan', 'pbi-plan-approve'].includes(command) && args.length && !args[0].startsWith('--') ? args.shift() : null;
   for (let i = 0; i < args.length; i += 2) {
     if (['--full', '--dynamic', '--all', '--json'].includes(args[i]) && allowed[command].includes(args[i]) && !options[args[i]]) { options[args[i]]=true; i--; continue; }
     if (!allowed[command].includes(args[i]) || !args[i + 1] || args[i + 1].startsWith('--') || options[args[i]]) throw new Error(`Invalid arguments for ${command}`);
@@ -176,6 +178,19 @@ try {
     const run = await openPullRequest({ root, runId: options['--run'] });
     console.log(`Pull request: ${run.pullRequest.url} (tested SHA ${run.headSha})`);
     console.log(`Evidence: ${run.runDir}/github-state.json`);
+    process.exitCode = runExitCode(run);
+  } else if (command === 'reverify') {
+    if (!positional) throw new Error('reverify requires a pull request URL: reverify https://github.com/<owner>/<repo>/pull/<number>');
+    const run = await reverifyPullRequest({ root, pullUrl: positional });
+    if (run.alreadyVerified) {
+      console.log(`Already verified: ${run.pullRequest.url} HEAD ${run.headSha} on ${run.pullRequest.base} ${run.baselineSha} is bound to run ${run.id}. Nothing was run, committed, pushed or updated.`);
+      console.log(`Evidence: ${run.runDir}/summary.json`);
+      return;
+    }
+    if (run.reverify?.publish === 'PR_UPDATED') printPullRequest(run); else console.log(`Pull request: ${run.pullRequest.url} (not updated; run ${run.id}: ${run.status})`);
+    if (run.reverify?.conflicts?.length) console.log(`Conflicts: ${run.reverify.conflicts.join(', ')}`);
+    if (run.gate?.state === 'WAITING_FOR_HUMAN_GATE') console.log(`Human Gate: pnpm harness:approve ${run.sbiIssue.url} --phase gate`);
+    console.log(`Evidence: ${run.runDir}/summary.json`);
     process.exitCode = runExitCode(run);
   } else if (command === 'cleanup') {
     if (!options['--run']) throw new Error('cleanup requires --run ID');

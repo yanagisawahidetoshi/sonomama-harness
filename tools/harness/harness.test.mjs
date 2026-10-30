@@ -148,7 +148,7 @@ describe('CLI help', () => {
       const { stderr } = await execute(process.execPath, [new URL('./cli.mjs', import.meta.url).pathname, 'unknown']);
       const userFacing = stderr.indexOf('User-facing'), internal = stderr.indexOf('Internal/Maintenance');
       assert.ok(userFacing >= 0 && internal > userFacing, stderr);
-      for (const command of ['planner:sbi', 'harness:run', 'harness:approve']) {
+      for (const command of ['planner:sbi', 'harness:run', 'harness:approve', 'harness:reverify']) {
         const at = stderr.indexOf(`pnpm ${command}`);
         assert.ok(at > userFacing && at < internal, `${command} is user-facing`);
       }
@@ -158,6 +158,7 @@ describe('CLI help', () => {
       assert.match(stderr.slice(userFacing, internal), /--provider codex/);
       assert.match(stderr.slice(userFacing, internal), /pnpm harness:run SBI_URL/);
       assert.match(stderr.slice(userFacing, internal), /pnpm harness:approve SBI_URL/);
+      assert.match(stderr.slice(userFacing, internal), /pnpm harness:reverify PR_URL/);
       assert.ok(stderr.indexOf('--sbi PATH') > internal, '--sbi is for Harness self-tests');
     });
   });
