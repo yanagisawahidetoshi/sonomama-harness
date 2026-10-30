@@ -15,6 +15,7 @@ import { collectPbiStatus, renderPbiStatus, acceptPbi } from './pbi-status.mjs';
 import { writePbiPlan, approvePbiPlan } from './pbi-plan.mjs';
 import { postSpecApproval } from './spec-approval.mjs';
 import { githubCli } from './planner-github.mjs';
+import { git } from './workspace.mjs';
 import { appendFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 const root = fileURLToPath(new URL('../../', import.meta.url));
@@ -146,14 +147,14 @@ try {
     if (command === 'impact') {
       const { impact } = await loadImpact({ root, base, all });
       for (const line of describeImpact(impact)) console.log(redactText(line));
-      await output([`required_verifiers=${JSON.stringify(impact.requiredVerifiers)}`, `full_gate=${impact.fullGate}`, `maestro=${JSON.stringify(impact.maestro)}`]);
+      await output([`required_verifiers=${JSON.stringify(impact.requiredVerifiers)}`, `full_gate=${impact.fullGate}`, `maestro=${JSON.stringify(impact.maestro)}`, `head_sha=${(await git(root, ['rev-parse', 'HEAD'])).stdout.trim()}`]);
     } else if (command === 'verify') {
       if (!options['--verifier']) throw new Error('verify requires --verifier ID');
       process.exitCode = await printVerifier({ base, all, id: options['--verifier'] }) ? 0 : 1;
     } else {
       const needs = JSON.parse(process.env.HARNESS_NEEDS || '{}');
       // Set only on pull_request events; a trusted dependency bot PR is read from GitHub by this number.
-      const judged = await runCompletionJudge({ root, base, all, needs, pullNumber: process.env.HARNESS_PULL_REQUEST || undefined, maestroResults: process.env.HARNESS_MAESTRO_RESULTS || undefined });
+      const judged = await runCompletionJudge({ root, base, all, needs, pullNumber: process.env.HARNESS_PULL_REQUEST || undefined, maestroResults: process.env.HARNESS_MAESTRO_RESULTS || undefined, expectedHeadSha: process.env.HARNESS_HEAD_SHA ?? '' });
       for (const line of describeImpact(judged.impact)) console.log(redactText(line));
       for (const line of describeSbiSource(judged.source)) console.log(redactText(line));
       for (const c of [...judged.checks, ...judged.security.checks.filter(c => c.required)]) console.log(redactText(`${c.id}: ${c.status}${c.reason ? ` (${c.reason})` : ''}`));
