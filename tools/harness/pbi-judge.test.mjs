@@ -21,7 +21,7 @@ const approval = (overrides = {}) => ({
 const done = (overrides = {}) => ({
   pbiUrl, sbis,
   results: { 'SBI-001': implemented, 'SBI-002': { ...implemented, e2e: null }, 'SBI-003': validated },
-  acceptanceRecords: [approval()], blockingBugs: [], ...overrides,
+  acceptanceRecords: [approval()], blockers: [], ...overrides,
 });
 // Without a validation SBI the adapter supplies the digest of the merged implementation evidence the human confirms.
 const implementationsOnly = (overrides = {}) => done({
@@ -67,7 +67,7 @@ describe('SBI kind', () => {
 
 describe('PBI Completion Judge', () => {
   describe('given a PBI with implementation SBIs and one validation SBI', () => {
-    it('when every implementation SBI is done, validation passed against the real API, the PBI Human Acceptance Gate is approved and no bug blocks then the PBI is DONE', () => {
+    it('when every implementation SBI is done, validation passed against the real API, the PBI Human Acceptance Gate is approved and no open blocker remains then the PBI is DONE', () => {
       assert.deepEqual(judgePbi(done()), { status: 'DONE', sbis: { 'SBI-001': 'DONE', 'SBI-002': 'DONE', 'SBI-003': 'DONE' }, acceptance: 'APPROVED', reasons: [] });
     });
     const notDone = [
@@ -85,7 +85,7 @@ describe('PBI Completion Judge', () => {
       ['the approval is an agent JSON without a human identity', { acceptanceRecords: [approval({ kind: 'ai' })] }, /PBI Human Acceptance Gate.*承認/],
       ['the approval comes from the merge approval purpose', { acceptanceRecords: [approval({ purpose: 'merge' })] }, /PBI Human Acceptance Gate.*承認/],
       ['the plan has two validation SBIs', { sbis: [...sbis, { id: 'SBI-004', kind: 'validation', dependsOn: ['SBI-001', 'SBI-002'] }], results: { ...done().results, 'SBI-004': validated } }, /最終確認SBI.*2件/],
-      ['an unresolved bug blocks the PBI', { blockingBugs: [{ url: 'https://github.com/acme/app/issues/20', state: 'open' }] }, /issues\/20/],
+      ['an open Issue blocks the PBI (blocked by)', { blockers: [{ url: 'https://github.com/acme/app/issues/20', state: 'open' }] }, /blocker.*issues\/20/],
     ];
     for (const [condition, overrides, reason] of notDone) {
       it(`when ${condition} then the PBI is not DONE and the reason names it`, () => {
@@ -94,8 +94,8 @@ describe('PBI Completion Judge', () => {
         assert.ok(result.reasons.some(r => reason.test(r)), JSON.stringify(result.reasons));
       });
     }
-    it('when a blocking bug is already closed then it does not block the PBI', () => {
-      assert.equal(judgePbi(done({ blockingBugs: [{ url: 'https://github.com/acme/app/issues/20', state: 'closed' }] })).status, 'DONE');
+    it('when a blocker is already closed then it does not block the PBI', () => {
+      assert.equal(judgePbi(done({ blockers: [{ url: 'https://github.com/acme/app/issues/20', state: 'closed' }] })).status, 'DONE');
     });
     it('when the validation E2E failed then a human approval does not complete the PBI', () => {
       const result = judgePbi(done({ results: { ...done().results, 'SBI-003': { ...validated, e2e: { status: 'FAIL', api: 'real' } } } }));

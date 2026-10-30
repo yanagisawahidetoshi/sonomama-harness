@@ -200,7 +200,7 @@ export const githubIssueListSchema = z.array(githubIssueSchema);
 export const githubTimelineSchema = z.array(z.object({ event: z.string().nullable().optional(),
   source: z.object({ issue: z.object({ number: z.number().int().positive(), html_url: z.url(), pull_request: z.unknown().optional() }).optional() }).nullable().optional() }));
 export const githubPullSchema = z.object({
-  number: z.number().int().positive(), merged_at: z.string().nullable(), base: z.object({ ref: z.string() }), body: z.string().nullable().default(null),
+  number: z.number().int().positive(), merged_at: z.string().nullable(), merge_commit_sha: z.string().nullable().optional(), base: z.object({ ref: z.string() }), body: z.string().nullable().default(null),
   user: z.object({ login: z.string(), type: z.string() }).nullable().optional(),
   head: z.object({ sha: z.string(), repo: z.object({ full_name: z.string() }).nullable() }).optional(),
 });
@@ -214,6 +214,7 @@ export const dependencyBotPolicySchema = z.strictObject({
   bots: z.array(z.strictObject({ login: text.regex(/\[bot\]$/), type: z.literal('Bot') })),
   paths: z.array(relativePath),
 });
+// user and the timestamps tell a human approval line from a bot or an edited comment (github-approval-records.mjs).
 export const githubCommentSchema = z.object({ id: z.number().int().positive(), body: z.string().nullable().default(null), html_url: z.url(),
   user: z.object({ login: z.string(), type: z.string().optional() }).nullable().optional(), created_at: z.string().optional(), updated_at: z.string().optional() });
 export const githubCommentListSchema = z.array(githubCommentSchema);
@@ -248,6 +249,19 @@ export const pbiAcceptanceRecordSchema = z.strictObject({
   id: text, purpose: z.literal('pbi-acceptance'), pbiUrl: z.url(), reviewer: text, kind: z.literal('human'), identitySource: text,
   decision: z.enum(['APPROVE', 'REQUEST_CHANGES', 'REVOKE']), decidedAt: z.iso.datetime(),
   evidenceDigest: z.string().regex(/^[0-9a-f]{64}$/), signature: text,
+});
+// What harness:pbi-accept verified from the raw CI artifacts at APPROVE. It keeps the PBI DONE after the artifacts expire, and only while the
+// approved plan, the SBI composition and every PR, head and merge commit are still the same.
+const nullableSha = z.string().regex(/^[0-9a-f]{40,64}$/).nullable();
+export const pbiEvidenceManifestSchema = z.strictObject({
+  id: text, pbiUrl: z.url(), evidenceDigest: z.string().regex(/^[0-9a-f]{64}$/), recordedAt: z.iso.datetime(),
+  plan: z.strictObject({ digest: z.string().regex(/^[0-9a-f]{64}$/), revision: z.number().int().positive(), approvalKey: z.string().regex(/^[0-9a-f]{64}$/) }),
+  sbis: z.array(z.strictObject({
+    id: text, number: z.number().int().positive(), kind: z.enum(sbiKinds), pullRequest: z.number().int().positive().nullable(), headSha: nullableSha, mergeCommitSha: nullableSha,
+    requiredChecks: z.array(z.strictObject({ name: text, status: text })), e2e: z.strictObject({ status: text, api: z.enum(['mock', 'real']) }).nullable(),
+    lane: z.enum(['mock', 'real']).nullable(), resultDigest: z.string().regex(/^[0-9a-f]{64}$/).nullable(), workflowRunId: z.number().int().positive().nullable(), artifactId: z.number().int().positive().nullable(),
+  })).min(1),
+  signature: text,
 });
 export const apiSchemaGenerationRecordSchema = z.strictObject({
   purpose: z.literal('api-schema-generation'), issueUrl: z.url(), runId: text, required: z.union([z.literal(1), z.literal(2)]),

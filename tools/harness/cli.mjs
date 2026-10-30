@@ -11,6 +11,8 @@ import { relativePath } from './schemas.mjs';
 import { describeImpact, describeJudge, loadImpact, runCompletionJudge, runVerifier } from './impact.mjs';
 import { runPushGate } from './push-gate.mjs';
 import { describeSbiSource } from './sbi-source.mjs';
+import { collectPbiStatus, renderPbiStatus, acceptPbi } from './pbi-status.mjs';
+import { writePbiPlan, approvePbiPlan } from './pbi-plan.mjs';
 import { postSpecApproval } from './spec-approval.mjs';
 import { githubCli } from './planner-github.mjs';
 import { git } from './workspace.mjs';
@@ -27,6 +29,11 @@ User-facing:
                                                      readyのSBI Issueから実装・ローカル検証・PR作成まで進める（既定はClaude）
   pnpm harness:approve SBI_URL --phase gate [--decision approve|revoke|request-changes]
                                                      Human Gateを承認し、そのままrunを再開してPRを作成する
+  pnpm harness:pbi-plan-approve PBI_URL [--decision approve|revoke]
+                                                     PBI本文の ## SBI構成（Plannerが書いたSBI集合）を確認して承認する。PBIごとに一度
+  pnpm harness:pbi-status PBI_URL [--json]          PBIのSBI・Evidence・受け入れ・blockerを集めてDONE / NOT_DONEと理由を表示する
+  pnpm harness:pbi-accept PBI_URL --evidence DIGEST [--decision approve|revoke|request-changes]
+                                                     pbi-statusが表示したEvidence digestに対するPBI Human Acceptanceを署名付き台帳へ記録する
   pnpm harness:reverify PR_URL                       mainが進んだPRを、実装を保持したまま最新mainと統合して再検証し、同じPRを更新する
                                                      （PR HEADと最新mainが前回PASSしたrunのままなら何もせずAlready verifiedを表示）
 API design (API契約を設計するときだけ):
@@ -37,6 +44,7 @@ Internal/Maintenance (CI・障害復旧・Harness保守用):
   pnpm harness:run --sbi PATH [--provider fake|codex|claude]（Harness自己テスト・fixture用のSBI JSON）
   pnpm harness:impact --base REF|--all | pnpm harness:verify --verifier ID --base REF|--all | pnpm harness:judge --base REF|--all
   pnpm harness:check | pnpm harness:test | pnpm harness:demo [--full] | pnpm harness:push-gate
+  pnpm harness:pbi-plan PBI_URL（## SBI構成 が無い既存PBIに、GitHubのSBI Issueから書く）
   pnpm harness:export --run RUN_ID [--out PATH] | pnpm harness:cleanup --run RUN_ID | pnpm planner:api-schema-status ISSUE_URL
   node tools/harness/cli.mjs api-schema ISSUE_URL | node tools/harness/cli.mjs api-schema-approve ISSUE_URL（旧API Schema Planner。内部機能）`;
 const printPullRequest = run => { if (run.pullRequest) console.log(`Pull request: ${run.pullRequest.url} (tested SHA ${run.headSha})`); };
@@ -53,12 +61,12 @@ async function printVerifier({ root: workspace = root, base, all, id }) {
 await withEvidenceProtection(root, async () => {
 try {
   const [command, ...args] = process.argv.slice(2);
-  const allowed = { check: ['--sbi'], demo: ['--sbi', '--full'], run: ['--provider', '--sbi', '--full'], plan: ['--provider'], 'spec-approve': ['--decision'], 'api-schema': ['--provider'], 'api-schema-approve': ['--decision'], 'api-schema-status': [], 'api-mock': ['--dynamic'], 'api-docs': ['--port'], cleanup:['--run'], impact: ['--base', '--all'], verify: ['--base', '--all', '--verifier'], judge: ['--base', '--all'], 'push-gate': [], resume: ['--run'], pr: ['--run'], reverify: [], approve: ['--run', '--phase', '--decision'], export: ['--run','--out'] };
+  const allowed = { check: ['--sbi'], demo: ['--sbi', '--full'], run: ['--provider', '--sbi', '--full'], plan: ['--provider'], 'spec-approve': ['--decision'], 'api-schema': ['--provider'], 'api-schema-approve': ['--decision'], 'api-schema-status': [], 'api-mock': ['--dynamic'], 'api-docs': ['--port'], cleanup:['--run'], impact: ['--base', '--all'], verify: ['--base', '--all', '--verifier'], judge: ['--base', '--all'], 'push-gate': [], resume: ['--run'], pr: ['--run'], reverify: [], approve: ['--run', '--phase', '--decision'], export: ['--run','--out'], 'pbi-status': ['--json'], 'pbi-accept': ['--evidence', '--decision'], 'pbi-plan': [], 'pbi-plan-approve': ['--decision'] };
   if (!allowed[command]) throw new Error(usage);
   const options = {};
-  const positional = ['plan', 'spec-approve', 'api-schema', 'api-schema-approve', 'api-schema-status', 'api-mock', 'run', 'approve', 'reverify'].includes(command) && args.length && !args[0].startsWith('--') ? args.shift() : null;
+  const positional = ['plan', 'spec-approve', 'api-schema', 'api-schema-approve', 'api-schema-status', 'api-mock', 'run', 'approve', 'reverify', 'pbi-status', 'pbi-accept', 'pbi-plan', 'pbi-plan-approve'].includes(command) && args.length && !args[0].startsWith('--') ? args.shift() : null;
   for (let i = 0; i < args.length; i += 2) {
-    if (['--full', '--dynamic', '--all'].includes(args[i]) && allowed[command].includes(args[i]) && !options[args[i]]) { options[args[i]]=true; i--; continue; }
+    if (['--full', '--dynamic', '--all', '--json'].includes(args[i]) && allowed[command].includes(args[i]) && !options[args[i]]) { options[args[i]]=true; i--; continue; }
     if (!allowed[command].includes(args[i]) || !args[i + 1] || args[i + 1].startsWith('--') || options[args[i]]) throw new Error(`Invalid arguments for ${command}`);
     options[args[i]] = args[i + 1];
   }
@@ -89,6 +97,32 @@ try {
     console.log(`API Schema: ${result.status} (${result.approvals}/${result.required}) digest=${result.proposalDigest ?? '-'} commit=${result.commitSha ?? '-'}`);
     for (const reason of result.reasons) console.log(`- ${reason}`);
     process.exitCode = result.status === 'APPROVED' ? 0 : 2;
+  } else if (command === 'pbi-plan' || command === 'pbi-plan-approve') {
+    if (!positional) throw new Error(`${command} requires a PBI URL: ${command} https://github.com/<owner>/<repo>/issues/<number>`);
+    if (command === 'pbi-plan') {
+      const written = await writePbiPlan({ pbiUrl: positional });
+      console.log(`## SBI構成: ${written.plan.sbis.map(s => `${s.id} #${s.number} ${s.kind}`).join(', ')}`);
+      console.log(`PBI plan digest: ${written.digest}（確認後: pnpm harness:pbi-plan-approve ${positional}）`);
+    } else {
+      const decision = options['--decision'] || 'approve';
+      const approved = await approvePbiPlan({ pbiUrl: positional, decision });
+      console.log(`Posted ${decision} for PBI plan ${approved.digest}: ${approved.comment}`);
+      console.log(`PBI plan: ${approved.approved ? `APPROVED by ${approved.approvers.join(', ')}` : 'NOT_APPROVED'}`);
+    }
+  } else if (command === 'pbi-status' || command === 'pbi-accept') {
+    if (!positional) throw new Error(`${command} requires a PBI URL: ${command} https://github.com/<owner>/<repo>/issues/<number>`);
+    let result;
+    if (command === 'pbi-accept') {
+      if (!options['--evidence']) throw new Error('pbi-accept requires --evidence DIGEST (the Evidence digest shown by harness:pbi-status)');
+      const decision = { approve: 'APPROVE', revoke: 'REVOKE', 'request-changes': 'REQUEST_CHANGES' }[options['--decision'] || 'approve'];
+      if (!decision) throw new Error('Unknown PBI acceptance decision');
+      const accepted = await acceptPbi({ root, pbiUrl: positional, evidenceDigest: options['--evidence'], decision });
+      console.log(`Recorded ${decision} for ${accepted.record.evidenceDigest}`);
+      result = accepted.status;
+    } else result = await collectPbiStatus({ root, pbiUrl: positional });
+    if (options['--json']) console.log(redactText(JSON.stringify(result, null, 2)));
+    else for (const line of renderPbiStatus(result)) console.log(redactText(line));
+    process.exitCode = result.status === 'DONE' ? 0 : 2;
   } else if (command === 'api-mock') {
     if (!positional) throw new Error('api-mock requires a GitHub Issue URL: api-mock https://github.com/<owner>/<repo>/issues/<number>');
     const mock = await startApiMock({ root, issueUrl: positional, dynamic: options['--dynamic'] === true });
