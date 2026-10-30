@@ -379,11 +379,32 @@ RSpec.describe "API contract for request specs", type: :request do
       end
     end
 
-    context "when the only spec for a route is a negative spec with request: :invalid" do
-      it "keeps the route UNCOVERED, because no conforming request and success response were checked",
+    context "when a negative spec with request: :invalid detects the violation and Rails returns the declared error" do
+      it "reports the route as COVERED, because the operation was resolved and its error response follows the contract",
          :aggregate_failures do
         post "/students", params: { name: "Taro", grade: "third" }, as: :json
         expect(response).to match_api_contract(request: :invalid)
+
+        expect(suite_coverage(create_route).verify!).to include(a_string_starting_with("COVERED POST /students"))
+      end
+    end
+
+    context "when a negative spec with request: :invalid gets an error response the contract does not describe" do
+      let(:fixture_app) { ApiContractFixture.app(create: :create_with_malformed_error) }
+
+      it "fails the matcher and keeps the route UNCOVERED", :aggregate_failures do
+        post "/students", params: { name: "Taro", grade: "third" }, as: :json
+        expect(response).not_to match_api_contract(request: :invalid)
+
+        expect { suite_coverage(create_route).verify! }
+          .to raise_error(ApiContract::CoverageError, %r{UNCOVERED POST /students})
+      end
+    end
+
+    context "when a spec declares request: :invalid but sends a conforming request" do
+      it "fails the matcher and keeps the route UNCOVERED", :aggregate_failures do
+        post "/students", params: { name: "Taro", grade: 3 }, as: :json
+        expect(response).not_to match_api_contract(request: :invalid)
 
         expect { suite_coverage(create_route).verify! }
           .to raise_error(ApiContract::CoverageError, %r{UNCOVERED POST /students})
