@@ -57,8 +57,8 @@ importers:
         specifier: ^7.91.0
         version: 7.91.0(@types/react@19.3.0)(react@19.3.0)
       sparkle-design:
-        specifier: 2.0.0-beta.4
-        version: 2.0.0-beta.4(@types/react-dom@19.3.0)(@types/react@19.3.0)(fp-ts@2.16.11)(react-dom@19.3.0)(react@19.3.0)
+        specifier: 2.0.0-beta.5
+        version: 2.0.0-beta.5(@types/react-dom@19.3.0)(@types/react@19.3.0)(fp-ts@2.16.11)(react-dom@19.3.0)(react@19.3.0)
       zod:
         specifier: 4.6.7
         version: 4.6.7
@@ -12090,8 +12090,8 @@ packages:
       culori: 4.0.2
     dev: true
 
-  /sparkle-design@2.0.0-beta.4(@types/react-dom@19.3.0)(@types/react@19.3.0)(fp-ts@2.16.11)(react-dom@19.3.0)(react@19.3.0):
-    resolution: {integrity: sha512-49WXPcS/rEFqvs995oACX9yb6eHakAr9nrSEIBR67AtJkeKLlusxql/+MlzN0iGXDELvjU6n7eemeUWj6s9Gsg==}
+  /sparkle-design@2.0.0-beta.5(@types/react-dom@19.3.0)(@types/react@19.3.0)(fp-ts@2.16.11)(react-dom@19.3.0)(react@19.3.0):
+    resolution: {integrity: sha512-R4+eveH6Fz3AbDk/kbTSkB3DTOEU8LYcg0Xn0Juig5I09R4I9kOt9f9xLSloVvNxPiLTSe3mETfvRPIVHnX+Qg==}
     requiresBuild: true
     peerDependencies:
       react: ^19
