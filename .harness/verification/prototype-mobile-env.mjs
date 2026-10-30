@@ -114,7 +114,7 @@ try {
       const readme = read('prototypes/mobile/README.md');
       for (const term of ['本番コードではない', 'pnpm install', 'pnpm --filter prototype-mobile start', 'pnpm --filter prototype-mobile check',
         'pnpm --filter prototype-mobile typecheck', 'expo-doctor', '.stories.tsx', 'EXPO_PUBLIC_STORYBOOK', 'mock', 'secret',
-        'Design Approval', 'Production SBI', 'apps/mobile']) assert.ok(readme.includes(term), term);
+        'Production SBI', 'SBI Issue', 'apps/mobile']) assert.ok(readme.includes(term), term);
     }],
   ];
   const acceptance = [];
