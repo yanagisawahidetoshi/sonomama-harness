@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { classifySecurity, verifySecurity } from './security-enforcement.mjs';
+import { securityPolicySchema } from './schemas.mjs';
 // This file is the classifier's own fixture: it must spell out the strings the content patterns detect.
 const policy = JSON.parse(await readFile(new URL('../../.harness/rules/security.json', import.meta.url), 'utf8'));
 const assess = files => classifySecurity({ files, sbi: {} }, policy);
@@ -183,6 +184,15 @@ describe('Security Impact Classifier on OpenAPI structure names in the API contr
         assert.ok(detected(assess([{ path, status: 'M', added: names }]), 'SEC-AUTH-001'));
       });
     }
+    for (const [path, added] of [
+      ['apps/api/spec/support/api_contract/openapi.yaml', 'components:\n  securitySchemes:\n    ApiKey:\n      type: apiKey'],
+      ['apps/api/spec/support/api_contract/names.json', '["requestBodies", "securitySchemes", "links"]'],
+      ['apps/api/spec/support/api_contract/nested/names.rb', names],
+    ]) {
+      it(`when the contract test support adds them in ${path} then still matches SEC-AUTH-001`, () => {
+        assert.ok(detected(assess([{ path, status: 'A', added }]), 'SEC-AUTH-001'));
+      });
+    }
     it('when the list is moved out of the contract test support then still matches SEC-AUTH-001', () => {
       const moved = [{ path: 'apps/api/app/lib/openapi_names.rb', previousPath: contract, status: 'R', added: names, deleted: names }];
       assert.ok(detected(assess(moved), 'SEC-AUTH-001'));
@@ -212,7 +222,14 @@ describe('Security Impact Classifier on OpenAPI structure names in the API contr
   describe('given the security policy', () => {
     it('when it is read then only SEC-AUTH-001 ignores content in the contract test support, and only the securitySchemes name', () => {
       for (const rule of policy.rules.filter(r => r.id !== 'SEC-AUTH-001')) assert.equal(rule.contentExceptions, undefined, rule.id);
-      assert.deepEqual(policy.rules.find(r => r.id === 'SEC-AUTH-001').contentExceptions, [{ pathPatterns: ['^apps/api/spec/support/api_contract/'], ignoredPatterns: ['\\bsecuritySchemes\\b'] }]);
+      assert.deepEqual(policy.rules.find(r => r.id === 'SEC-AUTH-001').contentExceptions, [{ pathPatterns: ['^apps/api/spec/support/api_contract/[^/]+\\.rb$'], ignoredPatterns: ['\\bsecuritySchemes\\b'] }]);
     });
+    for (const [field, pattern] of [['ignoredPatterns', '[\\s\\S]*'], ['ignoredPatterns', ''], ['pathPatterns', '^'], ['pathPatterns', '.*']]) {
+      it(`when a content exception has ${field} ${JSON.stringify(pattern)} that matches empty text then rejects the policy`, () => {
+        const exception = { pathPatterns: ['^apps/api/spec/support/api_contract/[^/]+\\.rb$'], ignoredPatterns: ['\\bsecuritySchemes\\b'], [field]: [pattern] };
+        const broken = { ...policy, rules: policy.rules.map(r => r.id === 'SEC-AUTH-001' ? { ...r, contentExceptions: [exception] } : r) };
+        assert.throws(() => securityPolicySchema.parse(broken));
+      });
+    }
   });
 });
