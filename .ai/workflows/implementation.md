@@ -3,10 +3,10 @@
 ## run の流れ
 
 1. 通常は`pnpm planner:sbi <PBI URL>`で作ったSBI Issueをレビューし、ACごとのTrusted Acceptanceを`.harness/acceptance/sbi-<番号>.json`に登録して`ready`にする（[pbi-sbi-planner.md](pbi-sbi-planner.md)）。SBI JSONは書かない。
+   新方式では`ready`の代わりに`pnpm harness:spec-approve`で仕様を承認する（Trusted Acceptanceの生成は未実装。今は開始前に止まる）。
 2. pnpm harness:checkで検証する。
 3. `pnpm harness:run <SBI Issue URL>`を実行する。IssueからSBIを組み立て、Run開始時のsnapshotを保存する。デモは`pnpm harness:demo`（サンプルSBI）。
 4. WAITING_FOR_HUMAN_GATEなら、人間が設計・作業範囲を確認し、`pnpm harness:approve <SBI Issue URL> --phase gate`を実行する。
-   WAITING_FOR_DESIGN_APPROVALなら、試作採用の設計を確認し、`--phase design`で実行する。
 5. approveの記録後、Harnessがrunを自動で再開する（`harness:resume`は不要）。失敗は修正→再検証。連続3回失敗などはESCALATED。
 6. executionStatus=DONEになると、Harnessがtested SHAでPRを作る（fake providerを除く）。GitHub Reviewで承認する（[pull-request.md](pull-request.md)）。
    PRを作らないLocal modeでは、LEVEL 2は1人、LEVEL 3は異なる2人以上がapprove --phase mergeで承認する。
@@ -39,7 +39,7 @@ Verifierは差分のappliesToとlaneで選び、AC・Security・明示必須指�
 
 Prototypeはprototypes/web・mobileのダミーデータ画面で、typecheck/lint/format/build/secret検査。
 Productionはapps・packages。試作から本番へ採用するときは新しいProduction SBIにpromotion.sourceを指定し、
-独立したDesign Approvalを得てからapps実装、本番検証、Merge Approvalへ進む。Security影響はlaneより常に優先。
+通常のSBIと同じくapps実装、本番検証、Merge Approvalへ進む（Design Approval Gateは無い）。Security影響はlaneより常に優先。
 詳しい設定例と承認・cleanup手順はルートのREADMEに記載する。
 
 ## SBIとacceptance verifier

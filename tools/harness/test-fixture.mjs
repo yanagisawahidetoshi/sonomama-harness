@@ -39,7 +39,7 @@ export async function runFixture(options) {
   await commitFixture(options.root);
   return runHarness({ provider: 'fake', ...options });
 }
-// Prototype SBI with an independent acceptance script; promotion=true targets apps/admin and requires Design Approval.
+// Prototype SBI with an independent acceptance script; promotion=true adopts it into apps/admin as a production SBI.
 export async function prototype(root,{promotion=false,failing=false}={}) {
   const file=promotion?'apps/admin/visual.txt':'prototypes/web/visual.txt';
   await mkdir(join(root,'.harness/verification'),{recursive:true});

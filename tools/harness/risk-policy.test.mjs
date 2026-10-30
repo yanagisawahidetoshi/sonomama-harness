@@ -110,7 +110,7 @@ describe('Safe downgrade requires plain document metadata', () => {
 
 describe('Risk contract for prototype lanes', () => {
   describe('given a lightweight prototype lane', () => {
-    const lane = { name:'prototype', requiresSecurityGate:false, requiresDesignApproval:false };
+    const lane = { name:'prototype', requiresSecurityGate:false };
     it('when level 2 has no approval then still requires one human', () => {
       const result = decide(2, [], { lane });
       assert.equal(result.requiredApprovals,1);
@@ -130,11 +130,10 @@ describe('Risk contract for prototype lanes', () => {
       const withoutRule={...policy,safeRules:[]};
       assert.equal(assessRisk({files:[file('prototypes/web/View.tsx')],lane},withoutRule).level,2);
     });
-    it('when design approval is still pending then waits for design approval instead of the implementation gate', () => {
-      const result=decide(2,[approval('A')],{lane:{name:'production',requiresSecurityGate:false,requiresDesignApproval:true,designApproved:false}});
-      assert.equal(result.decision,'WAITING_FOR_DESIGN_APPROVAL');
-      assert.equal(result.state,'WAITING_FOR_DESIGN_APPROVAL');
-      assert.deepEqual(result.reasons,['design_approval_not_approved']);
+    it('when a promoted prototype has its merge approval then merge does not wait for any Design Approval', () => {
+      const result=decide(2,[approval('A')],{lane:{name:'production',requiresSecurityGate:false,reasons:['prototype-promotion']}});
+      assert.notEqual(result.decision,'WAITING_FOR_DESIGN_APPROVAL');
+      assert.equal(result.reasons.includes('design_approval_not_approved'),false);
     });
     it('when explicit safe prototype content is ordinary then selects level 1', () => {
       const result=risk([file('prototypes/web/View.tsx','Static dummy card')],{lane});

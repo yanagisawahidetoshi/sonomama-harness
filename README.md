@@ -64,7 +64,7 @@ SBI → 意図的な誤実装 → Verifier FAIL
 ```
 
 run/approve/resume/pr/demoは、人間かGitHub CIへ引き継いだ状態ならexit 0。PR作成済みでCI待ち・Review待ち、
-MERGE_ALLOWED、Riskが要求するHuman Gate・Design Approval待ち、PRを作らないrun（デモ等）のDONEが該当する。
+MERGE_ALLOWED、Riskが要求するHuman Gate待ち、PRを作らないrun（デモ等）のDONEが該当する。
 FAILED・ESCALATED・REJECTED・CI以外の理由のBLOCKEDはexit 2、PR作成失敗・入力やCLI操作のエラーはexit 1。
 **Execution DONEはマージ承認ではない。** このサンプルはruntime変更のため既定LEVEL 2。
 承認を自動生成せず、実際のmergeも行わない。
@@ -279,13 +279,11 @@ MERGED状態を生成するコードやGitHub merge APIは持たない。
 
 ## Human GateとMerge Approvalは別の承認
 
-- 試作採用時の設計承認: designApproval.state = NOT_REQUIRED / WAITING_FOR_DESIGN_APPROVAL / APPROVED / REJECTED
 - 実装前: gate.state = NOT_REQUIRED / WAITING_FOR_HUMAN_GATE / APPROVED / REJECTED
 - 実装: executionStatus = PENDING / IMPLEMENTING / VERIFYING / REVIEWING / JUDGING / FAILED / DONE / ESCALATED
-- 実装後: merge.state = NOT_ASSESSED / RISK_ASSESSING / WAITING_FOR_DESIGN_APPROVAL / WAITING_FOR_HUMAN_GATE / WAITING_FOR_HUMAN_REVIEW / MERGE_ALLOWED / REJECTED / BLOCKED / RETRYABLE
+- 実装後: merge.state = NOT_ASSESSED / RISK_ASSESSING / WAITING_FOR_HUMAN_GATE / WAITING_FOR_HUMAN_REVIEW / MERGE_ALLOWED / REJECTED / BLOCKED / RETRYABLE
 
 Human Gate未充足ならMerge JudgeもWAITING_FOR_HUMAN_GATEを返す。
-Design Approval未充足（未承認・撤回後）ならMerge JudgeはWAITING_FOR_DESIGN_APPROVALを返し、WAITING_FOR_HUMAN_GATEを流用しない。
 ゲート対象のSBIはagentを一度も動かさず停止し、人間が着手範囲・設計を確認して承認する。
 ゲート承認のpurposeはimplementation-gate。baseline SHAとSBI/設計/Rulesのdigestに紐付ける。
 
@@ -374,7 +372,7 @@ resume・PR作成・承認記録・cleanupは、schemaか署名の検証に失�
 機械集計用の観測データで、run基本情報、iteration、Verifier件数、Security、承認3種、Review、escalationを持つ。
 `durationMs`は開始から最終更新までのlifecycle経過時間で、人間の承認待ちを含む。実装・検証・判定だけの
 時間は`executionDurationMs`で見る。最初のIMPLEMENTING遷移から最後のexecution phase遷移までを測り、
-実装前のGate / Design Approval待ちは含めない。実装に入らず停止したrunではnull。
+実装前のGate待ちは含めない。実装に入らず停止したrunではnull。
 
 - Signal Collection（今回）: Harnessが各runのMetricsを保存するところまで。Completion / Risk / Merge Judgeは
   この値を読まない。壊れていても判定は変わらず、次のsaveで再生成する。
@@ -384,7 +382,7 @@ resume・PR作成・承認記録・cleanupは、schemaか署名の検証に失�
 ESCALATEDはsummary.escalation.codeとescalation.json.codeに機械集計可能なreasonCodeを持つ。
 人間向けのreason文はsummary.jsonとescalation.jsonにだけ残し、Metricsにはcodeだけを載せる。
 redactionは秘密値をマスクするがメールアドレス等のPIIは除去しないため、自由文をMetricsへ載せない。
-Reviewer名・prompt・agent応答・秘密値もMetricsに含めず、他のEvidenceと同じredactionを通す。Gate / Design Approvalの拒否はescalationではなく各approvalのstateで追う。
+Reviewer名・prompt・agent応答・秘密値もMetricsに含めず、他のEvidenceと同じredactionを通す。Gateの拒否はescalationではなく各approvalのstateで追う。
 
 | code | 発生点 |
 | --- | --- |
@@ -539,12 +537,8 @@ SBI.securityImpactで宣言し、既知の接続先はsecurityPatternsにも追�
 packagesへの変更を含むSBIも常にProduction。本番共有packageの検証を試作profileで省略できない。
 
 試作を本番へ移す場合は、新しいProduction SBIに`promotion: {"source":"prototypes/web"}`を設定する。
-Design Approval待ちで実装を止め、`pnpm harness:approve --run RUN_ID --phase design`で人間が承認すると、Harnessがrunを再開する。
-Design Approvalは`design-approval`という独立した署名済みstate。待機状態は`WAITING_FOR_DESIGN_APPROVAL`。
-実装前Human Gateが不要なら、Design Approvalの待機・承認・拒否・撤回の間もgate.stateは`NOT_REQUIRED`を保つ。
-証跡はdesign-approval.jsonとhuman-gate.jsonで分離する。SBIやSHAを変えたら取り直す。
-その後apps配下で本番実装→Production検証→実装後のMerge Approval→MERGE_ALLOWED。
-Design Approvalは実装前Human GateやMerge Approvalの代わりにはならない。
+本番で実装するかどうかは、そのSBI Issueのレビューと`ready`で人間が決める。試作の採用のために別のDesign Approval Gateは設けない（#155）。
+`promotion`はどの試作を採用したかの記録で、laneはProductionになり、通常のSBIと同じく実装前Human Gate（Riskが要求するとき）→apps配下で本番実装→Production検証→Merge Approval→MERGE_ALLOWEDと進む。
 既存の本番SBI全てに試作を強制するものではない。試作の採用時にpromotionを宣言する。
 
 ## Git worktreeの保持と片付け
