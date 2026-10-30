@@ -37,7 +37,7 @@
 - 必須チェックはすべてPASS。任意の非該当チェックと未生成placeholderだけSKIP可能。
 - 出力はMERGE_ALLOWEDとautoMergeEligible。LEVEL 1でautoMergeEligibleがtrueのときだけ自動mergeしてよい。LEVEL 2・3は人間がmergeする。
 - 承認待ちのresumeと実装の再試行は分離し、Plannerより実行・判定の整合性を優先する。
-- 通常prototypeのLEVEL 1候補はpr-risk.jsonの明示的safe ruleで定義する。laneだけで承認数を減らさない。prototypeのautoMergeEligibleは常にfalse。
+- 通常prototypeのLEVEL 1候補はpr-risk.jsonの明示的safe ruleで定義する。laneだけで承認数を減らさない。prototypeもLEVEL 1なら他と同じ条件で自動mergeしてよい。
 
 ## Lane
 
