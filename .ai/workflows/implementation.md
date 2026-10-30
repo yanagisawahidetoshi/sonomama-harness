@@ -3,6 +3,7 @@
 ## run の流れ
 
 1. 通常は`pnpm planner:sbi <PBI URL>`で作ったSBI Issueをレビューし、ACごとのTrusted Acceptanceを`.harness/acceptance/sbi-<番号>.json`に登録して`ready`にする（[pbi-sbi-planner.md](pbi-sbi-planner.md)）。SBI JSONは書かない。
+   新方式では`ready`の代わりに`pnpm harness:spec-approve`で仕様を承認する（Trusted Acceptanceの生成は未実装。今は開始前に止まる）。
 2. pnpm harness:checkで検証する。
 3. `pnpm harness:run <SBI Issue URL>`を実行する。IssueからSBIを組み立て、Run開始時のsnapshotを保存する。デモは`pnpm harness:demo`（サンプルSBI）。
 4. WAITING_FOR_HUMAN_GATEなら、人間が設計・作業範囲を確認し、`pnpm harness:approve <SBI Issue URL> --phase gate`を実行する。
