@@ -41,6 +41,8 @@ GitHubはHarnessのMERGE_ALLOWEDを参照しない。Rulesetで止められる�
 
 採用: GitHubの必要な承認は0人にし、人数はHarnessのMERGE_ALLOWEDで判定する。
 
+このままでは、GitHubの画面やAPIから直接mergeすると、必要な承認を迂回できる。[ADR-0004](../adr/0004-merge-approval-required-check.md)（Proposed）で、main側のコードで人数とGateを判定するrequired check `merge-approval` を足す。write権限者が2人以上になるまでは、`merge-approval` は報告だけでrequiredにしない。
+
 ## 緊急時
 
 bypass_actorsを空にしているので、管理者でもRulesetを迂回したmergeやpushはできない。障害対応などでどうしても必要な場合は、リポジトリの管理者がRulesetの`enforcement`を`disabled`にし、作業が終わったらすぐ`active`に戻す。止めた理由と期間は、関係するIssueに残す。
