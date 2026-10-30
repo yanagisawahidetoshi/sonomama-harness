@@ -108,6 +108,7 @@ describe('Security enforcement in the execution loop', () => {
     }));
   });
   // An SBI from an Issue names only directories (allowedFiles is empty), so the content checks must read the committed diff instead.
+  // The SBI is approved, so the run implements it without an implementation gate (#175).
   describe('given an approved SecurityConfig SBI that allows a directory and no file by name', () => {
     // Split so this test file's own added lines do not trip the CI forbidden pattern check.
     const tls = `process.env.NODE_TLS_${'REJECT_UNAUTHORIZED'} = '0';\n`;
@@ -119,8 +120,6 @@ describe('Security enforcement in the execution loop', () => {
       });
       const agent = async () => ({ files });
       const run = await runHarness({ root, quiet: true, agent });
-      for (const id of ['A', 'B']) await recordDecision({ root, runId: run.id, purpose: 'implementation-gate', identityProvider: human(id) });
-      await resumeRun({ root, runId: run.id, quiet: true, agent });
       return readJson(join(root, run.runDir, 'iteration-1/security-verification.json'));
     };
     it('when the agent adds a forbidden pattern under that directory then the forbidden pattern check fails on that file', () => fixture(async root => {
@@ -153,8 +152,6 @@ describe('Security enforcement in the execution loop', () => {
       await writeFile(join(root, '.harness/acceptance/sbi-7.json'), JSON.stringify({ version: 1, sbiIssue: 7, verifiers: [{ id: 'issue-7-acceptance', trustedScript: '.harness/verification/issue-7.mjs', planned: ['通信設定'], acceptanceIds: ['AC-1'] }] }));
       const agent = async () => ({ files });
       const run = await runHarness({ root, quiet: true, agent, issueUrl });
-      for (const id of ['A', 'B']) await recordDecision({ root, runId: run.id, purpose: 'implementation-gate', identityProvider: human(id) });
-      await resumeRun({ root, runId: run.id, quiet: true, agent });
       evidence = await readJson(join(root, run.runDir, 'iteration-1/security-verification.json'));
     }); return evidence; };
     it('when the agent changes no file then the content checks skip instead of passing on the Issue snapshot alone', () => fixture(async root => {
