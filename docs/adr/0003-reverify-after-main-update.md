@@ -41,6 +41,9 @@ ADR-0001は、PRのbaseをrunのbaselineに固定し、mainが進んだら`base_
   新しいrun・空commit・push・PR更新のどれも行わない。束縛は、署名済みrun state（DONEでESCALATEDでない）、`refs/harness/runs/<run-id>`がPR HEADを指すこと、再検証runなら`verifyReverifyLink`のPASSで確かめる。
   GitHubのApproveの状態は判定に使わない。base SHAかPR HEADが変わった場合、前回がFAILED・ESCALATEDの場合、束縛を確かめられない場合やrun stateを読めない場合は、新しいrunで再検証する。
 - 新しいrun（`kind: reverify`）を作り、最新のmain（新baseline）からdetached worktreeを作って、PR HEADを取り込んだmerge commitを候補にする。候補は`git merge-tree --write-tree`と`git commit-tree`でGitのobjectから作る。操作者のGit設定（`merge.log`など）でcommit messageやtreeが変わらず、`verifyReverifyLink`が照合するtreeと同じ方法で作るため。
+  `merge-tree`は、再検証・skip判定・`verifyReverifyLink`のどれも同じ条件で実行する。結果を変える設定（`merge.directoryRenames=conflict`、`merge.renames=true`、`merge.renameLimit`、`merge.renormalize=false`）を固定し、global・systemのGit設定は読まない（`GIT_CONFIG_GLOBAL=/dev/null`、`GIT_CONFIG_NOSYSTEM=1`）。
+  attributeはworking treeではなくbaselineのcommitから読む（`--attr-source`）。使ったGitのversionはrun stateの`reverify.gitVersion`に残す。
+  既知の制約: リポジトリのローカル設定（`.git/config`）で定義したmerge driverと`.git/info/attributes`は固定できない。現在このリポジトリに`.gitattributes`はない。組み込みのdriver（`merge=union`など）はbaselineの`.gitattributes`に従うので、どこで計算しても同じ結果になる。
   候補はPR HEADの子孫なので、PRブランチへは通常のpush（fast-forward）で更新できる。rebaseとforce pushは使わない。
 - PR HEADがすでに新baselineを含む場合（人がPRブランチで競合を解消した場合）は、PR HEADのtreeをそのまま使い、関連付けのための空commitだけを上に足す。
   承認された設計案の「PR HEADをそのまま候補にする」に対する追加で、下記の関連付けを候補HEADに必ず持たせるために足した。
@@ -52,6 +55,7 @@ ADR-0001は、PRのbaseをrunのbaselineに固定し、mainが進んだら`base_
   trailerはどちらもないHEADは「再検証ではない」（`NONE`）として扱い、通常のPRを失敗させない。
   この関連付けは改ざんを検出するためのもので、認証ではない。承認の根拠は引き続き、そのHEADへのGitHub Review。
 - SBI snapshot（`runId`は実装run）とCIのsnapshot/trailer契約は変えない。PR HEADのsnapshotが、現在のSBI Issueと新baselineのTrusted Acceptance登録から組み立てたSBIと一致しなければ、再検証せずに停止し、新しいrunでの実装に戻す。
+- PR HEADが同じリポジトリのbranchでなければ（forkや削除されたfork）、再検証しない。
 - PR HEADが変えたファイルは、worktreeへ取り出す前にGitのobject上で、baselineと同じ検査（symlink・submodule・運用証跡のパス・秘密値を含むファイル全体）にかける。
 - 差分の判定対象は`baseline..候補`。上流mainの変更は含まない。人が競合解消で触れたファイルも含めて、SBIのscope外や予約パスがあれば検証前に停止する。
 - 入力（config・rules・policy・Trusted Acceptance・Harnessのコード）は新baselineの元checkoutから取る。lane・Security・Risk・Gate要否も新baselineのルールで計算し直す。

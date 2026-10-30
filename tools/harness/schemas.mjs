@@ -297,7 +297,7 @@ export const runStateSchema = z.strictObject({
   // harness:reverify (ADR-0003): a run that verifies the code of an existing PR merged with the new main, without the implementation agent.
   kind: z.literal('reverify').optional(),
   reverify: z.strictObject({ parentRunId: runIdSchema, previousTestedSha: gitSha, sbiSnapshotDigest: sha256,
-    publish: z.enum(['PREPARED', 'VERIFIED', 'PUSHING', 'PUSHED', 'PR_UPDATED']), conflicts: z.array(text).optional(),
+    publish: z.enum(['PREPARED', 'VERIFIED', 'PUSHING', 'PUSHED', 'PR_UPDATED']), conflicts: z.array(text).optional(), gitVersion: text.optional(),
     // The implementation run on this PC, when it exists: whether its signed state verified and tested the PR head the run started from.
     parentRun: z.strictObject({ found: z.boolean(), verified: z.boolean().optional(), testedSha: gitSha.optional(), testedShaMatches: z.boolean().optional() }) }).optional(),
   startedAt: text, executionFinishedAt: text.optional(), cleanedAt: text.optional(),

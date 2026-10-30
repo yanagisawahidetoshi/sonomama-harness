@@ -37,7 +37,7 @@ export function ciStatus({ checkRuns, required }) {
 
 const user = z.looseObject({ login: z.string(), type: z.string().optional() });
 const pullSchema = z.looseObject({ number: z.number().int(), html_url: z.url(), state: z.string(), merged: z.boolean().optional(), merged_at: z.string().nullable().optional(),
-  user, head: z.looseObject({ ref: z.string(), sha: z.string() }), base: z.looseObject({ ref: z.string(), sha: z.string() }) });
+  user, head: z.looseObject({ ref: z.string(), sha: z.string(), repo: z.looseObject({ full_name: z.string() }).nullable().optional() }), base: z.looseObject({ ref: z.string(), sha: z.string() }) });
 const reviewSchema = z.looseObject({ id: z.number(), user: user.nullable(), state: z.string(), commit_id: z.string().nullable() });
 const checkRunSchema = z.looseObject({ id: z.number(), name: z.string(), status: z.string(), conclusion: z.string().nullable(), app: z.looseObject({ id: z.number() }).nullable().optional() });
 const ruleSchema = z.looseObject({ type: z.string(), parameters: z.looseObject({}).optional() });

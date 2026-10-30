@@ -1,11 +1,22 @@
 import { runIdSchema, sbiSnapshotSchema } from './schemas.mjs';
 import { runLinks, snapshotFilePattern } from './sbi-source.mjs';
 import { git } from './workspace.mjs';
+import { execute } from './io.mjs';
 // A re-verification run (ADR-0003) keeps the finished code of a PR, merges the new main into it and verifies the result without the
 // implementation agent. The commit it pushes names itself and the implementation run in its trailers, so a check that reads only Git
 // objects of the PR head (the merge-approval check of #148) can tie the head to the run. The trailers are a tamper-evident link,
 // not an authentication: approvals still come from GitHub Review of that head.
 export const reverifyTrailers = ({ runId, parentRunId }) => `Harness-Reverify-Run: ${runId}\nHarness-Parent-Run: ${parentRunId}`;
+
+// The merge of the baseline and a PR head as every party computes it: the re-verification run, the skip check and verifyReverifyLink
+// (and the merge-approval check of #148). Settings that change the result are fixed, global and system Git configuration is not read,
+// and attributes come from the baseline commit instead of a working tree. Merge drivers defined in the repository config still apply.
+const mergeSettings = ['merge.directoryRenames=conflict', 'merge.renames=true', 'merge.renameLimit=7000', 'merge.renormalize=false', 'diff.renames=true', 'core.hooksPath=/dev/null'];
+export function mergeTree(cwd, baseline, head, options = []) {
+  return execute('git', [...mergeSettings.flatMap(setting => ['-c', setting]), `--attr-source=${baseline}`, 'merge-tree', '--write-tree', ...options, baseline, head],
+    { cwd, env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } });
+}
+export async function gitVersion(cwd) { return (await execute('git', ['--version'], { cwd })).stdout.trim(); }
 
 export function parsePullUrl(url) {
   const match = /^https:\/\/github\.com\/([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)\/([A-Za-z0-9_.-]+)\/pull\/([1-9]\d*)\/?$/.exec(String(url ?? '').trim());
@@ -43,7 +54,7 @@ export async function verifyReverifyLink({ root, base, head }) {
     let previousTestedSha = null;
     if (parents.length === 2 && parents[0] === baselineSha) {
       // The merge commit must be the clean merge of its parents; a hand-edited tree under the trailers is not a re-verification.
-      const merged = await git(root, ['merge-tree', '--write-tree', parents[0], parents[1]], true);
+      const merged = await mergeTree(root, parents[0], parents[1]);
       if (merged.ok && merged.stdout.trim().split('\n')[0] === await tree(head)) previousTestedSha = parents[1];
       else reasons.push('the re-verification merge commit is not the clean merge of its parents');
     } else if (parents.length === 1 && parents[0] !== baselineSha && await isAncestor(root, baselineSha, parents[0])) {

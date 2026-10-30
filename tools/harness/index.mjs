@@ -22,7 +22,7 @@ import { classifyLane } from './lanes.mjs';
 import { assertState } from './state-machine.mjs';
 import { loadSbiIssue, inScope } from './sbi-issue.mjs';
 import { snapshotFromIssue, snapshotPath, riskView, snapshotVerified, matchSbiSource } from './sbi-source.mjs';
-import { verifyReverifyLink, committedSnapshot, parsePullUrl, reverifyTrailers } from './reverify.mjs';
+import { verifyReverifyLink, committedSnapshot, parsePullUrl, reverifyTrailers, mergeTree, gitVersion } from './reverify.mjs';
 import { parseIssueUrl } from './planner.mjs';
 import { githubCli } from './planner-github.mjs';
 export { check, judge, providerCommand };
@@ -593,7 +593,7 @@ async function continueReverify(options, summary) {
   } catch (error) { error.message = `run ${summary.id}: PR not updated: ${error.message}（復旧: pnpm harness:reverify ${summary.pullRequest.url}）`; throw error; }
 }
 // The one re-verification of this PR head on this baseline, if it was started before. Repeating the command continues it.
-async function existingReverify(root, { parentRunId, baselineSha, pullHead }) {
+async function existingReverify(root, { pullRequest, parentRunId, baselineSha, pullHead }) {
   const found = [];
   for (const name of await readdir(join(root, '.harness/runs'))) {
     if (!runIdSchema.safeParse(name).success || !await exists(runPaths(root, name).summary)) continue;
@@ -601,6 +601,9 @@ async function existingReverify(root, { parentRunId, baselineSha, pullHead }) {
     try { summary = await readRunState(root, name); } catch { continue; }
     // A failed or escalated run is evidence only; running the command again starts a new run for the same head.
     if (['FAILED', 'ESCALATED'].includes(summary.executionStatus) || summary.status === 'ESCALATED') continue;
+    // A run that stopped before its preflight has no lane and cannot continue; a run of another PR on this branch is not this one.
+    if (summary.executionStatus === 'PENDING' && !summary.lane) continue;
+    if (summary.pullRequest?.number !== pullRequest.number || summary.pullRequest?.repository !== pullRequest.repository) continue;
     if (summary.kind === 'reverify' && !summary.cleanedAt && summary.reverify.parentRunId === parentRunId && summary.baselineSha === baselineSha
       && (summary.reverify.previousTestedSha === pullHead || (summary.headSha === pullHead && reverifyReached(summary, 'PUSHING')))) found.push(name);
   }
@@ -611,7 +614,7 @@ async function existingReverify(root, { parentRunId, baselineSha, pullHead }) {
 // sources; GitHub Reviews are not read. Only a run whose tested SHA is the PR head itself and whose baseline is the current base tip
 // qualifies, and the merge of the base into the head must be exactly the tested tree. Anything else is verified again in a new run.
 async function verifiedRun(root, { pullRequest, parentRunId, baselineSha, pullHead }) {
-  const merged = await git(root, ['merge-tree', '--write-tree', '--no-messages', baselineSha, pullHead], true);
+  const merged = await mergeTree(root, baselineSha, pullHead, ['--no-messages']);
   const head = await git(root, ['rev-parse', `${pullHead}^{tree}`]);
   if (!merged.ok || merged.stdout.trim() !== head.stdout.trim()) return null;
   const found = [];
@@ -651,6 +654,8 @@ async function reverifyProtected({ root, pullUrl, quiet = false, reviewer = revi
   if (pull.state !== 'open' || pull.merged === true || pull.merged_at) throw new Error(`PR #${ref.number} はopenではありません`);
   if (pull.base.ref !== base) throw new Error(`PR #${ref.number} は${pull.base.ref}向けです。${base}向けのPRだけを再検証します`);
   if (!parentRunId || !runIdSchema.safeParse(parentRunId).success) throw new Error(`PR #${ref.number} のbranch ${pull.head.ref} はHarnessのrun branch（harness/<run-id>）ではありません`);
+  if (!pull.head.repo) throw new Error(`PR #${ref.number} のheadは削除されたforkです。再検証しません`);
+  if (pull.head.repo.full_name !== repository.name) throw new Error(`PR #${ref.number} のheadは${pull.head.repo.full_name}にあり、${repository.name}ではありません。forkのPRは再検証しません`);
   const branch = pull.head.ref;
   const pullHead = await github.remoteBranchSha(root, remote, branch);
   if (pullHead !== pull.head.sha) throw new Error(`${branch} (${pullHead?.slice(0, 12) ?? 'なし'}) がPR #${ref.number} のHEAD ${pull.head.sha.slice(0, 12)} と一致しません。同じリポジトリのbranchだけを再検証します`);
@@ -670,7 +675,7 @@ async function reverifyProtected({ root, pullUrl, quiet = false, reviewer = revi
   await assertSafeCommit(root, baselineSha, pullHead);
   const verified = await verifiedRun(root, { pullRequest: { number: ref.number, branch, base, repository: repository.name }, parentRunId, baselineSha, pullHead });
   if (verified) return { ...verified, alreadyVerified: true };
-  const existing = await existingReverify(root, { parentRunId, baselineSha, pullHead });
+  const existing = await existingReverify(root, { pullRequest: { number: ref.number, repository: repository.name }, parentRunId, baselineSha, pullHead });
   if (existing) {
     // A waiting gate is re-checked and an updated PR is re-assessed; a verified candidate continues to publish; a stopped run stays stopped.
     const stored = await readRunState(root, existing);
@@ -690,7 +695,7 @@ async function reverifyProtected({ root, pullUrl, quiet = false, reviewer = revi
     baselineSha, headSha: baselineSha, workspaceDigest: await workspaceFingerprint(workspace), inputsDigest: digest(inputs), gate: { required: false, state: 'NOT_REQUIRED' },
     merge: { state: 'NOT_ASSESSED', autoMergeEligible: false },
     pullRequest: { number: ref.number, url: pull.html_url, branch, base, repository: repository.name },
-    reverify: { parentRunId, previousTestedSha: pullHead, sbiSnapshotDigest: digest(snapshot), publish: 'PREPARED', parentRun: await parentEvidence(root, parentRunId, pullHead) },
+    reverify: { parentRunId, previousTestedSha: pullHead, sbiSnapshotDigest: digest(snapshot), publish: 'PREPARED', gitVersion: await gitVersion(root), parentRun: await parentEvidence(root, parentRunId, pullHead) },
     startedAt: new Date().toISOString() };
   await json(join(directory, 'inputs.json'), inputs);
   const { transition, escalate } = controller(root, summary, quiet);
@@ -700,24 +705,24 @@ async function reverifyProtected({ root, pullUrl, quiet = false, reviewer = revi
     // the one verifyReverifyLink recomputes. A head that already contains the baseline (a person resolved a conflict there) keeps its
     // tree; only the link commit is added.
     const message = `Re-verify SBI ${sbi.id} on ${base} ${baselineSha.slice(0, 12)}\n\n${reverifyTrailers({ runId: id, parentRunId })}`;
-    let candidate;
-    if ((await git(workspace, ['merge-base', '--is-ancestor', baselineSha, pullHead], true)).ok) {
-      candidate = (await git(workspace, ['commit-tree', `${pullHead}^{tree}`, '-p', pullHead, '-m', message])).stdout.trim();
-    } else {
-      const merged = await git(workspace, ['merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', baselineSha, pullHead], true);
-      const [tree, ...conflicts] = merged.stdout.split('\0').filter(Boolean);
-      if (merged.code === 1) {
-        summary.reverify.conflicts = [...new Set(conflicts)].sort();
-        return escalate(`${base} ${baselineSha.slice(0, 12)} と ${pullHead.slice(0, 12)} の統合で競合しました: ${summary.reverify.conflicts.join(', ')}。${branch} で競合を解消してpushし、pnpm harness:reverify ${pull.html_url} を再実行してください`, 'REVERIFY_CONFLICT');
-      }
-      if (!merged.ok) throw new Error(`git merge-tree: ${merged.stderr || merged.error}`);
-      candidate = (await git(workspace, ['commit-tree', tree, '-p', baselineSha, '-p', pullHead, '-m', message])).stdout.trim();
-    }
-    // The run records the candidate as soon as the worktree points at it, so cleanup and a failure below see the same HEAD.
-    await git(workspace, ['checkout', '--quiet', '--detach', candidate]);
-    await git(workspace, ['update-ref', `refs/harness/runs/${id}`, candidate]);
-    summary.headSha = candidate;
     try {
+      let candidate;
+      if ((await git(workspace, ['merge-base', '--is-ancestor', baselineSha, pullHead], true)).ok) {
+        candidate = (await git(workspace, ['commit-tree', `${pullHead}^{tree}`, '-p', pullHead, '-m', message])).stdout.trim();
+      } else {
+        const merged = await mergeTree(workspace, baselineSha, pullHead, ['--name-only', '--no-messages', '-z']);
+        const [tree, ...conflicts] = merged.stdout.split('\0').filter(Boolean);
+        if (merged.code === 1) {
+          summary.reverify.conflicts = [...new Set(conflicts)].sort();
+          return escalate(`${base} ${baselineSha.slice(0, 12)} と ${pullHead.slice(0, 12)} の統合で競合しました: ${summary.reverify.conflicts.join(', ')}。${branch} で競合を解消してpushし、pnpm harness:reverify ${pull.html_url} を再実行してください`, 'REVERIFY_CONFLICT');
+        }
+        if (!merged.ok) throw new Error(`git merge-tree: ${merged.stderr || merged.error}`);
+        candidate = (await git(workspace, ['commit-tree', tree, '-p', baselineSha, '-p', pullHead, '-m', message])).stdout.trim();
+      }
+      // The run records the candidate as soon as the worktree points at it, so cleanup and a failure below see the same HEAD.
+      await git(workspace, ['checkout', '--quiet', '--detach', candidate]);
+      await git(workspace, ['update-ref', `refs/harness/runs/${id}`, candidate]);
+      summary.headSha = candidate;
       summary.workspaceDigest = await workspaceFingerprint(workspace);
       await saveRun(root, summary);
       const link = await reverifyLinkCheck(workspace, summary);
@@ -728,9 +733,9 @@ async function reverifyProtected({ root, pullUrl, quiet = false, reviewer = revi
         try { assertWritablePath(file.path); } catch (error) { return escalate(error.message); }
         if (!inScope(sbi, file.path)) return escalate(`scope/path violation: ${file.path}`);
       }
+      const stopped = await assessPreflight(root, summary, inputs, quiet);
+      if (stopped) return stopped;
     } catch (error) { return escalate(`Runtime error: ${error.message}`, classifyEscalation(error.message)); }
-    const stopped = await assessPreflight(root, summary, inputs, quiet);
-    if (stopped) return stopped;
     return reverifyExecute({ root, summary, inputs, quiet, reviewer, semanticReviewer });
   });
 }
