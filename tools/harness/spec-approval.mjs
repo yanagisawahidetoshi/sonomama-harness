@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { sections } from './sbi-issue.mjs';
+import { parseIssueUrl } from './planner.mjs';
 // #147: a human confirms the specification of an SBI Issue (acceptance criteria, Gherkin, change scope, Risk / Security Impact)
 // by posting `harness-spec: <spec digest>` on the Issue. This is the source of truth; the spec-approved label is only a projection.
 // The digest covers what decides the tests, so editing any of it voids earlier approvals; ticking a checkbox does not.
@@ -46,4 +47,22 @@ export async function readSpecApproval({ ref, issue, github }) {
     try { permissions[login] = await github.permission(ref, login); } catch { permissions[login] = 'unknown'; }
   }
   return { digest, ...specApprovals({ comments, permissions, digest }) };
+}
+
+// harness:spec-approve: the human posts with their own gh login, so GitHub authenticates who approved. The label only mirrors it.
+export async function postSpecApproval({ issueUrl, decision = 'approve', github }) {
+  if (!['approve', 'revoke'].includes(decision)) throw new Error('spec-approve --decision must be approve or revoke');
+  const ref = parseIssueUrl(issueUrl);
+  const issue = await github.fetchIssue(ref);
+  const digest = specDigest(issue.body);
+  if (!digest) throw new Error(`${ref.url} に ## Gherkin が無いため spec digest を作れません。仕様を承認できません`);
+  const line = decision === 'approve' ? specApprovalLine(digest) : `harness-spec-revoke: ${digest}`;
+  const text = [decision === 'approve' ? '受け入れ要件・Gherkin・想定変更範囲・Risk / Security Impact を確認し、仕様を承認します。' : '仕様の承認を取り消します。', '', line, ''].join('\n');
+  const comment = await github.addComment(ref, text);
+  const names = (issue.labels ?? []).map(l => l.name);
+  try {
+    if (decision === 'approve') { await github.ensureLabels(ref, ['spec-approved']); if (!names.includes('spec-approved')) await github.addLabels(ref, ['spec-approved']); }
+    else if (names.includes('spec-approved')) await github.removeLabel(ref, 'spec-approved');
+  } catch (error) { throw new Error(`承認は ${comment.html_url} に記録しました。spec-approved ラベルの反映に失敗しました: ${error.message}`); }
+  return { digest, comment: comment.html_url };
 }
