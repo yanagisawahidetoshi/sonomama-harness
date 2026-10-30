@@ -1,6 +1,7 @@
 import { mkdir, writeFile, realpath, readFile, readdir, lstat } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { check } from './check.mjs';
 import { json, readJson, exists, evidenceText } from './io.mjs';
 import { responseSchema, runIdSchema } from './schemas.mjs';
@@ -15,12 +16,13 @@ import { authenticatedRecords, recordDecision, waitsForIssue } from './human-app
 import { classifySecurity, verifySecurity, combineSecurity, securityPassed } from './security-enforcement.mjs';
 import { withEvidenceProtection, redact, redactText, hasSecret, assertSafeInput, isSecretPath } from './evidence-protection.mjs';
 import { githubPrCli, githubState, pullRequestBody } from './github-pr.mjs';
-import { digest, prepareWorkspace, commitWorkspace, changedFiles, workspaceIntegrity, toolFingerprint, assertWritablePath, workspaceFingerprint, sourceIntegrity, assertWorktreeOwner, git } from './workspace.mjs';
+import { digest, prepareWorkspace, commitWorkspace, changedFiles, workspaceIntegrity, toolFingerprint, assertWritablePath, workspaceFingerprint, sourceIntegrity, assertWorktreeOwner, assertSafeCommit, git } from './workspace.mjs';
 import { saveRun, loadRun, readRunState, runPaths, withRunLock } from './run-store.mjs';
 import { classifyLane } from './lanes.mjs';
 import { assertState } from './state-machine.mjs';
 import { loadSbiIssue, inScope } from './sbi-issue.mjs';
-import { snapshotFromIssue, snapshotPath, riskView, snapshotVerified } from './sbi-source.mjs';
+import { snapshotFromIssue, snapshotPath, riskView, snapshotVerified, matchSbiSource } from './sbi-source.mjs';
+import { verifyReverifyLink, committedSnapshot, parsePullUrl, reverifyTrailers, mergeTree, gitVersion } from './reverify.mjs';
 import { parseIssueUrl } from './planner.mjs';
 import { githubCli } from './planner-github.mjs';
 export { check, judge, providerCommand };
@@ -34,7 +36,7 @@ function controller(root, summary, quiet) {
     await saveRun(root, summary);
   };
   const transition = async (status, detail = '', phase = 'execution') => {
-    assertState(phase === 'implementation-gate' ? 'gate' : phase === 'design-approval' ? 'design' : phase, status);
+    assertState(phase === 'implementation-gate' ? 'gate' : phase, status);
     if (phase === 'execution') summary.executionStatus = status;
     if (phase === 'merge') summary.merge = { ...summary.merge, state: status, decision: status, autoMergeEligible: status === 'MERGE_ALLOWED' && summary.merge.autoMergeEligible === true };
     await record(status, detail, phase);
@@ -62,24 +64,17 @@ function metadata(sbi) {
   return { id: sbi.id, title: sbi.title, description: sbi.description, risks: sbi.risks, acceptanceCriteria: sbi.acceptanceCriteria, securityImpact: sbi.securityImpact, requiredSecurityRules: sbi.requiredSecurityRules, requiredVerifiers: sbi.requiredVerifiers, minimumRiskLevel: sbi.minimumRiskLevel };
 }
 async function resolveGate(root, summary) {
-  if (!summary.gate.required && !summary.designApproval?.required) return true;
+  if (!summary.gate.required) return true;
   const records = await authenticatedRecords(root, summary.id);
-  if (summary.designApproval?.required) {
-    const design = validHumanApprovals(records, { purpose:'design-approval', headSha:summary.baselineSha, contextDigest:summary.designApproval.contextDigest });
-    summary.designApproval.state = design.rejected ? 'REJECTED' : design.approvals.length ? 'APPROVED' : 'WAITING_FOR_DESIGN_APPROVAL';
-    summary.lane.designApproved = summary.designApproval.state === 'APPROVED';
-  }
-  if (summary.gate.required) {
+  {
     const { approvals, rejected } = validHumanApprovals(records, { purpose: 'implementation-gate', headSha: summary.gate.headSha, contextDigest: summary.gate.contextDigest });
     summary.gate.state = rejected ? 'REJECTED' : approvals.length ? 'APPROVED' : 'WAITING_FOR_HUMAN_GATE';
     summary.gate.reviewers = approvals.map(a => a.reviewer);
     summary.gate.approvalState = summary.gate.state === 'WAITING_FOR_HUMAN_GATE' ? 'WAITING_FOR_HUMAN_APPROVAL' : summary.gate.state;
   }
   const { directory } = runPaths(root,summary.id);
-  await json(join(directory,'design-approval.json'),summary.designApproval);
   await json(join(directory,'human-gate.json'),summary.gate);
-  return (!summary.designApproval?.required || summary.designApproval.state === 'APPROVED')
-    && (!summary.gate.required || summary.gate.state === 'APPROVED');
+  return summary.gate.state === 'APPROVED';
 }
 // PR mode reads GitHub on every assessment. A read failure blocks; it never reuses an earlier GitHub state or escalates the run.
 async function readGitHub(root, summary, inputs, github) {
@@ -123,6 +118,7 @@ async function assessMerge(root, summary, inputs, quiet, github = githubPrCli) {
     last.security,
     { id: 'completion', required: true, status: last.completion ? 'PASS' : 'FAIL' },
     ...(inputs.config.semanticReview.enabled ? [{ id: 'semantic-review', required: true, status: last.semanticReview.status }] : []),
+    ...(summary.kind === 'reverify' ? [await reverifyLinkCheck(workspace, summary)] : []),
   ];
   const contextDigest = digest({ headSha: summary.headSha, workspaceDigest: summary.workspaceDigest, inputsDigest: summary.inputsDigest, risk: summary.risk, checks, iterations: summary.iterations });
   const records = await authenticatedRecords(root, summary.id);
@@ -148,20 +144,72 @@ async function settleMerge(root, summary, inputs, quiet, github) {
   try { return await assessMerge(root, summary, inputs, quiet, github); }
   catch (error) { return mergeFailed(root, summary, quiet, error); }
 }
+// Verifier → Security → Policy Reviewer → Completion Judge on summary.headSha, already committed. Returns the escalated summary or null.
+async function verifyHead({ root, summary, inputs, result, iterDir, iteration, record, quiet, reviewer, semanticReviewer }) {
+  const { config, rules, sbi, securityPolicy } = inputs;
+  const { directory, workspace } = runPaths(root, summary.id);
+  const { transition, escalate } = controller(root, summary, quiet);
+  await transition('VERIFYING', `iteration ${iteration}`);
+  const files = await changedFiles(workspace,summary.baselineSha,summary.headSha);
+  const actualLane = classifyLane(files,sbi,inputs.lanePolicy);
+  if (summary.lane.name === 'prototype' && actualLane.name !== 'prototype') throw new Error('Prototype scope escalated; declare production/security scope in a new SBI');
+  const generalIds = new Set(config.verifiers.map(v=>v.id));
+  const securityIds = new Set([...securityPolicy.verifiers,...config.securityVerifiers].map(v=>v.id));
+  result.verification = redact(await verify({ root, workspace, config,
+    sbi:{...sbi,requiredVerifiers:sbi.requiredVerifiers.filter(id=>!securityIds.has(id) || generalIds.has(id))}, files,
+    lane:summary.lane, full:summary.fullVerification,
+    requiredVerifiers:summary.securityAssessment.requiredVerifiers.filter(id=>generalIds.has(id)) }));
+  await json(join(iterDir,'verifier-selection.json'),result.verification.checks.map(({id,selectionReasons,required,status})=>({id,selectionReasons,required,status})));
+  summary.securityAssessment = combineSecurity(summary.securityAssessment, classifySecurity({files:await riskFiles(root,summary,inputs,files),sbi},securityPolicy));
+  summary.executionSecurityAssessment = summary.securityAssessment;
+  result.securityVerification = redact(await verifySecurity({ workspace, sbi, assessment: summary.securityAssessment, policy: securityPolicy, config, headSha:summary.headSha, verification:result.verification }));
+  result.security = { id:'security',required:true,status:securityPassed(result.securityVerification)?'PASS':'FAIL' };
+  result.gateApproved = await resolveGate(root,summary);
+  await json(join(directory,'security-assessment.json'),{...summary.securityAssessment,headSha:summary.headSha});
+  await json(join(directory,'security-verification.json'),result.securityVerification);
+  await json(join(iterDir,'security-verification.json'),result.securityVerification);
+  await json(join(iterDir, 'security.json'), result.security);
+  await evidenceText(join(iterDir, 'verify.log'), JSON.stringify(result.verification, null, 2) + '\n');
+  if (result.securityVerification.checks.some(c=>c.required&&c.status==='NOT_CONFIGURED')) {
+    await record(); return escalate('Required Security Verifier is NOT_CONFIGURED; configure it before starting a new run', 'SECURITY_VERIFIER_NOT_CONFIGURED');
+  }
+  if (!quiet) for (const c of result.verification.checks) console.log(`  ${c.id}: ${c.status}${c.reason ? ` (${c.reason})` : ''}`);
+  if (result.verification.status === 'PASS' && result.security.status === 'PASS') {
+    await transition('REVIEWING', `iteration ${iteration}`);
+    result.review = redact(await reviewer({ root, workspace, sbi, rules, verification: result.verification, files }));
+    await json(join(iterDir, 'review.json'), result.review);
+    if (config.semanticReview.enabled) {
+      result.semanticReview = semanticReviewer ? { ...await semanticReviewer({ root, workspace, sbi, verification: result.verification }), enabled: true } : { enabled: true, status: 'FAIL', reasons: ['semantic reviewer is enabled but no trusted adapter is configured'] };
+    } else result.semanticReview = { enabled: false, status: 'SKIP', reason: 'disabled by configuration' };
+    result.semanticReview = redact(result.semanticReview);
+    await json(join(iterDir, 'semantic-review.json'), result.semanticReview);
+    await transition('JUDGING', `iteration ${iteration}`);
+    result.completion = judge(result, sbi);
+  }
+  // Verifiers must not mutate the approved source tree or switch HEAD.
+  await workspaceIntegrity(workspace, summary.headSha);
+  if (await workspaceFingerprint(workspace) !== summary.workspaceDigest) throw new Error('Verifier mutated the source snapshot');
+  await record();
+  return null;
+}
+// True while the implementation gate has not been approved; the run then waits in that phase.
+async function waitForGate(root, summary, quiet) {
+  const { directory } = runPaths(root, summary.id);
+  const { transition } = controller(root, summary, quiet);
+  if (!await resolveGate(root, summary)) {
+    summary.reason = summary.gate.reason;
+    await json(join(directory, 'human-gate.json'), summary.gate);
+    await transition(summary.gate.state, summary.reason, 'implementation-gate');
+    return true;
+  }
+  await json(join(directory, 'human-gate.json'), summary.gate);
+  return false;
+}
 async function executeLoop({ root, summary, inputs, quiet, agent = runAgent, reviewer = review, semanticReviewer }) {
   const { config, rules, sbi, riskPolicy, securityPolicy } = inputs;
   const { directory, workspace } = runPaths(root, summary.id);
   const { transition, escalate } = controller(root, summary, quiet);
-  if (!await resolveGate(root, summary)) {
-    summary.reason = summary.gate.reason || 'Human Gate: Design Approval for prototype promotion';
-    await json(join(directory, 'design-approval.json'), summary.designApproval);
-    await json(join(directory, 'human-gate.json'), summary.gate);
-    const designWaiting = summary.designApproval?.required && summary.designApproval.state !== 'APPROVED';
-    await transition(designWaiting ? summary.designApproval.state : summary.gate.state, summary.reason, designWaiting ? 'design-approval' : 'implementation-gate');
-    return summary;
-  }
-  await json(join(directory, 'design-approval.json'), summary.designApproval);
-  await json(join(directory, 'human-gate.json'), summary.gate);
+  if (await waitForGate(root, summary, quiet)) return summary;
   let feedback = null;
   for (let iteration = 1; iteration <= config.maxIterations; iteration++) {
     const iterDir = join(directory, `iteration-${iteration}`);
@@ -219,47 +267,8 @@ async function executeLoop({ root, summary, inputs, quiet, agent = runAgent, rev
       summary.workspaceDigest = await workspaceFingerprint(workspace);
       result.headSha = summary.headSha;
       result.agent = { status: 'PASS', files: response.files.map(f => f.path) };
-      await transition('VERIFYING', `iteration ${iteration}`);
-      const files = await changedFiles(workspace,summary.baselineSha,summary.headSha);
-      const actualLane = classifyLane(files,sbi,inputs.lanePolicy);
-      if (summary.lane.name === 'prototype' && actualLane.name !== 'prototype') throw new Error('Prototype scope escalated; declare production/security scope in a new SBI');
-      const generalIds = new Set(config.verifiers.map(v=>v.id));
-      const securityIds = new Set([...securityPolicy.verifiers,...config.securityVerifiers].map(v=>v.id));
-      result.verification = redact(await verify({ root, workspace, config,
-        sbi:{...sbi,requiredVerifiers:sbi.requiredVerifiers.filter(id=>!securityIds.has(id) || generalIds.has(id))}, files,
-        lane:summary.lane, full:summary.fullVerification,
-        requiredVerifiers:summary.securityAssessment.requiredVerifiers.filter(id=>generalIds.has(id)) }));
-      await json(join(iterDir,'verifier-selection.json'),result.verification.checks.map(({id,selectionReasons,required,status})=>({id,selectionReasons,required,status})));
-      summary.securityAssessment = combineSecurity(summary.securityAssessment, classifySecurity({files:await riskFiles(root,summary,inputs,files),sbi},securityPolicy));
-      summary.executionSecurityAssessment = summary.securityAssessment;
-      result.securityVerification = redact(await verifySecurity({ workspace, sbi, assessment: summary.securityAssessment, policy: securityPolicy, config, headSha:summary.headSha, verification:result.verification }));
-      result.security = { id:'security',required:true,status:securityPassed(result.securityVerification)?'PASS':'FAIL' };
-      result.gateApproved = await resolveGate(root,summary);
-      await json(join(directory,'security-assessment.json'),{...summary.securityAssessment,headSha:summary.headSha});
-      await json(join(directory,'security-verification.json'),result.securityVerification);
-      await json(join(iterDir,'security-verification.json'),result.securityVerification);
-      await json(join(iterDir, 'security.json'), result.security);
-      await evidenceText(join(iterDir, 'verify.log'), JSON.stringify(result.verification, null, 2) + '\n');
-      if (result.securityVerification.checks.some(c=>c.required&&c.status==='NOT_CONFIGURED')) {
-        await record(); return escalate('Required Security Verifier is NOT_CONFIGURED; configure it before starting a new run', 'SECURITY_VERIFIER_NOT_CONFIGURED');
-      }
-      if (!quiet) for (const c of result.verification.checks) console.log(`  ${c.id}: ${c.status}${c.reason ? ` (${c.reason})` : ''}`);
-      if (result.verification.status === 'PASS' && result.security.status === 'PASS') {
-        await transition('REVIEWING', `iteration ${iteration}`);
-        result.review = redact(await reviewer({ root, workspace, sbi, rules, verification: result.verification, files }));
-        await json(join(iterDir, 'review.json'), result.review);
-        if (config.semanticReview.enabled) {
-          result.semanticReview = semanticReviewer ? { ...await semanticReviewer({ root, workspace, sbi, verification: result.verification }), enabled: true } : { enabled: true, status: 'FAIL', reasons: ['semantic reviewer is enabled but no trusted adapter is configured'] };
-        } else result.semanticReview = { enabled: false, status: 'SKIP', reason: 'disabled by configuration' };
-        result.semanticReview = redact(result.semanticReview);
-        await json(join(iterDir, 'semantic-review.json'), result.semanticReview);
-        await transition('JUDGING', `iteration ${iteration}`);
-        result.completion = judge(result, sbi);
-      }
-      // Verifiers must not mutate the approved source tree or switch HEAD.
-      await workspaceIntegrity(workspace, summary.headSha);
-      if (await workspaceFingerprint(workspace) !== summary.workspaceDigest) throw new Error('Verifier mutated the source snapshot');
-      await record();
+      const escalated = await verifyHead({ root, summary, inputs, result, iterDir, iteration, record, quiet, reviewer, semanticReviewer });
+      if (escalated) return escalated;
       if (result.completion) {
         summary.executionFinishedAt = new Date().toISOString();
         summary.consecutiveFailures = 0;
@@ -281,6 +290,37 @@ async function executeLoop({ root, summary, inputs, quiet, agent = runAgent, rev
     }
   }
   return escalate(`iteration limit (${config.maxIterations}) reached`, 'ITERATION_LIMIT');
+}
+// Lane, Security, Risk and the gates before any code is verified, from the SBI scope as the workspace holds it now.
+async function assessPreflight(root, summary, inputs, quiet) {
+  const { rules, sbi, riskPolicy, securityPolicy, lanePolicy } = inputs;
+  const { directory, workspace } = runPaths(root, summary.id);
+  const { escalate } = controller(root, summary, quiet);
+  const baselineSha = summary.baselineSha;
+  if (sbi.ambiguous || sbi.requiresDesignDecision) return escalate(humanGate(sbi, rules), sbi.ambiguous ? 'SPEC_AMBIGUOUS' : 'DESIGN_DECISION_REQUIRED');
+  const excludedSources = await readJson(join(directory,'workspace-exclusions.json'));
+  const preflightFiles = [...await Promise.all(sbi.allowedFiles.map(async path => {
+    let added = ''; try { added = await readFile(join(workspace,path),'utf8'); } catch(e) { if(e.code!=='ENOENT') throw e; }
+    return {path,status:'M',binary:false,added,excludedSecret:excludedSources.some(f=>f.path===path)};
+  })), ...sbi.allowedDirs.map(path => ({path,status:'M',binary:false,added:'',excludedSecret:false}))];
+  summary.lane = classifyLane(preflightFiles,sbi,lanePolicy);
+  await json(join(directory,'lane-assessment.json'),summary.lane);
+  summary.securityAssessment = classifySecurity({files:preflightFiles,sbi},securityPolicy);
+  await json(join(directory,'security-assessment.json'),{...summary.securityAssessment,phase:'preflight',headSha:baselineSha});
+  await json(join(directory,'security-verification.json'),{status:'NOT_RUN',requiredVerifiers:summary.securityAssessment.requiredVerifiers,checks:[],violations:[]});
+  const gateReason = humanGate(sbi, rules) || (summary.securityAssessment.requiresPreImplementationGate ? 'Human Gate: Security rule requires approval before implementation' : null);
+  const preflight = assessRisk({ files: preflightFiles, metadata: metadata(sbi), humanGate: Boolean(gateReason), securityAssessment:summary.securityAssessment, lane:summary.lane }, riskPolicy);
+  summary.riskPreflight = preflight;
+  if (gateReason || preflight.level === 3) {
+    summary.gate = { required: true, state: 'WAITING_FOR_HUMAN_GATE', approvalState:'WAITING_FOR_HUMAN_APPROVAL', reason: gateReason || `Human Gate: ${preflight.reasons.join(', ')}`,
+      headSha: baselineSha, contextDigest: digest({ inputsDigest: summary.inputsDigest, baselineSha, allowedFiles: sbi.allowedFiles, allowedDirs: sbi.allowedDirs, reasons: preflight.reasons, securityAssessment:summary.securityAssessment }) };
+    summary.reason = summary.gate.reason;
+    await json(join(directory, 'risk-preflight.json'), preflight);
+  }
+  await json(join(directory, 'risk-assessment.json'), { ...preflight, phase: 'preflight', headSha: baselineSha });
+  await json(join(directory, 'approvals.json'), { headSha: baselineSha, approvals: [], source: 'authenticated local ledger' });
+  await json(join(directory, 'merge-decision.json'), summary.merge);
+  return null;
 }
 async function runProtected({ root, provider, sbiPath, issueUrl, quiet = false, agent = runAgent, reviewer = review, semanticReviewer, full = false, publish = false, issues = githubCli }) {
   root = await realpath(root);
@@ -307,33 +347,10 @@ async function runProtected({ root, provider, sbiPath, issueUrl, quiet = false, 
     baselineSha, headSha: baselineSha, workspaceDigest: await workspaceFingerprint(workspace), inputsDigest: digest(inputs), gate: { required: false, state: 'NOT_REQUIRED' },
     merge: { state: 'NOT_ASSESSED', autoMergeEligible: false }, startedAt: new Date().toISOString() };
   await json(join(directory, 'inputs.json'), inputs);
-  const { transition, escalate } = controller(root, summary, quiet);
+  const { transition } = controller(root, summary, quiet);
   await transition('PENDING', sbi.title);
-  if (sbi.ambiguous || sbi.requiresDesignDecision) return escalate(humanGate(sbi, rules), sbi.ambiguous ? 'SPEC_AMBIGUOUS' : 'DESIGN_DECISION_REQUIRED');
-  const excludedSources = await readJson(join(directory,'workspace-exclusions.json'));
-  const preflightFiles = [...await Promise.all(sbi.allowedFiles.map(async path => {
-    let added = ''; try { added = await readFile(join(workspace,path),'utf8'); } catch(e) { if(e.code!=='ENOENT') throw e; }
-    return {path,status:'M',binary:false,added,excludedSecret:excludedSources.some(f=>f.path===path)};
-  })), ...sbi.allowedDirs.map(path => ({path,status:'M',binary:false,added:'',excludedSecret:false}))];
-  summary.lane = classifyLane(preflightFiles,sbi,lanePolicy);
-  summary.designApproval = {required:summary.lane.requiresDesignApproval,state:summary.lane.requiresDesignApproval?'WAITING_FOR_DESIGN_APPROVAL':'NOT_REQUIRED',contextDigest:digest({inputsDigest:summary.inputsDigest,baselineSha,promotion:sbi.promotion || null})};
-  await json(join(directory,'lane-assessment.json'),summary.lane);
-  summary.securityAssessment = classifySecurity({files:preflightFiles,sbi},securityPolicy);
-  await json(join(directory,'security-assessment.json'),{...summary.securityAssessment,phase:'preflight',headSha:baselineSha});
-  await json(join(directory,'security-verification.json'),{status:'NOT_RUN',requiredVerifiers:summary.securityAssessment.requiredVerifiers,checks:[],violations:[]});
-  const gateReason = humanGate(sbi, rules) || (summary.securityAssessment.requiresPreImplementationGate ? 'Human Gate: Security rule requires approval before implementation' : null);
-  const preflight = assessRisk({ files: preflightFiles, metadata: metadata(sbi), humanGate: Boolean(gateReason), securityAssessment:summary.securityAssessment, lane:summary.lane }, riskPolicy);
-  summary.riskPreflight = preflight;
-  if (gateReason || preflight.level === 3) {
-    summary.gate = { required: true, state: 'WAITING_FOR_HUMAN_GATE', approvalState:'WAITING_FOR_HUMAN_APPROVAL', reason: gateReason || (summary.designApproval.required ? 'Human Gate: Design Approval for prototype promotion' : null) || `Human Gate: ${preflight.reasons.join(', ')}`,
-      headSha: baselineSha, contextDigest: digest({ inputsDigest: summary.inputsDigest, baselineSha, allowedFiles: sbi.allowedFiles, allowedDirs: sbi.allowedDirs, reasons: preflight.reasons, securityAssessment:summary.securityAssessment }) };
-    summary.reason = summary.gate.reason || 'Human Gate: Design Approval for prototype promotion';
-    await json(join(directory, 'risk-preflight.json'), preflight);
-  }
-  await json(join(directory, 'design-approval.json'), summary.designApproval);
-  await json(join(directory, 'risk-assessment.json'), { ...preflight, phase: 'preflight', headSha: baselineSha });
-  await json(join(directory, 'approvals.json'), { headSha: baselineSha, approvals: [], source: 'authenticated local ledger' });
-  await json(join(directory, 'merge-decision.json'), summary.merge);
+  const stopped = await assessPreflight(root, summary, inputs, quiet);
+  if (stopped) return stopped;
   return withRunLock(root, id, () => executeLoop({ root, summary, inputs, quiet, agent, reviewer, semanticReviewer }));
 }
 async function resumeProtected({ root, runId, quiet = false, agent = runAgent, reviewer = review, semanticReviewer, github = githubPrCli }) {
@@ -346,6 +363,7 @@ async function resumeProtected({ root, runId, quiet = false, agent = runAgent, r
     try {
       const loaded = await loadRun(root, runId);
       summary = loaded.summary;
+      if (summary.kind === 'reverify') return await resumeReverify({ root, summary, inputs: loaded.inputs, quiet, reviewer, semanticReviewer, github });
       if (summary.executionStatus === 'DONE') return await settleMerge(root, summary, loaded.inputs, quiet, github);
       if (summary.executionStatus !== 'PENDING' || summary.iterations.length) throw new Error('Only an unstarted implementation gate or completed execution can resume; start a new run');
       return await executeLoop({ root, summary, inputs: loaded.inputs, quiet, agent, reviewer, semanticReviewer });
@@ -361,6 +379,7 @@ async function resumeProtected({ root, runId, quiet = false, agent = runAgent, r
 async function publishProtected({ root, runId, quiet = false, github = githubPrCli }) {
   await withRunLock(root, runId, async () => {
     const { summary, inputs } = await loadRun(root, runId);
+    if (summary.kind === 'reverify') throw new Error(`run ${runId} re-verifies ${summary.pullRequest.url}; it updates that PR through pnpm harness:reverify and never opens another`);
     if (summary.executionStatus !== 'DONE' || summary.status === 'ESCALATED') throw new Error(`Execution must be DONE and not ESCALATED before opening a pull request (now ${summary.executionStatus}/${summary.status})`);
     const { workspace } = runPaths(root, runId);
     await workspaceIntegrity(workspace, summary.headSha);
@@ -388,6 +407,7 @@ async function publishProtected({ root, runId, quiet = false, github = githubPrC
 
 // Only a run started to publish, whose execution is DONE and which has no PR yet, is pushed. A FAIL or a waiting gate never opens a PR.
 async function continueToPullRequest(options, summary) {
+  if (summary.kind === 'reverify') return continueReverify(options, summary);
   if (!summary.publish || summary.executionStatus !== 'DONE' || summary.pullRequest) return summary;
   try { return await publishProtected({ root: options.root, runId: summary.id, quiet: options.quiet, github: options.github }); }
   catch (error) { error.message = `run ${summary.id}: PR not opened: ${error.message}（復旧: pnpm harness:pr --run ${summary.id}）`; throw error; }
@@ -401,7 +421,7 @@ export async function runHarness(options) {
 // A run that could not open its PR throws, and the CLI exits 1.
 export function runExitCode(run) {
   if (run.status === 'MERGE_ALLOWED') return 0;
-  if (run.executionStatus === 'PENDING') return run.gate?.state === 'WAITING_FOR_HUMAN_GATE' || run.designApproval?.state === 'WAITING_FOR_DESIGN_APPROVAL' ? 0 : 2;
+  if (run.executionStatus === 'PENDING') return run.gate?.state === 'WAITING_FOR_HUMAN_GATE' ? 0 : 2;
   if (run.executionStatus !== 'DONE' || (run.publish && !run.pullRequest)) return 2;
   const waitingForCi = Boolean(run.pullRequest) && run.status === 'BLOCKED' && run.merge?.reasons?.length > 0 && run.merge.reasons.every(r => r === 'required_ci_not_passed');
   return run.status === 'WAITING_FOR_HUMAN_REVIEW' || waitingForCi ? 0 : 2;
@@ -463,4 +483,251 @@ export async function cleanupRun({root,runId}) {
     await saveRun(root,summary);
     return summary;
   });
+}
+
+// harness:reverify PR_URL (Issue #144, ADR-0003). After main moved, the finished code of a PR is merged with the new main in a new run and
+// verified once without the implementation agent. Only a candidate that passes is pushed to the same branch as a fast-forward, and the PR
+// body is rewritten for the new run. The implementation run, its evidence and its approvals are left untouched and never count for it.
+const reverifyPhases = ['PREPARED', 'VERIFIED', 'PUSHING', 'PUSHED', 'PR_UPDATED'];
+const reverifyReached = (summary, phase) => reverifyPhases.indexOf(summary.reverify.publish) >= reverifyPhases.indexOf(phase);
+async function reverifyLinkCheck(workspace, summary) {
+  const link = await verifyReverifyLink({ root: workspace, base: summary.baselineSha, head: summary.headSha });
+  const expected = { runId: summary.id, parentRunId: summary.reverify.parentRunId, baselineSha: summary.baselineSha, previousTestedSha: summary.reverify.previousTestedSha };
+  const matches = link.status === 'PASS' && Object.entries(expected).every(([key, value]) => link[key] === value);
+  return { id: 'reverify-link', required: true, status: matches ? 'PASS' : 'FAIL', reasons: matches ? [] : [...link.reasons, 'the head commit does not link this re-verification run'] };
+}
+async function resumeReverify({ root, summary, inputs, quiet, reviewer, semanticReviewer, github }) {
+  if (summary.executionStatus === 'PENDING' && !summary.iterations.length) return reverifyExecute({ root, summary, inputs, quiet, reviewer, semanticReviewer });
+  // Until the candidate is on the PR branch, GitHub shows the previous head; the merge is assessed only after the push.
+  if (summary.executionStatus === 'DONE') return reverifyReached(summary, 'PUSHED') ? settleMerge(root, summary, inputs, quiet, github) : summary;
+  throw new Error(`A failed re-verification does not resume; run pnpm harness:reverify ${summary.pullRequest.url} to start a new run`);
+}
+async function reverifyExecute({ root, summary, inputs, quiet, reviewer = review, semanticReviewer }) {
+  const { directory, workspace } = runPaths(root, summary.id);
+  const { transition, escalate } = controller(root, summary, quiet);
+  if (await waitForGate(root, summary, quiet)) return summary;
+  const iteration = 1, iterDir = join(directory, `iteration-${iteration}`);
+  await mkdir(iterDir);
+  const result = { iteration, agent: { status: 'SKIPPED', reason: 'harness:reverify never calls the implementation agent' }, verification: null, security: null, securityVerification: null, gateApproved: false, review: null,
+    semanticReview: { enabled: inputs.config.semanticReview.enabled, status: 'NOT_RUN' }, completion: false, headSha: summary.headSha };
+  summary.iterations.push(result);
+  const record = async () => { await json(join(iterDir, 'result.json'), result); await saveRun(root, summary); };
+  try {
+    await workspaceIntegrity(workspace, summary.headSha);
+    const escalated = await verifyHead({ root, summary, inputs, result, iterDir, iteration, record, quiet, reviewer, semanticReviewer });
+    if (escalated) return escalated;
+  } catch (error) {
+    result.error = redactText(error.message);
+    await record(); return escalate(`Runtime error: ${error.message}`, classifyEscalation(error.message));
+  }
+  if (!result.completion) {
+    // No implementation iteration follows a failed re-verification, and the PR keeps its previous head.
+    summary.consecutiveFailures = 1;
+    await transition('FAILED', '再検証の必須検証が失敗しました。実装には戻らず、PRも更新しません');
+    return summary;
+  }
+  summary.executionFinishedAt = new Date().toISOString();
+  summary.reverify.publish = 'VERIFIED';
+  await transition('DONE', 'Re-verification: Verifier → Policy Reviewer → Completion Judge passed');
+  return summary;
+}
+// The candidate is pushed only while main is still its baseline and the PR branch still points at the head it was built from.
+// Git rejects a push that is not a fast-forward, so even a push racing this check never overwrites a commit nobody verified.
+async function pushReverify({ root, runId, github }) {
+  await withRunLock(root, runId, async () => {
+    const { summary, inputs } = await loadRun(root, runId);
+    if (summary.executionStatus !== 'DONE' || summary.status === 'ESCALATED' || reverifyReached(summary, 'PUSHED')) throw new Error(`run ${runId} is not a verified re-verification waiting to be pushed`);
+    const { workspace } = runPaths(root, runId);
+    const { remote, base } = inputs.config.github;
+    const { branch } = summary.pullRequest;
+    if ((await reverifyLinkCheck(workspace, summary)).status !== 'PASS') throw new Error('the candidate commit does not link this re-verification run; refusing to push');
+    await github.assertBaseIsBaseline(root, { remote, base, baselineSha: summary.baselineSha });
+    const files = await changedFiles(workspace, summary.baselineSha, summary.headSha);
+    if (files.some(f => isSecretPath(f.path) || hasSecret(f.added))) throw new Error('changed files contain sensitive material; refusing to push');
+    const remoteHead = await github.remoteBranchSha(root, remote, branch);
+    if (remoteHead !== summary.headSha) {
+      if (remoteHead !== summary.reverify.previousTestedSha) throw new Error(`${branch} は再検証の開始後に ${remoteHead?.slice(0, 12) ?? 'なし'} へ更新されました。検証していないcommitを上書きしないため、pushしません。pnpm harness:reverify ${summary.pullRequest.url} で最新のPR HEADを再検証してください`);
+      summary.reverify.publish = 'PUSHING';
+      summary.events.push({ status: summary.status, phase: 'pull-request', detail: `pushing ${summary.headSha} to ${branch}`, at: new Date().toISOString() });
+      await saveRun(root, summary);
+      await github.push(root, remote, summary.headSha, branch);
+    }
+    summary.reverify.publish = 'PUSHED';
+    summary.events.push({ status: summary.status, phase: 'pull-request', detail: `${branch} = ${summary.headSha}`, at: new Date().toISOString() });
+    await saveRun(root, summary);
+  });
+}
+async function updateReverifyPull({ root, runId, github }) {
+  return withRunLock(root, runId, async () => {
+    const { summary, inputs } = await loadRun(root, runId);
+    const [owner, repo] = summary.pullRequest.repository.split('/');
+    const body = pullRequestBody({ summary, sbi: inputs.sbi });
+    if (hasSecret(body)) throw new Error('pull request body contains sensitive material; refusing to publish');
+    await github.updatePull({ owner, repo }, summary.pullRequest.number, { body });
+    summary.reverify.publish = 'PR_UPDATED';
+    summary.events.push({ status: summary.status, phase: 'pull-request', detail: `${summary.pullRequest.url} (${summary.headSha})`, at: new Date().toISOString() });
+    await saveRun(root, summary);
+    return summary;
+  });
+}
+// Push, assess the merge on GitHub, then rewrite the PR body with the assessed Risk. Each step resumes from the recorded phase.
+async function continueReverify(options, summary) {
+  if (summary.executionStatus !== 'DONE' || summary.status === 'ESCALATED' || summary.reverify.publish === 'PR_UPDATED') return summary;
+  const { root, quiet, github = githubPrCli } = options;
+  try {
+    if (!reverifyReached(summary, 'PUSHED')) await pushReverify({ root, runId: summary.id, github });
+    const assessed = await resumeProtected({ root, runId: summary.id, quiet, github });
+    return assessed.reverify.publish === 'PUSHED' ? await updateReverifyPull({ root, runId: summary.id, github }) : assessed;
+  } catch (error) { error.message = `run ${summary.id}: PR not updated: ${error.message}（復旧: pnpm harness:reverify ${summary.pullRequest.url}）`; throw error; }
+}
+// The one re-verification of this PR head on this baseline, if it was started before. Repeating the command continues it.
+async function existingReverify(root, { pullRequest, parentRunId, baselineSha, pullHead }) {
+  const found = [];
+  for (const name of await readdir(join(root, '.harness/runs'))) {
+    if (!runIdSchema.safeParse(name).success || !await exists(runPaths(root, name).summary)) continue;
+    let summary;
+    try { summary = await readRunState(root, name); } catch { continue; }
+    // A failed or escalated run is evidence only; running the command again starts a new run for the same head.
+    if (['FAILED', 'ESCALATED'].includes(summary.executionStatus) || summary.status === 'ESCALATED') continue;
+    // A run that stopped before its preflight has no lane and cannot continue; a run of another PR on this branch is not this one.
+    if (summary.executionStatus === 'PENDING' && !summary.lane) continue;
+    if (summary.pullRequest?.number !== pullRequest.number || summary.pullRequest?.repository !== pullRequest.repository) continue;
+    if (summary.kind === 'reverify' && !summary.cleanedAt && summary.reverify.parentRunId === parentRunId && summary.baselineSha === baselineSha
+      && (summary.reverify.previousTestedSha === pullHead || (summary.headSha === pullHead && reverifyReached(summary, 'PUSHING')))) found.push(name);
+  }
+  if (found.length > 1) throw new Error(`同じPR HEADとbaselineの再検証runが${found.length}件あります（${found.join(', ')}）`);
+  return found[0] ?? null;
+}
+// The PASS run the PR head is already bound to on this base SHA, if any. The signed run state, the run ref and the commit are the only
+// sources; GitHub Reviews are not read. Only a run whose tested SHA is the PR head itself and whose baseline is the current base tip
+// qualifies, and the merge of the base into the head must be exactly the tested tree. Anything else is verified again in a new run.
+async function verifiedRun(root, { pullRequest, parentRunId, baselineSha, pullHead }) {
+  const merged = await mergeTree(root, baselineSha, pullHead, ['--no-messages']);
+  const head = await git(root, ['rev-parse', `${pullHead}^{tree}`]);
+  if (!merged.ok || merged.stdout.trim() !== head.stdout.trim()) return null;
+  const found = [];
+  for (const name of await readdir(join(root, '.harness/runs'))) {
+    if (!runIdSchema.safeParse(name).success || !await exists(runPaths(root, name).summary)) continue;
+    let summary;
+    try { summary = await readRunState(root, name); } catch { continue; }
+    const pr = summary.pullRequest;
+    if (summary.headSha !== pullHead || summary.baselineSha !== baselineSha || summary.executionStatus !== 'DONE' || summary.status === 'ESCALATED' || summary.cleanedAt) continue;
+    if (!pr || ['number', 'branch', 'base', 'repository'].some(key => pr[key] !== pullRequest[key])) continue;
+    if (summary.kind === 'reverify' ? summary.reverify.parentRunId !== parentRunId || summary.reverify.publish !== 'PR_UPDATED' : summary.id !== parentRunId) continue;
+    if ((await git(root, ['rev-parse', '--verify', '--quiet', `refs/harness/runs/${name}`], true)).stdout.trim() !== pullHead) continue;
+    if (summary.kind === 'reverify' && (await reverifyLinkCheck(root, summary)).status !== 'PASS') continue;
+    found.push(summary);
+  }
+  return found.length === 1 ? found[0] : null;
+}
+async function parentEvidence(root, parentRunId, previousTestedSha) {
+  if (!await exists(runPaths(root, parentRunId).summary)) return { found: false };
+  try {
+    const parent = await readRunState(root, parentRunId);
+    return { found: true, verified: true, testedSha: parent.headSha, testedShaMatches: parent.headSha === previousTestedSha };
+  } catch { return { found: true, verified: false }; }
+}
+// Every precondition is checked before a run directory or worktree exists. A changed SBI goes back to a new implementation run.
+async function reverifyProtected({ root, pullUrl, quiet = false, reviewer = review, semanticReviewer, github = githubPrCli, issues = githubCli }) {
+  root = await realpath(root);
+  const ref = parsePullUrl(pullUrl);
+  const { remote, base } = (await check(root)).config.github;
+  const repository = await github.repository(root, remote);
+  if (repository.name !== `${ref.owner}/${ref.repo}`) throw new Error(`${ref.url} は${remote}（${repository.name}）のPRではありません`);
+  const baselineSha = await sourceIntegrity(root);
+  const tip = await github.remoteBranchSha(root, remote, base);
+  if (tip !== baselineSha) throw new Error(`${remote}/${base} (${tip?.slice(0, 12) ?? 'なし'}) と元checkoutのHEAD ${baselineSha.slice(0, 12)} が一致しません。最新の${base}をpullしてから再実行してください`);
+  const pull = await github.pull(repository, ref.number);
+  const parentRunId = /^harness\/(.+)$/.exec(pull.head.ref)?.[1];
+  if (pull.state !== 'open' || pull.merged === true || pull.merged_at) throw new Error(`PR #${ref.number} はopenではありません`);
+  if (pull.base.ref !== base) throw new Error(`PR #${ref.number} は${pull.base.ref}向けです。${base}向けのPRだけを再検証します`);
+  if (!parentRunId || !runIdSchema.safeParse(parentRunId).success) throw new Error(`PR #${ref.number} のbranch ${pull.head.ref} はHarnessのrun branch（harness/<run-id>）ではありません`);
+  if (!pull.head.repo) throw new Error(`PR #${ref.number} のheadは削除されたforkです。再検証しません`);
+  if (pull.head.repo.full_name !== repository.name) throw new Error(`PR #${ref.number} のheadは${pull.head.repo.full_name}にあり、${repository.name}ではありません。forkのPRは再検証しません`);
+  const branch = pull.head.ref;
+  const pullHead = await github.remoteBranchSha(root, remote, branch);
+  if (pullHead !== pull.head.sha) throw new Error(`${branch} (${pullHead?.slice(0, 12) ?? 'なし'}) がPR #${ref.number} のHEAD ${pull.head.sha.slice(0, 12)} と一致しません。同じリポジトリのbranchだけを再検証します`);
+  await git(root, ['fetch', '--quiet', '--no-tags', remote, `refs/heads/${branch}`]);
+  if ((await git(root, ['rev-parse', 'FETCH_HEAD'])).stdout.trim() !== pullHead) throw new Error(`${branch} が読み取り中に更新されました。もう一度実行してください`);
+  const { path, snapshot } = await committedSnapshot(root, baselineSha, pullHead);
+  if (snapshot.runId !== parentRunId) throw new Error(`${path} のrun ${snapshot.runId} がPRのbranch ${branch} と一致しません`);
+  if (snapshot.source.repo !== repository.name) throw new Error(`${path} は${repository.name}のSBI Issueではありません`);
+  const sbiIssue = snapshot.source.number;
+  const source = await loadSbiIssue({ issueUrl: snapshot.source.url, config: (await check(root, undefined, undefined, { sbiIssue })).config, github: issues });
+  const checked = await check(root, undefined, source.sbi, { sbiIssue });
+  const rebuilt = snapshotFromIssue({ ref: source.ref, issue: source.issue, runId: parentRunId, sbi: checked.sbi });
+  if (!isDeepStrictEqual(rebuilt, snapshot)) {
+    const reasons = matchSbiSource({ snapshot, issue: source.issue, config: checked.config });
+    throw new Error([`${path} のSBI snapshotが、現在のSBI Issueと${base}のTrusted Acceptance登録から組み立てたSBIと一致しません。SBIが変わったため再検証せず、新しいrunで実装してください`, ...reasons.map(r => `- ${r}`)].join('\n'));
+  }
+  await assertSafeCommit(root, baselineSha, pullHead);
+  const verified = await verifiedRun(root, { pullRequest: { number: ref.number, branch, base, repository: repository.name }, parentRunId, baselineSha, pullHead });
+  if (verified) return { ...verified, alreadyVerified: true };
+  const existing = await existingReverify(root, { pullRequest: { number: ref.number, repository: repository.name }, parentRunId, baselineSha, pullHead });
+  if (existing) {
+    // A waiting gate is re-checked and an updated PR is re-assessed; a verified candidate continues to publish; a stopped run stays stopped.
+    const stored = await readRunState(root, existing);
+    return stored.executionStatus === 'PENDING' || stored.reverify.publish === 'PR_UPDATED' ? resumeProtected({ root, runId: existing, quiet, reviewer, semanticReviewer, github }) : stored;
+  }
+
+  const { config, rules, sbi, riskPolicy, securityPolicy, humanGates, securityDocuments, lanePolicy } = checked;
+  assertSafeInput({ config, rules, sbi, riskPolicy, securityPolicy, humanGates, securityDocuments, lanePolicy });
+  const id = `${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`;
+  const { directory, workspace } = runPaths(root, id);
+  await mkdir(directory, { recursive: true });
+  await prepareWorkspace(root, workspace);
+  await json(join(directory, 'sbi-snapshot.json'), snapshot);
+  const inputs = { config, rules, sbi, riskPolicy, securityPolicy, humanGates, securityDocuments, lanePolicy, sbiSnapshot: snapshot, toolFingerprint: await toolFingerprint(root), skill: await readFile(join(root, '.harness/skills/implement.md'), 'utf8') };
+  const summary = { id, runDir: `.harness/runs/${id}`, kind: 'reverify', sbi: sbi.id, sbiPath: null, sbiIssue: snapshot.source, provider: config.provider,
+    publish: true, fullVerification: false, status: 'PENDING', executionStatus: 'PENDING', reason: null, consecutiveFailures: 0, iterations: [], events: [],
+    baselineSha, headSha: baselineSha, workspaceDigest: await workspaceFingerprint(workspace), inputsDigest: digest(inputs), gate: { required: false, state: 'NOT_REQUIRED' },
+    merge: { state: 'NOT_ASSESSED', autoMergeEligible: false },
+    pullRequest: { number: ref.number, url: pull.html_url, branch, base, repository: repository.name },
+    reverify: { parentRunId, previousTestedSha: pullHead, sbiSnapshotDigest: digest(snapshot), publish: 'PREPARED', gitVersion: await gitVersion(root), parentRun: await parentEvidence(root, parentRunId, pullHead) },
+    startedAt: new Date().toISOString() };
+  await json(join(directory, 'inputs.json'), inputs);
+  const { transition, escalate } = controller(root, summary, quiet);
+  await transition('PENDING', `re-verify ${branch} ${pullHead.slice(0, 12)} on ${base} ${baselineSha.slice(0, 12)}`);
+  return withRunLock(root, id, async () => {
+    // The candidate is built from Git objects, so the message is exactly ours (no merge.log shortlog after the trailers) and the tree is
+    // the one verifyReverifyLink recomputes. A head that already contains the baseline (a person resolved a conflict there) keeps its
+    // tree; only the link commit is added.
+    const message = `Re-verify SBI ${sbi.id} on ${base} ${baselineSha.slice(0, 12)}\n\n${reverifyTrailers({ runId: id, parentRunId })}`;
+    try {
+      let candidate;
+      if ((await git(workspace, ['merge-base', '--is-ancestor', baselineSha, pullHead], true)).ok) {
+        candidate = (await git(workspace, ['commit-tree', `${pullHead}^{tree}`, '-p', pullHead, '-m', message])).stdout.trim();
+      } else {
+        const merged = await mergeTree(workspace, baselineSha, pullHead, ['--name-only', '--no-messages', '-z']);
+        const [tree, ...conflicts] = merged.stdout.split('\0').filter(Boolean);
+        if (merged.code === 1) {
+          summary.reverify.conflicts = [...new Set(conflicts)].sort();
+          return escalate(`${base} ${baselineSha.slice(0, 12)} と ${pullHead.slice(0, 12)} の統合で競合しました: ${summary.reverify.conflicts.join(', ')}。${branch} で競合を解消してpushし、pnpm harness:reverify ${pull.html_url} を再実行してください`, 'REVERIFY_CONFLICT');
+        }
+        if (!merged.ok) throw new Error(`git merge-tree: ${merged.stderr || merged.error}`);
+        candidate = (await git(workspace, ['commit-tree', tree, '-p', baselineSha, '-p', pullHead, '-m', message])).stdout.trim();
+      }
+      // The run records the candidate as soon as the worktree points at it, so cleanup and a failure below see the same HEAD.
+      await git(workspace, ['checkout', '--quiet', '--detach', candidate]);
+      await git(workspace, ['update-ref', `refs/harness/runs/${id}`, candidate]);
+      summary.headSha = candidate;
+      summary.workspaceDigest = await workspaceFingerprint(workspace);
+      await saveRun(root, summary);
+      const link = await reverifyLinkCheck(workspace, summary);
+      if (link.status !== 'PASS') return escalate(`the candidate commit does not link this re-verification run: ${link.reasons.join('; ')}`);
+      // A person may have changed any file while resolving a conflict, so every changed file is held to the SBI scope again.
+      for (const file of await changedFiles(workspace, baselineSha, summary.headSha)) {
+        if (file.path === snapshotPath(snapshot)) continue;
+        try { assertWritablePath(file.path); } catch (error) { return escalate(error.message); }
+        if (!inScope(sbi, file.path)) return escalate(`scope/path violation: ${file.path}`);
+      }
+      const stopped = await assessPreflight(root, summary, inputs, quiet);
+      if (stopped) return stopped;
+    } catch (error) { return escalate(`Runtime error: ${error.message}`, classifyEscalation(error.message)); }
+    return reverifyExecute({ root, summary, inputs, quiet, reviewer, semanticReviewer });
+  });
+}
+export async function reverifyPullRequest(options) {
+  const root = await realpath(options.root);
+  return withEvidenceProtection(root, async () => continueToPullRequest({ ...options, root }, await reverifyProtected({ ...options, root })), { extensions: options.redactionExtensions || [] });
 }

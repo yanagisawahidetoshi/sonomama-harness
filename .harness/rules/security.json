@@ -7,7 +7,7 @@
   "rules": [
     {
       "id": "SEC-AUTH-001",
-      "description": "AuthNへの影響を検知し着手承認・必須検証・HIGHを強制する",
+      "description": "AuthNへの影響を検知し着手承認・必須検証・HIGHを強制する。API契約テスト基盤がOpenAPIの構造名として列挙するsecuritySchemesは本文の検出から除く（docs/security/authorization.md）",
       "categories": [
         "AuthN",
         "APIAuthentication"
@@ -18,6 +18,16 @@
       "contentPatterns": [
         "\\b(authentication|authenticate|sign_in)\\b",
         "\\b(securitySchemes|bearerAuth|oauth2|jwt)\\b"
+      ],
+      "contentExceptions": [
+        {
+          "pathPatterns": [
+            "^apps/api/spec/support/api_contract/[^/]+\\.rb$"
+          ],
+          "ignoredPatterns": [
+            "\\bsecuritySchemes\\b"
+          ]
+        }
       ],
       "metadataPatterns": [
         "\\bauthn\\b|\\bauthentication\\b|認証"

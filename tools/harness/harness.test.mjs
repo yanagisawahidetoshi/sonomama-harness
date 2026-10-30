@@ -148,7 +148,7 @@ describe('CLI help', () => {
       const { stderr } = await execute(process.execPath, [new URL('./cli.mjs', import.meta.url).pathname, 'unknown']);
       const userFacing = stderr.indexOf('User-facing'), internal = stderr.indexOf('Internal/Maintenance');
       assert.ok(userFacing >= 0 && internal > userFacing, stderr);
-      for (const command of ['planner:sbi', 'harness:run', 'harness:approve']) {
+      for (const command of ['planner:sbi', 'harness:run', 'harness:approve', 'harness:reverify']) {
         const at = stderr.indexOf(`pnpm ${command}`);
         assert.ok(at > userFacing && at < internal, `${command} is user-facing`);
       }
@@ -158,6 +158,7 @@ describe('CLI help', () => {
       assert.match(stderr.slice(userFacing, internal), /--provider codex/);
       assert.match(stderr.slice(userFacing, internal), /pnpm harness:run SBI_URL/);
       assert.match(stderr.slice(userFacing, internal), /pnpm harness:approve SBI_URL/);
+      assert.match(stderr.slice(userFacing, internal), /pnpm harness:reverify PR_URL/);
       assert.ok(stderr.indexOf('--sbi PATH') > internal, '--sbi is for Harness self-tests');
     });
   });
@@ -180,7 +181,7 @@ describe('OpenAPI Schema as a normal SBI', () => {
 
 // harness:run / approve / resume / pr exit 0 when the run stopped where a human or GitHub CI takes over, and 2 when the run itself failed.
 describe('Exit code of a run command', () => {
-  const run = (overrides = {}) => ({ publish: true, executionStatus: 'DONE', status: 'BLOCKED', merge: { reasons: ['required_ci_not_passed'] }, gate: { state: 'NOT_REQUIRED' }, designApproval: { state: 'NOT_REQUIRED' },
+  const run = (overrides = {}) => ({ publish: true, executionStatus: 'DONE', status: 'BLOCKED', merge: { reasons: ['required_ci_not_passed'] }, gate: { state: 'NOT_REQUIRED' },
     pullRequest: { number: 201, url: 'https://github.com/acme/app/pull/201' }, ...overrides });
   describe('given a run that handed over to a human or to GitHub CI', () => {
     it('when the PR was opened and only GitHub CI has not passed yet then exits 0', () => {
@@ -194,9 +195,6 @@ describe('Exit code of a run command', () => {
     });
     it('when the run waits at the implementation gate as its Risk requires then exits 0', () => {
       assert.equal(runExitCode(run({ executionStatus: 'PENDING', status: 'WAITING_FOR_HUMAN_GATE', gate: { state: 'WAITING_FOR_HUMAN_GATE' }, pullRequest: undefined })), 0);
-    });
-    it('when the run waits for Design Approval then exits 0', () => {
-      assert.equal(runExitCode(run({ executionStatus: 'PENDING', status: 'WAITING_FOR_DESIGN_APPROVAL', designApproval: { state: 'WAITING_FOR_DESIGN_APPROVAL' }, pullRequest: undefined })), 0);
     });
     it('when a run that never publishes, such as harness:demo, is DONE and waits for review then exits 0', () => {
       assert.equal(runExitCode(run({ publish: false, status: 'WAITING_FOR_HUMAN_REVIEW', pullRequest: undefined })), 0);

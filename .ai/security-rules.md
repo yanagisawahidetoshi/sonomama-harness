@@ -38,14 +38,13 @@
 - 出力はMERGE_ALLOWEDとautoMergeEligibleまで。実mergeとMERGED遷移は実装しない。
 - 承認待ちのresumeと実装の再試行は分離し、Plannerより実行・判定の整合性を優先する。
 - 通常prototypeのLEVEL 1候補はpr-risk.jsonの明示的safe ruleで定義する。laneだけで承認数を減らさない。prototypeのautoMergeEligibleは常にfalse。
-- Design Approvalの待機はWAITING_FOR_DESIGN_APPROVALとして別phaseに記録する。Implementation Gateのstateを表示目的で流用しない。
 
 ## Lane
 
 - VerifierのappliesToとlaneで変更範囲を選ぶ。AC・Security・明示必須指定はlane/pathより優先し、必須検証をSKIPしない。
 - prototypes/web、prototypes/mobileは軽量ゲート。apps/**とpackages/**は常にProduction。認証・PII・本番API等への影響はSecurity Gateへ昇格する。
 - 試作でも本番データ・本番API・Cognito User Poolに影響するなら、SBI.securityImpactにProductionData / ProductionAPI / CognitoUserPoolを宣言する（SEC-DESTRUCTIVE-001）。本番環境の接続先に応じて.harness/config/lanes.jsonのsecurityPatternsを拡張する。
-- 試作の本番移行は新しいProduction SBIと実装前Design Approvalを必要とし、本番検証を省略しない。
+- 試作の本番移行は新しいProduction SBIで行い、本番検証を省略しない。実装の承認はSBI Issueのレビューと`ready`で、別のDesign Approval Gateは無い。
 
 ## run workspace
 
