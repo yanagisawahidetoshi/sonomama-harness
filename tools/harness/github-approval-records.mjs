@@ -13,7 +13,8 @@ export function commentApprovals({ comments, prefix, digest, permissions }) {
   const latest = new Map();
   for (const comment of [...comments].sort((a, b) => a.id - b.id)) {
     const login = comment.user?.login;
-    if (!login || isBot(comment.user) || comment.updated_at !== comment.created_at) continue;
+    // Without both timestamps an edit cannot be told apart, so such a comment never counts.
+    if (!login || isBot(comment.user) || !comment.created_at || !comment.updated_at || comment.updated_at !== comment.created_at) continue;
     if (is(comment, prefix, digest, 'revoke')) latest.set(login, false);
     else if (is(comment, prefix, digest)) latest.set(login, true);
   }

@@ -48,7 +48,7 @@ export const githubActionsCli = {
         child.on('error', error => resolve(error.message));
         child.on('close', code => resolve(code === 0 ? null : stderr.trim() || `exit ${code}`));
       });
-      if (failure) throw new Error(`artifact ${artifactId} をダウンロードできません（${redactText(failure)}）`);
+      if (failure) throw Object.assign(new Error(`artifact ${artifactId} をダウンロードできません（${redactText(failure)}）`), { httpStatus: /HTTP (\d{3})/.exec(failure)?.[1] ?? null });
       const unzip = await execute('unzip', ['-q', '-o', zip, '-d', out], { timeoutMs: 60000 });
       if (!unzip.ok) throw new Error(`artifact ${artifactId} を展開できません（${redactText(unzip.error || unzip.stderr.trim() || `exit ${unzip.code}`)}）`);
       const files = {};
@@ -80,14 +80,16 @@ async function laneResult({ ref, lane, head, actions }) {
   if (runs.length !== 1) throw new Error(`harness check ${check.id} の${workflow}のworkflow runを1件に特定できません（${runs.length}件）`);
   // A re-run keeps the artifacts of earlier attempts under the same name. The one the Completion Judge read is the newest made before the
   // passing harness check started (by creation time: artifact IDs do not follow it); that one is checked and downloaded by ID, and an expired one never falls back to an older attempt.
-  const before = artifact => !check.started_at || (artifact.created_at && artifact.created_at <= check.started_at);
+  if (!check.started_at) throw new Error(`harness check ${check.id} にstarted_atが無いため、Completion Judgeが読んだartifactを特定できません`);
+  const before = artifact => artifact.created_at && artifact.created_at <= check.started_at;
   const artifact = (await actions.artifacts(ref, runs[0].id)).filter(a => a.name === 'maestro-results' && before(a))
     .sort((a, b) => String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')) || b.id - a.id)[0];
-  // Only a gone artifact lets a signed Evidence manifest stand in (pbi-status.mjs); a result that was read and is wrong never does.
-  const gone = message => Object.assign(new Error(message), { artifactUnavailable: true });
+  // Only a gone artifact (expired, not listed, or a download answered 404 / 410) lets a signed Evidence manifest stand in (pbi-status.mjs), and
+  // only for the run and artifact it names. A network failure, 5xx, rate limit, lost login, unzip failure or a wrong result never does.
+  const gone = message => Object.assign(new Error(message), { artifactUnavailable: true, workflowRunId: runs[0].id, artifactId: artifact?.id ?? null });
   if (!artifact || artifact.expired) throw gone(`workflow run ${runs[0].id} のmaestro-results artifactが${artifact ? '期限切れ' : 'ありません'}`);
   let files;
-  try { files = await actions.download(ref, artifact.id); } catch (error) { throw gone(error.message); }
+  try { files = await actions.download(ref, artifact.id); } catch (error) { throw ['404', '410'].includes(error.httpStatus) ? gone(error.message) : error; }
   const name = `${lane}.json`;
   if (typeof files[name] !== 'string') throw new Error(`maestro-results に ${name} がありません`);
   let parsed;

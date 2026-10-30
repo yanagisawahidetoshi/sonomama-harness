@@ -90,7 +90,8 @@ export const githubCli = {
       const edits = (await api('POST', 'graphql', { query, variables: { owner, repo, number, after } }))?.data?.repository?.issue?.userContentEdits;
       if (!edits) throw new Error(`GraphQL: edit history of ${owner}/${repo}#${number} is unavailable`);
       versions.push(...edits.nodes);
-      if (!edits.pageInfo.hasNextPage) return versions.sort((a, b) => a.editedAt.localeCompare(b.editedAt)).map(v => ({ body: v.deletedAt ? null : v.diff, deletedAt: v.deletedAt ?? null }));
+      // GitHub returns the edits newest first. editedAt has only seconds, so the API order (reversed) is kept instead of sorting by time.
+      if (!edits.pageInfo.hasNextPage) return versions.reverse().map(v => ({ body: v.deletedAt ? null : v.diff, deletedAt: v.deletedAt ?? null }));
       after = edits.pageInfo.endCursor;
     }
     throw new Error(`GraphQL: edit history of ${owner}/${repo}#${number} has too many pages`);

@@ -71,10 +71,12 @@ export async function collectPbiStatus({ root, pbiUrl, config, github = githubCl
   let signed;
   const current = (entry, sbi) => { const pull = pulls.get(sbi.id); return entry.id === sbi.id && entry.number === sbi.number && entry.kind === sbi.kind
     && entry.pullRequest === (pull?.number ?? null) && entry.headSha === (pull?.head?.sha ?? null) && entry.mergeCommitSha === (pull?.merge_commit_sha ?? null); };
-  const fromManifest = async sbi => {
+  const fromManifest = async (sbi, gone) => {
     signed ??= await manifests(ref.url);
     const valid = signed.filter(m => m.plan.approvalKey === output.plan.approvalKey && m.sbis.length === sbis.length && sbis.every((s, i) => current(m.sbis[i], s)));
-    return valid.at(-1)?.sbis.find(e => e.id === sbi.id) ?? null;
+    const entry = valid.at(-1)?.sbis.find(e => e.id === sbi.id) ?? null;
+    // A re-run after APPROVE selects another artifact; the manifest stands in only for the very run and artifact it recorded.
+    return entry && entry.workflowRunId === gone.workflowRunId && entry.artifactId === gone.artifactId ? entry : null;
   };
   const entries = [];
   for (const sbi of sbis) {
@@ -94,7 +96,7 @@ export async function collectPbiStatus({ root, pbiUrl, config, github = githubCl
     } catch (error) {
       let entry = null;
       if (error.artifactUnavailable) {
-        try { entry = await fromManifest(sbi); } catch (manifestError) { problems.push(`${where} のEvidence manifestを読めません（${manifestError.message}）`); }
+        try { entry = await fromManifest(sbi, error); } catch (manifestError) { problems.push(`${where} のEvidence manifestを読めません（${manifestError.message}）`); }
       }
       if (entry) {
         read = { connected: true, e2e: entry.e2e, evidenceDigest: entry.resultDigest ?? undefined, source: entry.lane ? { workflowRunId: entry.workflowRunId, artifactId: entry.artifactId, lane: entry.lane, resultDigest: entry.resultDigest } : undefined };
