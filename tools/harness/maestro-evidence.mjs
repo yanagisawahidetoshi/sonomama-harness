@@ -79,9 +79,10 @@ async function laneResult({ ref, lane, head, actions }) {
   const runs = (await actions.workflowRuns(ref, check.check_suite?.id)).filter(r => r.path === workflow && r.head_sha === head);
   if (runs.length !== 1) throw new Error(`harness check ${check.id} の${workflow}のworkflow runを1件に特定できません（${runs.length}件）`);
   // A re-run keeps the artifacts of earlier attempts under the same name. The one the Completion Judge read is the newest made before the
-  // passing harness check started; that one is checked and downloaded by ID, and an expired one never falls back to an older attempt.
+  // passing harness check started (by creation time: artifact IDs do not follow it); that one is checked and downloaded by ID, and an expired one never falls back to an older attempt.
   const before = artifact => !check.started_at || (artifact.created_at && artifact.created_at <= check.started_at);
-  const artifact = (await actions.artifacts(ref, runs[0].id)).filter(a => a.name === 'maestro-results' && before(a)).sort((a, b) => b.id - a.id)[0];
+  const artifact = (await actions.artifacts(ref, runs[0].id)).filter(a => a.name === 'maestro-results' && before(a))
+    .sort((a, b) => String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')) || b.id - a.id)[0];
   if (!artifact || artifact.expired) throw new Error(`workflow run ${runs[0].id} のmaestro-results artifactが${artifact ? '期限切れ' : 'ありません'}`);
   const files = await actions.download(ref, artifact.id);
   const name = `${lane}.json`;
