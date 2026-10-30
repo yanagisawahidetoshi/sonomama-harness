@@ -137,7 +137,7 @@ api-contract VerifierはRailsを起動せずこのmanifestをOpenAPIと照合し
 
 ## 認証
 
-認証Provider（Cognito / Google Cloud Identity Platform / Firebase Auth等）は未決定。
+認証ProviderはAmazon Cognito（User Pool）を使う。
 Provider固有gem・JWT / JWKS検証・認証middleware・認可は実装していない。model / column名もProvider固有名にしない。
 
 ## Harness

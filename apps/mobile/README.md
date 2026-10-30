@@ -154,8 +154,8 @@ pnpm api:mock <Issue URL>
 
 ## 認証
 
-認証Provider（Cognito / Google Cloud Identity Platform / Firebase Auth等）は未決定。
-Provider固有SDK・token保存・auth context・login画面は導入していない。決定後は `src/shared/api/http-client.ts` のAxios interceptorで認証ヘッダーを付与し、HTTP層からProvider固有実装を分離する。
+認証ProviderはAmazon Cognito（User Pool）を使う。
+Provider固有SDK・token保存・auth context・login画面は導入していない。導入時は `src/shared/api/http-client.ts` のAxios interceptorで認証ヘッダーを付与し、HTTP層からProvider固有実装を分離する。
 
 ## Harness
 
