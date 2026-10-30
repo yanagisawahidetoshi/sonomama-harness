@@ -17,6 +17,7 @@ const pbi = { owner: 'acme', repo: 'app', number: 8, url: 'https://github.com/ac
 const issueUrl = number => `https://github.com/acme/app/issues/${number}`;
 const sha = char => char.repeat(40);
 const validationDigest = 'b'.repeat(64);
+const mockDigest = id => createHash('sha256').update(`mock ${id}`).digest('hex');
 // The digest a human approves binds the SBI composition of the PBI (ID, Issue number, kind) to the evidence, so changing the SBIs voids it.
 const composition = [{ id: 'SBI-001', number: 11, kind: 'implementation' }, { id: 'SBI-002', number: 12, kind: 'implementation' }, { id: 'SBI-003', number: 13, kind: 'validation' }];
 const pbiDigest = (sbis, evidence) => createHash('sha256').update(JSON.stringify({ sbis, evidence })).digest('hex');
@@ -79,7 +80,7 @@ function world(overrides = {}) {
 const connected = (byId = {}) => ({
   async read({ sbi }) {
     if (byId[sbi.id]) return byId[sbi.id];
-    return sbi.kind === 'validation' ? { connected: true, e2e: { status: 'PASS', api: 'real' }, evidenceDigest: validationDigest } : { connected: true, e2e: { status: 'PASS', api: 'mock' } };
+    return sbi.kind === 'validation' ? { connected: true, e2e: { status: 'PASS', api: 'real' }, evidenceDigest: validationDigest } : { connected: true, e2e: { status: 'PASS', api: 'mock' }, evidenceDigest: mockDigest(sbi.id) };
   },
 });
 const approval = (overrides = {}) => ({
@@ -281,11 +282,11 @@ describe('PBI Status: Human Acceptance and the evidence digest', () => {
 
   describe('given a PBI without a validation SBI', () => {
     const merged = [
-      { sbi: 'SBI-001', issueUrl: issueUrl(11), pullRequest: 21, headSha: sha('1'), mergeCommitSha: sha('1'), e2e: { status: 'PASS', api: 'mock' } },
-      { sbi: 'SBI-002', issueUrl: issueUrl(12), pullRequest: 22, headSha: sha('2'), mergeCommitSha: sha('2'), e2e: { status: 'PASS', api: 'mock' } },
+      { sbi: 'SBI-001', issueUrl: issueUrl(11), pullRequest: 21, headSha: sha('1'), mergeCommitSha: sha('1'), e2e: { status: 'PASS', api: 'mock' }, e2eDigest: mockDigest('SBI-001') },
+      { sbi: 'SBI-002', issueUrl: issueUrl(12), pullRequest: 22, headSha: sha('2'), mergeCommitSha: sha('2'), e2e: { status: 'PASS', api: 'mock' }, e2eDigest: mockDigest('SBI-002') },
     ];
     const expected = pbiDigest(composition.slice(0, 2), merged);
-    it('when every implementation SBI merged then the digest covers each SBI, its PR, the tested head, the merge commit and the E2E result', async () => {
+    it('when every implementation SBI merged then the digest covers each SBI, its PR, the tested head, the merge commit, the E2E result and the digest of its Maestro result file', async () => {
       const result = await status({ state: { issues: implementationOnlyIssues }, records: [] });
       assert.equal(result.evidenceDigest, expected);
       assert.equal(result.ready, true);
