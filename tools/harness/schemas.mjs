@@ -54,6 +54,8 @@ export const generatedRegistrationSchema = z.strictObject({
   version: z.literal(2), sbiIssue: z.number().int().positive(), specDigest: z.string().regex(/^[0-9a-f]{64}$/),
   generator: z.strictObject({ provider: text, runId: text }), adapter: z.literal('rails-request-spec'),
   tests: z.array(z.strictObject({ path: relativePath, sha256: z.string().regex(/^[0-9a-f]{64}$/) })).min(1),
+  // The spec helpers and support files the generated tests run with, as they were when the tests were checked.
+  protectedFiles: z.array(z.strictObject({ path: relativePath, sha256: z.string().regex(/^[0-9a-f]{64}$/) })),
   mapping: z.array(z.strictObject({ scenario: text, acceptanceIds: z.array(text).min(1), examples: z.array(z.strictObject({ path: relativePath, description: text })).min(1) })).min(1),
 });
 export const configSchema = z.strictObject({

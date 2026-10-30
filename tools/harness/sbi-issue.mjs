@@ -35,7 +35,7 @@ export function sections(body) {
   }
   return map;
 }
-const fenced = lines => {
+export const fenced = lines => {
   const start = lines.findIndex(l => l.startsWith('```')), end = lines.findIndex((l, i) => i > start && /^```\s*$/.test(l));
   return start < 0 || end < 0 ? null : lines.slice(start + 1, end);
 };
