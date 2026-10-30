@@ -58,7 +58,8 @@ module ApiContract
 
     def schema_errors(pointer, data, access_mode)
       @schemer.ref("##{pointer}").validate(data, access_mode:).map do |error|
-        "#{error['data_pointer'].presence || '/'}: #{error['error']}"
+        at = error["data_pointer"].presence || "/"
+        [at, "#{at}: #{error['error']}"]
       end
     end
 

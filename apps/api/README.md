@@ -91,8 +91,17 @@ end
 ```
 
 - `match_api_contract` はrequestとresponseの両方が契約どおりのときだけ通る。
-- 不正入力の負のテストは `request: { invalid: "<JSON pointer>" }` を付ける。そのpointerの入力違反が検出され、Railsが契約で宣言した4xxを返し、そのエラーresponseが契約どおりのときだけ通る。別の違反（`as: :json` の付け忘れでmedia typeが違う等）しか出ないとFAILし、検出された違反を出す。必須propertyの欠落は親のpointer（rootなら `/`）で指定する。
-- pointerを持たない違反（required bodyが無い、宣言していないmedia type）は `request: :invalid` で書く。4xxと契約どおりのエラーresponseは同じく必須。
+- 不正入力の負のテストは、どこが違反かを `request: { invalid: "<JSON pointer>" }` で指定する。指定できない違反は、何の違反かをcategoryで `request: { invalid: :missing_required_body }` のように指定する。
+  指定した違反が検出され、Railsが契約で宣言した4xxを返し、そのエラーresponseが契約どおりのときだけ通る。別の違反（`as: :json` の付け忘れでmedia typeが違う等）しか出ないとFAILし、検出された違反を出す。必須propertyの欠落は親のpointer（rootなら `/`）で指定する。
+- 指定なしの `request: :invalid` は使い方の誤りとして `ArgumentError` になる。何か違反していれば通る、という負のテストにしないため。
+- 照合はvalidatorの文言ではなく、pointerとcategoryで行う。
+
+| category | 違反 |
+| --- | --- |
+| `:missing_required_body` | `required: true` のrequest bodyが無い |
+| `:unsupported_media_type` | 契約で宣言していないContent-Typeでbodyを送った |
+| `:unexpected_body` | request bodyを宣言していないoperationにbodyを送った |
+| `:invalid_json` | JSONとして読めないbodyを送った |
 - 照合するもの: method / pathのoperation、path / query / header / cookie parameter、request bodyの有無・Content-Type・schema、response status・media type・body・宣言されたheader。bodyなしと宣言したstatus（204等）でbodyを返すとFAIL。
 - schemaは必須、型、enum、配列、入れ子、null許容（`type: [string, "null"]`）、`additionalProperties` を契約どおりに扱う。schemaの `default` は欠けたpropertyを補わない（必須なら欠落でFAIL）。
 - 失敗メッセージはoperation・status・違反箇所のJSON pointerだけを出し、tokenやbodyの値は出さない。契約に無いoperationでは、pathのうちRailsのpath parameterの値（ID・slug）と数字を含むsegmentを `:param` に伏せる。
@@ -105,7 +114,7 @@ full suite（`bundle exec rspec`）の最後に、Railsの業務route（`config/
 Railsが未実装の契約operationは `UNIMPLEMENTED` と出すだけでFAILにしない。業務routeも `openapi.yaml` も無い間は `NOT CHECKED` と出し、照合済みとは扱わない。
 一部のファイル・exampleだけを実行したときはcoverageを判定せず `NOT CHECKED` と出す。rails Verifierは `API_CONTRACT_COVERAGE=required` を渡すので、そこで `.rspec` や `spec_helper` のfilter・patternによって一部しか実行されなければFAILし、`--dry-run` は読込時にFAILする。
 既知の制約: 判定はrspecのプロセス内で行うため、spec_helper等が `ENV["API_CONTRACT_COVERAGE"]` を書き換えると外せる。防ぐにはHarness側の検査が要る（範囲外）。
-coverageに数えるのは、通った `match_api_contract` だけ。`request: :invalid` の負のテストも、入力違反を検出し、operationを特定でき、エラーresponseが契約どおりで通ったときは数える。失敗した照合と `not_to match_api_contract` は数えない。
+coverageに数えるのは、通った `match_api_contract` だけ。負のテストも、指定した入力違反を検出し、operationを特定でき、エラーresponseが契約どおりで通ったときは数える。失敗した照合と `not_to match_api_contract` は数えない。
 
 照合の仕組みは `spec/support/api_contract_spec.rb` が、本番routeに追加しないfixture用のRails route（`spec/support/api_contract_fixture.rb`）と契約（`spec/fixtures/api_contract/`）で検証する。
 

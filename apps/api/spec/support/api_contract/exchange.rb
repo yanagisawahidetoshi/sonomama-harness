@@ -1,6 +1,14 @@
 # frozen_string_literal: true
 
 module ApiContract
+  # A request violation in a stable form: the JSON pointer it is at, or a category for violations without one.
+  # Negative specs match on these, never on the validator's wording.
+  RequestViolation = Data.define(:category, :pointer, :message) do
+    def to_s = message
+  end
+  # Categories a negative spec can name when the violation has no pointer.
+  RequestViolation::CATEGORIES = %i[missing_required_body unsupported_media_type unexpected_body invalid_json].freeze
+
   # One request / response pair of a resolved operation, checked against the contract.
   # Messages carry pointers and keyword messages only, never the token, the body or the values it holds.
   class Exchange
@@ -17,7 +25,7 @@ module ApiContract
 
     def request_violations(rack_request)
       failure = @contract.definition.validate_request(rack_request).error
-      parameters = failure && BODY_FAILURES.exclude?(failure.type) ? failure_messages("request", failure) : []
+      parameters = failure && BODY_FAILURES.exclude?(failure.type) ? parameter_violations(failure) : []
       rack_request.body.rewind
       parameters + request_body_violations(rack_request.media_type, rack_request.body.read.to_s)
     end
@@ -52,32 +60,65 @@ module ApiContract
 
     def request_body_violations(media_type, body)
       request_body, = @contract.locate(*@operation, "requestBody")
-      return body.empty? ? [] : ["request body is sent, but the operation declares no request body"] unless request_body
-      return request_body["required"] ? ["request body is required"] : [] if body.empty?
+      return unexpected_body(body) unless request_body
+      return missing_body(request_body) if body.empty?
 
       content = request_body.fetch("content", {})
-      return [undeclared_media_type("request body media type", media_type, content)] unless content.key?(media_type)
+      return request_schema_violations(media_type, body) if content.key?(media_type)
 
-      body_violations("request body", ["requestBody", "content", media_type], body, "write")
+      [violation(:unsupported_media_type, undeclared_media_type("request body media type", media_type, content))]
     end
+
+    def missing_body(request_body)
+      request_body["required"] ? [violation(:missing_required_body, "request body is required")] : []
+    end
+
+    def unexpected_body(body)
+      if body.empty?
+        []
+      else
+        [violation(:unexpected_body,
+                   "request body is sent, but the operation declares no request body")]
+      end
+    end
+
+    def request_schema_violations(media_type, body)
+      body_errors(["requestBody", "content", media_type], body, "write")
+        .map { |pointer, message| violation(:body, "request body #{message}", pointer) }
+    rescue JSON::ParserError
+      [violation(:invalid_json, "request body is not valid JSON")]
+    end
+
+    def parameter_violations(failure)
+      return [violation(:parameter, "request #{failure.type}")] if failure.errors.blank?
+
+      failure.errors.map do |error|
+        pointer = error.data_pointer.presence || "/"
+        violation(:parameter, "request #{failure.type} #{pointer}: #{error.message}", pointer)
+      end
+    end
+
+    def violation(category, message, pointer = nil) = RequestViolation.new(category:, pointer:, message:)
 
     def undeclared_media_type(label, media_type, content)
       "#{label} #{media_type.presence || '(none)'} is not declared (declared: #{content.keys.join(', ')})"
     end
 
-    def body_violations(label, tokens, body, access_mode)
+    # Returns [pointer, message] pairs; raises JSON::ParserError when the body is not JSON.
+    def body_errors(tokens, body, access_mode)
       _, pointer = @contract.locate(*@operation, *tokens, "schema")
       data = JSON.parse(body)
-      return [] unless pointer
-
-      @contract.schema_errors(pointer, data, access_mode).map { |message| "#{label} #{message}" }
-    rescue JSON::ParserError
-      ["#{label} is not valid JSON"]
+      pointer ? @contract.schema_errors(pointer, data, access_mode) : []
     end
 
     def response_body_violations(response, status, media_type)
-      body_violations("response body", ["responses", status, "content", media_type], response.body, "read") +
-        header_violations(response, response_definition(status, media_type))
+      body = begin
+        body_errors(["responses", status, "content", media_type], response.body, "read")
+          .map { |_, message| "response body #{message}" }
+      rescue JSON::ParserError
+        ["response body is not valid JSON"]
+      end
+      body + header_violations(response, response_definition(status, media_type))
     end
 
     def response_definition(status, media_type)

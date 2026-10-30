@@ -7,12 +7,12 @@ module ApiContract
     # expect(response).to match_api_contract
     #   the request and the response follow the contract
     # expect(response).to match_api_contract(request: { invalid: "/grade" })
-    #   a negative spec: the request violates the contract at /grade, and Rails answers with a declared 4xx error
-    #   that follows the contract
-    # expect(response).to match_api_contract(request: :invalid)
-    #   the same, for violations without a pointer (a missing body, an undeclared media type)
+    # expect(response).to match_api_contract(request: { invalid: :missing_required_body })
+    #   a negative spec: the request violates the contract at that pointer (or in that category, see
+    #   RequestViolation::CATEGORIES), and Rails answers with a declared 4xx error that follows the contract
     matcher :match_api_contract do |contract = nil, request: :valid|
       match do |response|
+        expected_violation unless request == :valid
         subject_contract = contract || ApiContract.default
         @result = subject_contract.check(response.request, response)
         matched = problems.empty?
@@ -24,10 +24,11 @@ module ApiContract
       end
 
       define_method(:expected_violation) do
-        return nil if %i[valid invalid].include?(request)
-        return request[:invalid] if request.is_a?(Hash) && request[:invalid].is_a?(String)
+        target = request[:invalid] if request.is_a?(Hash)
+        return target if target.is_a?(String) || RequestViolation::CATEGORIES.include?(target)
 
-        raise ArgumentError, "request: must be :valid, :invalid or { invalid: \"/pointer\" }, got #{request.inspect}"
+        raise ArgumentError, "request: must be :valid or { invalid: \"/pointer\" } or { invalid: <category> } " \
+                             "with a category of #{RequestViolation::CATEGORIES.join(', ')}; got #{request.inspect}"
       end
 
       define_method(:problems) do
@@ -44,11 +45,12 @@ module ApiContract
 
       # The violations that were detected instead are listed, so a forgotten as: :json is easy to spot.
       define_method(:undetected_violation) do
-        pointer = expected_violation
-        return [] if @result.request_violations.any? { |violation| pointer.nil? || violation.include?(" #{pointer}:") }
+        target = expected_violation
+        key = target.is_a?(String) ? :pointer : :category
+        return [] if @result.request_violations.any? { |violation| violation.public_send(key) == target }
 
-        ["the spec declared an invalid request#{" at #{pointer}" if pointer}, but it was not detected",
-         *@result.request_violations]
+        ["the spec declared an invalid request (#{target.inspect}), but it was not detected",
+         *@result.request_violations.map(&:to_s)]
       end
 
       failure_message do
