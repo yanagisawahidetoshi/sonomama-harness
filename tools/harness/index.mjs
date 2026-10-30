@@ -362,7 +362,10 @@ async function detectScenarios({ workspace, directory, registration, sbiIssue, c
     const examples = examplesOf(s.scenario);
     const violated = await withViolationCopy({ workspace, directory, carried, proposal }, copy => runner({ workspace: copy, sbiIssue, config, examples }));
     const judged = judgeViolation({ registration, scenario: s.scenario, report: violated });
-    if (judged.outcome === 'environment') return { environment: judged.reason, scenarios };
+    if (judged.outcome === 'environment') {
+      for (const rest of satisfied.filter(r => r.outcome === null)) Object.assign(rest, { outcome: 'undeterminable', reason: 'not run; the run stopped on an environment failure' });
+      return { environment: judged.reason, scenarios };
+    }
     Object.assign(s, { outcome: judged.outcome, ...(judged.failures ? { failures: judged.failures } : {}), ...(judged.reason ? { reason: judged.reason } : {}) });
   }
   return { scenarios };
