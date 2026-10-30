@@ -129,11 +129,30 @@ describe('Maestro Evidence adapter', () => {
         await assert.rejects(adapter.read({ sbi: sbi(), pull }), error => error.artifactUnavailable === true);
       });
     }
-    it('when the download fails then reading fails with an artifact-unavailable error', async () => {
-      const { state, adapter } = world();
-      state.files = null;
-      const failing = maestroEvidence({ ref, github: { fileAt: async () => state.snapshot }, actions: { checkRuns: async () => state.checkRuns, workflowRuns: async () => state.runs, artifacts: async () => state.artifacts, download: async () => { throw new Error('artifact 1 をダウンロードできません（HTTP 410）'); } } });
-      await assert.rejects(failing.read({ sbi: sbi(), pull }), error => error.artifactUnavailable === true);
+    const failingDownload = error => {
+      const { state } = world();
+      return maestroEvidence({ ref, github: { fileAt: async () => state.snapshot }, actions: { checkRuns: async () => state.checkRuns, workflowRuns: async () => state.runs, artifacts: async () => state.artifacts, download: async () => { throw error; } } });
+    };
+    for (const status of ['404', '410']) {
+      it(`when the download answers HTTP ${status} then the artifact is gone, and the error names the run and the artifact`, async () => {
+        await assert.rejects(failingDownload(Object.assign(new Error(`artifact 1 をダウンロードできません（HTTP ${status}）`), { httpStatus: status })).read({ sbi: sbi(), pull }),
+          error => error.artifactUnavailable === true && error.workflowRunId === 900 && error.artifactId === 1);
+      });
+    }
+    for (const [name, error] of [
+      ['a server error', Object.assign(new Error('HTTP 502'), { httpStatus: '502' })],
+      ['a rate limit', Object.assign(new Error('HTTP 403 rate limit'), { httpStatus: '403' })],
+      ['an expired login', Object.assign(new Error('HTTP 401'), { httpStatus: '401' })],
+      ['a network failure', new Error('connect ETIMEDOUT')],
+      ['an unzip failure', new Error('artifact 1 を展開できません')],
+    ]) {
+      it(`when the download fails with ${name} then the error is not artifact-unavailable, so no manifest stands in`, async () => {
+        await assert.rejects(failingDownload(error).read({ sbi: sbi(), pull }), e => !e.artifactUnavailable);
+      });
+    }
+    it('when the artifact expired then the error names the run and the expired artifact', async () => {
+      const { adapter } = world({ artifacts: [{ id: 1, name: 'maestro-results', expired: true, created_at: '2026-10-30T00:50:00Z' }] });
+      await assert.rejects(adapter.read({ sbi: sbi(), pull }), error => error.artifactUnavailable === true && error.workflowRunId === 900 && error.artifactId === 1);
     });
     it('when the result was read but is for another lane then the error is not artifact-unavailable', async () => {
       const { adapter } = world({ files: { 'mock.json': JSON.stringify(result({ lane: 'real' })) } });
@@ -159,6 +178,7 @@ describe('Maestro Evidence adapter', () => {
       ['the snapshot belongs to another PBI', { snapshot: JSON.stringify(snapshot({}, { pbiUrl: 'https://github.com/acme/app/issues/9' })) }, /PBI/],
       ['the harness check of the merged head did not pass', { checkRuns: [{ id: 5, name: 'harness', status: 'completed', conclusion: 'failure', check_suite: { id: 77 } }] }, /harness check/],
       ['there is no harness check on the merged head', { checkRuns: [] }, /harness check/],
+      ['the harness check has no start time to tell which artifact it read', { checkRuns: [{ id: 5, name: 'harness', status: 'completed', conclusion: 'success', check_suite: { id: 77 } }] }, /started_at/],
       ['the check suite has no Harness workflow run', { runs: [{ id: 900, path: '.github/workflows/other.yml', head_sha: head, event: 'pull_request' }] }, /workflow run/],
       ['the workflow run is for another commit', { runs: [{ id: 900, path: '.github/workflows/harness.yml', head_sha: 'b'.repeat(40), event: 'pull_request' }] }, /workflow run/],
       ['the result artifact expired', { artifacts: [{ id: 1, name: 'maestro-results', expired: true }] }, /artifact/],
@@ -206,8 +226,8 @@ describe('GitHub adapter for the Maestro Evidence', () => {
         });
       } finally { await rm(dir, { recursive: true, force: true }); }
     });
-    it('when the artifact cannot be downloaded then reading fails', () => githubMock({})({}, async () => {
-      await assert.rejects(githubActionsCli.download(ref, 1), /artifact 1/);
+    it('when the artifact cannot be downloaded then reading fails with the HTTP status', () => githubMock({})({}, async () => {
+      await assert.rejects(githubActionsCli.download(ref, 1), error => /artifact 1/.test(error.message) && error.httpStatus === '404');
     }));
   });
 });

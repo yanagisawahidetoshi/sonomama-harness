@@ -195,5 +195,11 @@ describe('GitHub adapter for the PBI body history', () => {
       assert.deepEqual(await githubCli.bodyVersions(pbi), [{ body: 'v1', deletedAt: null }, { body: null, deletedAt: '2026-10-30T03:00:00Z' }, { body: 'v3', deletedAt: null }]);
       assert.ok((await github.calls()).some(c => c.args.includes('graphql') && JSON.parse(c.input).variables.number === 8));
     }));
+    it('when several edits share the same second then the newest-first order of the API is reversed instead of sorting by time, so A, B, A, B keeps every change', () => githubMock({})({ issueEdits: { 8: [
+      { editedAt: '2026-10-30T00:00:00Z', deletedAt: null, diff: 'B2' }, { editedAt: '2026-10-30T00:00:00Z', deletedAt: null, diff: 'A2' },
+      { editedAt: '2026-10-30T00:00:00Z', deletedAt: null, diff: 'B1' }, { editedAt: '2026-10-30T00:00:00Z', deletedAt: null, diff: 'A1' },
+    ] } }, async () => {
+      assert.deepEqual((await githubCli.bodyVersions(pbi)).map(v => v.body), ['A1', 'B1', 'A2', 'B2']);
+    }));
   });
 });

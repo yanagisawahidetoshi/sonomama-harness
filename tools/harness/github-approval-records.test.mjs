@@ -41,6 +41,9 @@ describe('Approval records in GitHub Issue comments', () => {
       ['the permission of the person could not be read', [approve(1)], { alice: 'unknown' }],
       ['the person later revoked it', [approve(1), revoke(2)]],
       ['the comment has no author', [approve(1, 'alice', { user: null })]],
+      ['the comment has no creation time', [approve(1, 'alice', { created_at: undefined })]],
+      ['the comment has no update time', [approve(1, 'alice', { updated_at: undefined })]],
+      ['the comment has neither time, so an edit cannot be told apart', [approve(1, 'alice', { created_at: undefined, updated_at: undefined })]],
     ]) {
       it(`when ${name} then the digest is not approved`, () => {
         assert.equal(judge(comments, permissions).approved, false);

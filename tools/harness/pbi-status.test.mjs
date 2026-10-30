@@ -567,9 +567,10 @@ describe('PBI Evidence manifest', () => {
   const resultDigest = id => mockDigest(id);
   const source = sbi => ({ workflowRunId: 900 + sbi.number, artifactId: 1000 + sbi.number, lane: sbi.kind === 'validation' ? 'real' : 'mock', resultDigest: sbi.kind === 'validation' ? validationDigest : resultDigest(sbi.id) });
   // The raw CI artifact: readable until it expires, then the adapter says the artifact is unavailable.
-  const ci = (expired = new Set()) => ({
+  const ci = (expired = new Set(), rerun = new Set()) => ({
     async read({ sbi }) {
-      if (expired.has(sbi.id)) throw Object.assign(new Error('workflow run 900 のmaestro-results artifactが期限切れ'), { artifactUnavailable: true });
+      const { workflowRunId, artifactId } = source(sbi);
+      if (expired.has(sbi.id)) throw Object.assign(new Error(`workflow run ${workflowRunId} のmaestro-results artifactが期限切れ`), { artifactUnavailable: true, workflowRunId, artifactId: rerun.has(sbi.id) ? artifactId + 1 : artifactId });
       return sbi.kind === 'validation' ? { connected: true, e2e: { status: 'PASS', api: 'real' }, evidenceDigest: validationDigest, source: source(sbi) }
         : { connected: true, e2e: { status: 'PASS', api: 'mock' }, evidenceDigest: resultDigest(sbi.id), source: source(sbi) };
     },
@@ -625,6 +626,12 @@ describe('PBI Evidence manifest', () => {
         assert.ok(result.sbis.every(s => s.evidence !== 'MANIFEST'), JSON.stringify(result.sbis));
       }));
     }
+    it('when CI was re-run after APPROVE and the artifact now selected is another one then the manifest does not stand in', () => withRoot(async root => {
+      await run(root, { decision: 'APPROVE' });
+      const result = await run(root, { evidence: ci(new Set(['SBI-001']), new Set(['SBI-001'])) });
+      assert.equal(result.status, 'NOT_DONE');
+      assert.notEqual(result.sbis[0].evidence, 'MANIFEST');
+    }));
     it('when the manifest ledger was edited then the PBI is NOT_DONE with the reason', () => withRoot(async root => {
       await run(root, { decision: 'APPROVE' });
       const path = pbiEvidenceLedgerPath(root, parseIssueUrl(pbi.url));
