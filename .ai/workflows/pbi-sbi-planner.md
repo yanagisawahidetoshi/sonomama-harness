@@ -5,11 +5,12 @@
 3. `pnpm planner:sbi https://github.com/<owner>/<repo>/issues/<number>`を実行する。
    providerの既定はclaude。Codexだけ使える場合は`--provider codex`を付ける。CLIはインストール・ログイン済みでPATHから起動できることが必要。
 4. SBI Quality JudgeがFAILならIssueは作成されず、exit 1で修正理由が表示される。PBIを直して再実行する。
-5. PASSなら依存順にSBI Issueを作成し、`sbi`と`needs-review`を付与する。元PBIに`## Generated SBI`一覧をコメントする。
+5. PASSなら依存順にSBI Issueを作成し、`sbi`と`needs-review`を付与する。元PBIの本文に`## SBI構成`（SBI ID・Issue番号・kind・依存の完全な集合）を書き、`## Generated SBI`一覧をコメントする。
 6. 人間がSBI Issueをレビューする。見るのは分割粒度、受け入れ要件、Gherkin、依存関係、Security影響、検証方法。
 7. 採用するSBIは、ACごとのTrusted Acceptanceを人間が書いてレビューし、
    `.harness/acceptance/sbi-<SBI番号>.json`に`{ "version": 1, "sbiIssue": <SBI番号>, "verifiers": [{ "id", "trustedScript", "planned", "acceptanceIds": [IssueのAC ID] }] }`で登録する。
 8. 全ACの対応を確認したら`needs-review`を外して`ready`を付ける。`gh issue edit <number> --remove-label needs-review --add-label ready`。
+9. PBIの`## SBI構成`を確認し、`pnpm harness:pbi-plan-approve <PBI URL>`で一度だけ承認する（下記「PBI plan」）。
 9. `pnpm harness:run <SBI Issue URL>`で実行する。SBI JSONは書かない。HarnessがIssueを取得・検証し、Run snapshotを保存して実装・検証・PR作成まで進める。
 
 ## SBIの種類
@@ -25,6 +26,15 @@ PBIは、すべてのSBIが完了し、PBI Human Acceptance Gateが承認され�
 `pbi-acceptance`はImplementation Gate・Design Approval・Merge Approval・API Schema Approvalとは別の承認で、どれの代わりにもならない。
 Maestroのlane（実装SBIはモックAPI、最終確認SBIは実API）とCompletion Judgeでの必須判定は[ci.md](ci.md)にある。
 
+### PBI plan（PBIのSBI集合）
+
+PBIのSBI集合の正本は、Plannerが書いた`## SBI構成`と、それに対する人間の承認コメントの組。
+`pnpm harness:pbi-plan-approve <PBI URL>`は、`## SBI構成`がGitHub上のSBI Issue（`sbi`ラベルとPlannerのmarker）と一致するときだけ、人の`gh`でPBIに`harness-pbi-plan: <digest>`をコメントする。撤回は`--decision revoke`（`harness-pbi-plan-revoke: <digest>`）。
+
+- digestは、PBI番号と、SBIごとのSBI ID・Issue番号・kind・依存（ID順に並べ、依存も並べる）のsha256。`## SBI構成`を書き換える、SBIを足す・外すとdigestが変わり、承認は無効になる。
+- 承認として数えるのは、write以上の権限を持つ人の、承認行だけのコメント。botは数えない。権限を読めない人、編集されたコメントも数えない。人ごとに最新の判断を使い、1人で足りる。検証は`github-approval-records.mjs`（#147の`harness-spec`と共有）。
+- `## SBI構成`が無い既存のPBIは、`pnpm harness:pbi-plan <PBI URL>`でGitHub上のSBI IssueからPBI本文に書いてから承認する。Plannerは再実行しない。
+
 ### PBIの完了判定
 
 ```sh
@@ -36,7 +46,8 @@ pnpm harness:pbi-accept <PBI URL> --evidence <digest> [--decision approve|revoke
 
 | 入力 | 取得元 |
 | --- | --- |
-| SBI | `sbi`ラベルのIssueのうち、Plannerのmarkerがこのpbi URLを指すもの。kindは`## 種類`、依存は`## 依存SBI`。同じSBI IDのIssueが2件あればNOT_DONE |
+| PBI plan | PBI本文の`## SBI構成`と`harness-pbi-plan`コメント。無い・未承認・承認が読めないときはNOT_DONE |
+| SBI | `sbi`ラベルのIssueのうち、Plannerのmarkerがこのpbi URLを指すもの。kindは`## 種類`、依存は`## 依存SBI`。承認済みPBI planと完全に一致しなければNOT_DONE（「SBI #N が見つかりません」「SBI #N が承認済みPBI planに登録されていません」）。同じSBI IDのIssueが2件あってもNOT_DONE |
 | merge | 依存SBIの確認と同じ。mainへmergeされ、`Closes #N`と`SBI-Issue:` trailerを持つHarness PR。Issueを手で閉じただけでは数えない |
 | 必須Verifier | merged PRのhead SHAのcheck run。`github.requiredChecks`とmainのRulesetのrequired status checksがすべてsuccess |
 | kind・E2E対象 | merged PRのhead SHAに入っている `.harness/state/sbi-<N>.json`（CIがIssueとの一致を確かめたsnapshot）。Issueの`## 種類`と一致しなければNOT_DONE。E2E対象かどうかはImpact Analysisと同じ`maestroLanes`で決める |
@@ -47,9 +58,9 @@ pnpm harness:pbi-accept <PBI URL> --evidence <digest> [--decision approve|revoke
 GitHub・Evidence・台帳のどれかを読めなければ、理由を出してNOT_DONEにする。
 Evidenceを読むのはmainへmergeされたHarness PRのCI runだけなので、最終確認SBIもHarness PRをmergeする必要がある。artifactは保存期限（90日）を過ぎると読めなくなり、そのPBIはNOT_DONEに戻る。
 
-Evidence digestは、SBIの構成（ID・Issue番号・kind）と、最終確認SBIがあればその`real.json`のsha256、なければ実装SBIごとのIssue・PR・head SHA・merge commit・E2E結果と`mock.json`のsha256をまとめたsha256。SBIを足す・外す・入れ替えると過去のAPPROVEは無効になる。
+Evidence digestは、承認済みPBI planのdigest、SBIの構成（ID・Issue番号・kind）と、最終確認SBIがあればその`real.json`のsha256、なければ実装SBIごとのIssue・PR・head SHA・merge commit・E2E結果と`mock.json`のsha256をまとめたsha256。SBIを足す・外す・入れ替えると過去のAPPROVEは無効になる。
 すべてのSBIが完了すると`harness:pbi-status`がdigestと`harness:pbi-accept`のコマンドを表示する。人間はEvidenceを確認してから記録する。
-APPROVEはPBIの最終Gateなので、すべてのSBIが完了し（最終確認SBIがあればPASS）、Evidenceを読めて`--evidence`が現在のdigestと一致し、openのblockerが無いときだけ記録する。blockerを読めないときも記録しない。REQUEST_CHANGES / REVOKEはいつでも記録できる。
+APPROVEはPBIの最終Gateなので、PBI planが承認済みで、すべてのSBIが完了し（最終確認SBIがあればPASS）、Evidenceを読めて`--evidence`が現在のdigestと一致し、openのblockerが無いときだけ記録する。blockerを読めないときも記録しない。REQUEST_CHANGES / REVOKEはいつでも記録できる。
 人ごとに最新の判断を使い、現在のdigestに対するAPPROVEが1件あればGateを通る。`--reviewer`は無く、OSのユーザーが記録者になる。
 
 ## SBI Issueの項目

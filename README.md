@@ -435,7 +435,7 @@ GitHub Issue (PBI) → PBI Reader → SBI Decomposer（codex / claude）→ SBI 
 GitHubアクセスは認証済みの`gh` CLIを使う。providerはcodexまたはclaudeを明示するか、harness.jsonのproviderを使う。
 fakeは公開先がGitHubのため拒否する。`--dry-run`・`--publish`は設けない。
 SBIには種類（kind）がある。implementation（実装SBI）と、Integration / E2Eが必要なPBIだけ1件まで持てるvalidation（最終確認SBI、実API / Rails / DB接続のMaestro E2E）の2つ。
-人間確認はSBIにせず、PBI Human Acceptance Gateとして扱う。PBIの完了は`pnpm harness:pbi-status PBI_URL`で判定し、受け入れは`pnpm harness:pbi-accept PBI_URL --evidence DIGEST`で署名付き台帳へ記録する（Maestro E2E EvidenceはmergeされたHarness PRのCI artifactから読む。[pbi-sbi-planner.md](.ai/workflows/pbi-sbi-planner.md)）。
+人間確認はSBIにせず、PBI Human Acceptance Gateとして扱う。PlannerはPBI本文に`## SBI構成`を書き、人間が`pnpm harness:pbi-plan-approve PBI_URL`で一度承認する（`## SBI構成`が無い既存PBIは`pnpm harness:pbi-plan PBI_URL`で書く）。PBIの完了は`pnpm harness:pbi-status PBI_URL`で判定し、受け入れは`pnpm harness:pbi-accept PBI_URL --evidence DIGEST`で署名付き台帳へ記録する（Maestro E2E EvidenceはmergeされたHarness PRのCI artifactから読む。[pbi-sbi-planner.md](.ai/workflows/pbi-sbi-planner.md)）。
 Quality Judgeは決定的なルールで、粒度（受け入れ要件6件以内。implementationは変更範囲4領域以内・レイヤー1つ・想定変更ファイル1以上で、10超は理由が必須）、実テスト（implementationはApplication TestとScenarioごとのtest、validationはE2E）、目的が2文以内、受け入れ要件の曖昧語、
 Gherkinと受け入れ要件の対応、依存SBIの存在と循環、変更範囲・Risk/Security・検証方法の記載を検査する。
 Security Impactを宣言したSBIのRisk candidateはL3。最終Risk判定はExecution Harnessが行う。
