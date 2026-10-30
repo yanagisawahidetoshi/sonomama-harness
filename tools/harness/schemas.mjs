@@ -66,7 +66,6 @@ export const configSchema = z.strictObject({
     isolation: z.enum(['container', 'compose', 'harness']).default('container'), network: z.boolean().default(false) }).superRefine(isolationRules)).default([]),
   // Untrusted verifier commands run in a Docker container; docker names the trusted CLI that starts it.
   isolation: z.strictObject({ docker: text }).default({ docker: 'docker' }),
-  semanticReview: z.strictObject({ enabled: z.boolean() }).default({ enabled: false }),
   // GitHub PR mode. requiredChecks are combined with the ruleset's required status checks of the base branch.
   github: z.strictObject({ remote: text, base: text, requiredChecks: z.array(text) }).default({ remote: 'origin', base: 'main', requiredChecks: ['harness'] }),
   verifiers: z.array(z.strictObject({ id: text, directory: z.union([z.literal('.'), relativePath]), marker: relativePath.optional(),
@@ -319,7 +318,9 @@ export const runStateSchema = z.strictObject({
   executionSecurityAssessment: z.looseObject({ matchedRules: z.array(text), requiredVerifiers: z.array(text) }).optional(),
   riskPreflight: z.looseObject({ level: z.union([z.literal(1), z.literal(2), z.literal(3)]) }).optional(),
   risk: z.looseObject({ level: z.union([z.literal(1), z.literal(2), z.literal(3)]) }).optional(),
-  escalation: z.strictObject({ code: z.enum(escalationCodes), detail: z.string() }).optional(),
+  escalation: z.strictObject({ code: z.enum(escalationCodes), detail: z.string(), decision: z.literal('NEEDS_HUMAN_DECISION').optional() }).optional(),
+  // A Human Gate risk the approved SBI declared (#175): level 3 and two humans after implementation, never a stop before it.
+  humanGateRisk: z.boolean().optional(),
   pullRequest: z.strictObject({ number: z.number().int().positive(), url: z.url(), branch: text, base: text, repository: text }).optional(),
   // harness:reverify (ADR-0003): a run that verifies the code of an existing PR merged with the new main, without the implementation agent.
   kind: z.literal('reverify').optional(),

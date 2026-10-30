@@ -2,6 +2,10 @@
 export const escalationCodes = Object.freeze(['SPEC_AMBIGUOUS', 'DESIGN_DECISION_REQUIRED', 'AGENT_ESCALATION', 'SECRET_PROPOSAL', 'NEW_SECURITY_SCOPE', 'NEW_HIGH_RISK',
   'VERIFIER_NOT_CONFIGURED', 'SECURITY_VERIFIER_NOT_CONFIGURED', 'SCOPE_VIOLATION', 'LANE_ESCALATION', 'ITERATION_LIMIT', 'CONSECUTIVE_FAILURE',
   'SOURCE_DIRTY', 'SOURCE_CHANGED', 'WORKSPACE_CHANGED', 'APPROVAL_INVALID', 'SECURITY_CHECKS_CHANGED', 'REVERIFY_CONFLICT', 'UNKNOWN']);
+// A decision the approved SBI cannot settle (#175): the human decides, updates the SBI, approves it again and starts a new run.
+// The others are failures a human investigates (environment, configuration, tampering, repeated failures).
+const humanDecisionCodes = new Set(['SPEC_AMBIGUOUS', 'DESIGN_DECISION_REQUIRED', 'AGENT_ESCALATION', 'NEW_SECURITY_SCOPE', 'NEW_HIGH_RISK', 'SCOPE_VIOLATION', 'LANE_ESCALATION']);
+export const needsHumanDecision = code => humanDecisionCodes.has(code);
 export function classifyEscalation(message) {
   const text = String(message ?? '');
   if (/^scope[ /]|^trusted test path is reserved/.test(text)) return 'SCOPE_VIOLATION';
@@ -19,6 +23,8 @@ export function mergeFailure(error) {
   const code = classifyEscalation(error?.message);
   return { code, retryable: code === 'UNKNOWN' };
 }
+// The reason an SBI carries a Human Gate risk. Since #175 the human decides it at SBI approval: it raises the Risk to level 3 and two
+// humans after implementation, and never stops the run before implementation. ambiguous / requiresDesignDecision still escalate.
 export function humanGate(sbi, rules) {
   if (sbi.ambiguous) return '仕様が曖昧です。SBIを人間が具体化してください。';
   if (sbi.requiresDesignDecision) return '重要設計判断が必要です。人間がADRを決定してください。';
