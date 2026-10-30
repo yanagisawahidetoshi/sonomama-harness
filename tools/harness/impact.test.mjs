@@ -231,7 +231,8 @@ describe('SBI requirement for Production changes', () => {
 
     it('when the impact is printed then the CI log shows why the SBI is required', () => {
       const lines = describeImpact(analyzeImpact({ config, sbis: [], files: files(touched.api) }));
-      assert.ok(lines.includes(`SBI required: yes (production:${touched.api})`));
+      assert.ok(lines.includes('Change type: ambiguous / SBI required (fail-closed)'), lines.join('\n'));
+      assert.ok(lines.includes(`Change type ambiguous: ${touched.api} (no engineering rule matches)`), lines.join('\n'));
     });
   });
 
@@ -253,7 +254,7 @@ describe('SBI requirement for Production changes', () => {
         const impact = analyzeImpact({ config, sbis: [], files: files(path) });
         assert.equal(impact.sbiRequired, false);
         assert.deepEqual(impact.sbiRequiredReasons, []);
-        assert.ok(describeImpact(impact).includes('SBI required: no (no production path changed)'));
+        assert.ok(describeImpact(impact).includes('Change type: none (no production path changed) / SBI not required'));
       });
     }
 
