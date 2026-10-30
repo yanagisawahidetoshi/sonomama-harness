@@ -136,6 +136,27 @@ describe('Change type of a Production diff', () => {
       });
     }
 
+    for (const version of ['^1.8.2', '~1.7.9', '1.8.2', '>=1.7.0 <2', '1.x', '^1.7.0 || ^2.0.0', '1.8.0-rc.1', '*']) {
+      it(`when a version becomes the semver range ${version} then it is engineering`, () => {
+        assert.equal(classify(packageChange(before, pkg({ react: '19.1.0', axios: version }))).changeType, 'engineering');
+      });
+    }
+
+    for (const [name, spec] of [
+      ['an npm alias to another package', 'npm:evil@1.0.0'],
+      ['a git URL', 'github:someone/axios'],
+      ['a git+https URL', 'git+https://github.com/someone/axios.git'],
+      ['a tarball URL', 'https://example.com/axios-1.8.2.tgz'],
+      ['a local file', 'file:../axios'],
+      ['a link', 'link:../axios'],
+      ['a workspace package', 'workspace:*'],
+      ['a dist tag', 'latest'],
+    ]) {
+      it(`when an existing dependency is pointed at ${name} then it is ambiguous because it is no longer a version`, () => {
+        assert.equal(classify(packageChange(before, pkg({ react: '19.1.0', axios: spec }))).changeType, 'ambiguous');
+      });
+    }
+
     it('when the package.json is added then it is ambiguous', () => {
       assert.equal(classify(packageChange(undefined, before, { status: 'A' })).changeType, 'ambiguous');
     });
@@ -159,6 +180,7 @@ describe('Change type of a Production diff', () => {
       ['an option such as require changes', ['gem "bootsnap", require: false'], ['gem "bootsnap"']],
       ['a group changes', ['gem "rails", "~> 8.0.2"'], ['group :development do', '  gem "rails", "~> 8.0.2"', 'end']],
       ['a line of Ruby changes', ['gem "rails", "~> 8.0.2"'], ['gem "rails", ENV.fetch("RAILS_VERSION")']],
+      ['a version string becomes something that is not a requirement', ['gem "rails", "~> 8.0.2"'], ['gem "rails", "#{ENV["RAILS"]}"']],
     ]) {
       it(`when ${name} then it is ambiguous`, () => {
         assert.equal(classify(gemfileChange(before, after)).changeType, 'ambiguous');

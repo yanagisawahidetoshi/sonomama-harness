@@ -406,6 +406,15 @@ describe('CI Completion Judge for the source SBI Issue', () => {
       assert.ok(judged.reasons.some(r => r.startsWith('sbi source invalid')), judged.reasons.join('; '));
     })));
 
+    it('when a diff outside the Production paths adds a broken SBI snapshot then the snapshot is still verified and the Judge fails', () => mockGitHub({}, () => fixture(async root => {
+      await prepare(root);
+      await commit(root, { 'prototypes/web/src/main.tsx': 'export {};', [snapshotPath(snapshot())]: '{ broken' }, `feat: prototype${trailers()}`);
+      const judged = await run(root);
+      assert.equal(judged.impact.changeType, null);
+      assert.equal(judged.status, 'FAIL');
+      assert.ok(judged.reasons.some(r => r.startsWith('sbi source invalid')), judged.reasons.join('; '));
+    })));
+
     it('when an engineering diff deletes an SBI snapshot then the deletion is verified as an SBI source and the Judge fails', () => mockGitHub({}, () => fixture(async root => {
       await writeFile(join(root, '.harness/state/sbi-7.json'), JSON.stringify(snapshot(), null, 2));
       await prepare(root);
