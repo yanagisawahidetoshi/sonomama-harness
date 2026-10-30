@@ -23,6 +23,13 @@ export const githubMock = defaults => async (state, test) => {
         for (const [name, text] of Object.entries(files)) fs.writeFileSync(path.join(out, name), text);
         process.exit(0);
       }
+      if (args[0] === 'api' && args[1] === 'graphql') {
+        const { variables } = JSON.parse(input), edits = (state.issueEdits || {})[variables.number] || [];
+        const start = variables.after ? Number(variables.after) : 0, nodes = edits.slice(start, start + 100);
+        fs.appendFileSync(path.join(dir, 'calls.jsonl'), '');
+        process.stdout.write(JSON.stringify({ data: { repository: { issue: { userContentEdits: { nodes, pageInfo: { hasNextPage: start + 100 < edits.length, endCursor: String(start + 100) } } } } } }));
+        process.exit(0);
+      }
       const method = args.includes('-X') ? args[args.indexOf('-X') + 1] : 'GET';
       const [endpoint, query = ''] = args.find(a => a.startsWith('repos/')).split('?');
       const params = Object.fromEntries(new URLSearchParams(query));

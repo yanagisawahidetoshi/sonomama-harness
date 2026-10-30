@@ -2,7 +2,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { renderSbiBody } from './planner.mjs';
-import { planOf, planDigest, renderPlanSection, parsePlan, withPlanSection, writePbiPlan, approvePbiPlan } from './pbi-plan.mjs';
+import { githubCli } from './planner-github.mjs';
+import { githubMock } from './test-github.mjs';
+import { planOf, planDigest, renderPlanSection, parsePlan, withPlanSection, writePbiPlan, approvePbiPlan, planRevision, approvalKey } from './pbi-plan.mjs';
 
 const pbi = { owner: 'acme', repo: 'app', number: 8, url: 'https://github.com/acme/app/issues/8', title: '受講生ログイン' };
 const entries = [
@@ -90,19 +92,41 @@ function world({ pbiBody = '## 背景\n\nログインしたい。', comments = [
       { number: 201, title: 'SBI-001 a', body: sbiBody('SBI-001'), html_url: 'https://github.com/acme/app/issues/201', state: 'open', labels: [{ name: 'sbi' }] },
       { number: 202, title: 'SBI-002 b', body: sbiBody('SBI-002', 'implementation', ['SBI-001']), html_url: 'https://github.com/acme/app/issues/202', state: 'open', labels: [{ name: 'sbi' }] },
     ],
-    comments, posted: [], patched: [],
+    comments, posted: [], patched: [], versions: [], failVersions: false,
   };
   const github = {
     async fetchIssue() { return state.pbi; },
     async listIssues(_ref, label) { return state.issues.filter(i => i.labels.some(l => l.name === label)); },
     async updateIssue(_ref, fields) { state.patched.push(fields); state.pbi.body = fields.body; return state.pbi; },
     async listComments() { return state.comments; },
+    async bodyVersions() { if (state.failVersions) throw new Error('HTTP 502'); return state.versions; },
     async permission() { return permission; },
     async addComment(_ref, text) { state.posted.push(text); return { id: 9, body: text, html_url: `${pbi.url}#issuecomment-9` }; },
   };
   return { state, github };
 }
 const currentPlan = planOf(8, [{ id: 'SBI-001', number: 201, kind: 'implementation', dependsOn: [] }, { id: 'SBI-002', number: 202, kind: 'implementation', dependsOn: ['SBI-001'] }]);
+
+describe('PBI plan revision', () => {
+  const planA = planOf(8, entries), planB = planOf(8, entries.slice(1));
+  const bodyA = body(planA), bodyB = body(planB), version = text => ({ body: text, deletedAt: null });
+  for (const [name, versions, current, expected] of [
+    ['the PBI body was never edited', [], bodyA, 1],
+    ['the plan was written into a PBI that had none', [version('## 背景')], bodyA, 2],
+    ['only text outside ## SBI構成 changed', [version(bodyA)], `${bodyA}\n追記`, 1],
+    ['the plan changed from A to B', [version(bodyA)], bodyB, 2],
+    ['the plan went from A to B and back to A', [version(bodyA), version(bodyB)], bodyA, 3],
+    ['an earlier version of the body was deleted from the history', [version(bodyA), { body: null, deletedAt: '2026-10-30T00:00:00Z' }], bodyA, 3],
+  ]) {
+    it(`when ${name} then the revision is ${expected}`, () => {
+      assert.equal(planRevision({ versions, currentBody: current, pbiUrl: pbi.url }), expected);
+    });
+  }
+  it('when the approval key is taken then it is the sha256 of the plan digest and the revision, so A approved at revision 1 is not A at revision 3', () => {
+    assert.equal(approvalKey(planDigest(planA), 1), createHash('sha256').update(`${planDigest(planA)}:1`).digest('hex'));
+    assert.notEqual(approvalKey(planDigest(planA), 1), approvalKey(planDigest(planA), 3));
+  });
+});
 
 describe('PBI plan commands', () => {
   describe('given a PBI planned before ## SBI構成 existed', () => {
@@ -124,13 +148,26 @@ describe('PBI plan commands', () => {
     it('when a human runs harness:pbi-plan-approve then the approval line of the plan digest is posted on the PBI', async () => {
       const { state, github } = world({ pbiBody: body(currentPlan) });
       const result = await approvePbiPlan({ pbiUrl: pbi.url, github });
-      assert.deepEqual(state.posted, [`harness-pbi-plan: ${planDigest(currentPlan)}`]);
+      assert.deepEqual(state.posted, [`harness-pbi-plan: ${approvalKey(planDigest(currentPlan), 1)}`]);
       assert.equal(result.digest, planDigest(currentPlan));
+      assert.equal(result.revision, 1);
     });
     it('when the human revokes then the revoke line is posted', async () => {
       const { state, github } = world({ pbiBody: body(currentPlan) });
       await approvePbiPlan({ pbiUrl: pbi.url, github, decision: 'revoke' });
-      assert.deepEqual(state.posted, [`harness-pbi-plan-revoke: ${planDigest(currentPlan)}`]);
+      assert.deepEqual(state.posted, [`harness-pbi-plan-revoke: ${approvalKey(planDigest(currentPlan), 1)}`]);
+    });
+    it('when the plan went back to an earlier content then the approval is posted for the new revision', async () => {
+      const { state, github } = world({ pbiBody: body(currentPlan) });
+      state.versions = [{ body: body(currentPlan), deletedAt: null }, { body: body(planOf(8, currentPlan.sbis.slice(0, 1))), deletedAt: null }];
+      await approvePbiPlan({ pbiUrl: pbi.url, github });
+      assert.deepEqual(state.posted, [`harness-pbi-plan: ${approvalKey(planDigest(currentPlan), 3)}`]);
+    });
+    it('when the edit history of the PBI cannot be read then nothing is posted', async () => {
+      const { state, github } = world({ pbiBody: body(currentPlan) });
+      state.failVersions = true;
+      await assert.rejects(approvePbiPlan({ pbiUrl: pbi.url, github }), /HTTP 502/);
+      assert.deepEqual(state.posted, []);
     });
   });
 
@@ -147,5 +184,16 @@ describe('PBI plan commands', () => {
         assert.deepEqual(state.posted, []);
       });
     }
+  });
+});
+
+describe('GitHub adapter for the PBI body history', () => {
+  describe('given the gh CLI', () => {
+    it('when the versions of the PBI body are read then the GraphQL edit history is returned oldest first with deleted versions kept', () => githubMock({})({ issueEdits: { 8: [
+      { editedAt: '2026-10-30T02:00:00Z', deletedAt: null, diff: 'v3' }, { editedAt: '2026-10-30T01:00:00Z', deletedAt: '2026-10-30T03:00:00Z', diff: null }, { editedAt: '2026-10-30T00:00:00Z', deletedAt: null, diff: 'v1' },
+    ] } }, async github => {
+      assert.deepEqual(await githubCli.bodyVersions(pbi), [{ body: 'v1', deletedAt: null }, { body: null, deletedAt: '2026-10-30T03:00:00Z' }, { body: 'v3', deletedAt: null }]);
+      assert.ok((await github.calls()).some(c => c.args[1] === 'graphql' && JSON.parse(c.input).variables.number === 8));
+    }));
   });
 });
