@@ -179,7 +179,8 @@ describe('CI workflow for the generated acceptance', () => {
   // Outside the checkout, so a report committed in the PR is never read in place of the one the matrix leg produced.
   const outside = '${{ runner.temp }}/acceptance-results';
   it('when a verifier matrix leg runs the generated acceptance then it uploads its report from outside the checkout under a name unique to the leg, even when the leg fails', () => {
-    assert.equal(workflow.jobs.verifiers.env.HARNESS_ACCEPTANCE_RESULTS, outside);
+    // The runner context is available in step env only, not in job env.
+    assert.equal(steps('verifiers').find(s => s.run?.startsWith('pnpm harness:verify')).env.HARNESS_ACCEPTANCE_RESULTS, outside);
     const upload = steps('verifiers').find(s => s.uses?.startsWith('actions/upload-artifact@') && s.with?.path === outside);
     assert.ok(upload, 'upload step for the generated acceptance report');
     assert.match(upload.if, /always\(\)/);

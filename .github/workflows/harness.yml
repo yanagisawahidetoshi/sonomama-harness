@@ -40,8 +40,6 @@ jobs:
       # Bake only lets a build write inside the verifier's working directory, so the cache sits under apps/api/tmp (ignored by Git and Docker).
       HARNESS_BUILD_CACHE_FROM: type=local,src=${{ github.workspace }}/apps/api/tmp/buildkit-cache
       HARNESS_BUILD_CACHE_TO: type=local,dest=${{ github.workspace }}/apps/api/tmp/buildkit-cache,mode=max
-      # A generated Trusted Acceptance leg (#147) leaves its RSpec report here for the Completion Judge.
-      HARNESS_ACCEPTANCE_RESULTS: .acceptance-ci/results
     strategy:
       fail-fast: false
       matrix:
@@ -65,12 +63,15 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm harness:verify --verifier ${{ matrix.verifier }} $HARNESS_SCOPE
+        env:
+          # A generated Trusted Acceptance leg (#147) leaves its RSpec report here, outside the checkout so a report committed in the PR is never read.
+          HARNESS_ACCEPTANCE_RESULTS: ${{ runner.temp }}/acceptance-results
       # One artifact per leg; a failed leg still uploads its report so the Completion Judge names the failing examples.
       - if: always() && startsWith(matrix.verifier, 'generated-acceptance-')
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: acceptance-results-${{ matrix.verifier }}
-          path: .acceptance-ci/results/
+          path: ${{ runner.temp }}/acceptance-results
           if-no-files-found: ignore
   harness-test:
     needs: impact
@@ -219,11 +220,11 @@ jobs:
         with:
           pattern: acceptance-results-*
           merge-multiple: true
-          path: .acceptance-ci/results
+          path: ${{ runner.temp }}/acceptance-results
       - run: pnpm harness:judge $HARNESS_SCOPE
         env:
           HARNESS_NEEDS: ${{ toJson(needs) }}
           HARNESS_MAESTRO_RESULTS: .maestro-ci/results
-          HARNESS_ACCEPTANCE_RESULTS: .acceptance-ci/results
+          HARNESS_ACCEPTANCE_RESULTS: ${{ runner.temp }}/acceptance-results
           HARNESS_PULL_REQUEST: ${{ github.event.pull_request.number }}
           GH_TOKEN: ${{ github.token }}
