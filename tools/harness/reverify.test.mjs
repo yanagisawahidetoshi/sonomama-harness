@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fixture, update, human, commitFixture } from './test-fixture.mjs';
 import { githubMock } from './test-github.mjs';
-import { runHarness, resumeRun, approveRun, openPullRequest, reverifyPullRequest } from './index.mjs';
+import * as harness from './index.mjs';
+import { openPullRequest } from './index.mjs';
 import { githubPrCli } from './github-pr.mjs';
 import { readRunState, saveRun } from './run-store.mjs';
 import { review } from './reviewer.mjs';
@@ -16,6 +17,10 @@ import { renderSbiBody } from './planner.mjs';
 
 // Issue #144: after main moves, the finished implementation of a PR is merged with the new main and re-verified by a new run,
 // without the implementation agent, and the same PR is updated by a normal push. A and B start from the same main; A is merged first.
+// These runs stand for the production path, so they connect a trusted AI Review adapter as #187 will (#175).
+const aiReview = async () => ({ adapter: 'test-adapter', status: 'PASS', reasons: [] });
+const withAiReview = fn => options => fn({ semanticReviewer: aiReview, ...options });
+const runHarness = withAiReview(harness.runHarness), resumeRun = withAiReview(harness.resumeRun), approveRun = withAiReview(harness.approveRun), reverifyPullRequest = withAiReview(harness.reverifyPullRequest);
 const issueUrl = 'https://github.com/acme/app/issues/7';
 const pbi = { number: 3, url: 'https://github.com/acme/app/issues/3', title: '管理画面のホーム' };
 const planned = (overrides = {}) => ({
@@ -52,7 +57,6 @@ function withPullRequestB(root, test, { issue = sbiIssue() } = {}) {
         const implementation = spy();
         let b = await runHarness({ root, quiet: true, provider: 'codex', agent: implementation.agent, publish: true, issueUrl });
         // An SBI with an implementation gate was approved once, for the baseline B started from.
-        if (b.status === 'WAITING_FOR_HUMAN_GATE') b = await approveRun({ root, runId: b.id, purpose: 'implementation-gate', identityProvider: human('Designer'), agent: implementation.agent, quiet: true });
         await test({ bare, github, b, pullUrl: b.pullRequest?.url, implementation });
       });
     } finally { await rm(bare, { recursive: true, force: true }); }
@@ -278,20 +282,17 @@ describe('Re-verification of an existing PR after main moved', () => {
       assert.equal((await github.state()).pulls[0].body.includes(run.id), false);
       assert.notEqual(run.status, 'MERGE_ALLOWED');
     })));
-    it('when the SBI requires an implementation gate then the new baseline needs a new approval before anything is verified or pushed', () => fixture(root => withPullRequestB(root, async ({ bare, b, pullUrl, implementation }) => {
-      assert.equal(b.gate.state, 'APPROVED');
+    // #175: the approved SBI decided its level 3 Risk, so neither the run nor its re-verification stops at an implementation gate.
+    it('when the SBI is level 3 then the new baseline is verified and pushed without an implementation gate or the implementation agent', () => fixture(root => withPullRequestB(root, async ({ bare, b, pullUrl, implementation }) => {
+      assert.equal(b.gate.required, false);
       await mergeA(root);
-      const run = await reverifyPullRequest({ root, pullUrl, quiet: true });
-      assert.equal(run.status, 'WAITING_FOR_HUMAN_GATE');
-      assert.equal(run.gate.headSha, run.baselineSha);
-      assert.equal(run.iterations.length, 0);
-      assert.equal(await remoteSha(bare, `harness/${b.id}`), b.headSha);
       const before = implementation.calls.length;
-      const approved = await approveRun({ root, issueUrl, purpose: 'implementation-gate', identityProvider: human('Designer'), agent: implementation.agent, quiet: true });
-      assert.equal(approved.id, run.id);
-      assert.equal(implementation.calls.length, before, 'approving the gate of a re-verification does not start the implementation agent');
-      assert.equal(approved.executionStatus, 'DONE');
-      assert.equal(await remoteSha(bare, `harness/${b.id}`), approved.headSha);
+      const run = await reverifyPullRequest({ root, pullUrl, quiet: true });
+      assert.equal(run.gate.required, false);
+      assert.equal(run.executionStatus, 'DONE');
+      assert.equal(run.risk.level, 3);
+      assert.equal(implementation.calls.length, before);
+      assert.equal(await remoteSha(bare, `harness/${b.id}`), run.headSha);
     }, { issue: sbiIssue(planned({ riskCandidate: 'L3' })) })));
   });
 
@@ -454,9 +455,8 @@ describe('Re-verification of an existing PR after main moved', () => {
       state.headSha = state.baselineSha;
       await saveRun(root, state);
       const run = await reverifyPullRequest({ root, pullUrl, quiet: true });
-      assert.equal(waiting.status, 'WAITING_FOR_HUMAN_GATE');
       assert.notEqual(run.id, waiting.id);
-      assert.equal(run.status, 'WAITING_FOR_HUMAN_GATE');
+      assert.equal(run.gate.required, false);
     }, { issue: sbiIssue(planned({ riskCandidate: 'L3' })) })));
     it('when the earlier run failed then running it again starts a new run instead of returning the stopped one', () => fixture(root => withPullRequestB(root, async ({ bare, b, pullUrl }) => {
       await mergeA(root, { '.harness/verification/issue-7.mjs': acceptance('ホーム（新しい見出し）') });
