@@ -3,6 +3,7 @@ import { githubCli } from './planner-github.mjs';
 import { relativePath } from './schemas.mjs';
 import { assertWritablePath } from './workspace.mjs';
 import { acceptancePath } from './acceptance-registry.mjs';
+import { readSpecApproval, specApprovalLine } from './spec-approval.mjs';
 // harness:run SBI_URL reads the SBI from the GitHub Issue a human marked ready. Nothing here is written back to GitHub,
 // and nobody transcribes the Issue into SBI JSON: the Harness builds the execution SBI and records it as the Run snapshot.
 
@@ -24,7 +25,7 @@ export function inScope(sbi, path) {
   return sbi.allowedFiles.includes(path) || (sbi.allowedDirs ?? []).some(dir => path.startsWith(dir));
 }
 
-function sections(body) {
+export function sections(body) {
   const map = new Map();
   let current = null;
   for (const line of String(body ?? '').replaceAll('\r\n', '\n').split('\n')) {
@@ -134,6 +135,13 @@ export async function loadSbiIssue({ issueUrl, config, github = githubCli }) {
   let issue;
   try { issue = await github.fetchIssue(ref); } catch (error) { throw new Error(`SBI Issue fetch failed for ${ref.url}: ${error.message}`); }
   const reasons = issueReadiness(issue, ref.url);
+  // #147: without ready, a writer's harness-spec approval of the current spec digest is the other way to start (generated Trusted Acceptance).
+  if (reasons.length && reasons.every(r => r.endsWith('has no ready label'))) {
+    const spec = await readSpecApproval({ ref, issue, github });
+    if (spec.approved) throw new Error([`SBI Issue ${ref.url} の仕様は承認済みです（spec digest ${spec.digest.slice(0, 12)}、${spec.approvers.join(', ')}）。`,
+      'ただし、Trusted Acceptanceの生成はまだ実装されていません（#147）。Runは開始していません。手書きのTrusted Acceptanceを登録してreadyを付けてください。'].join('\n'));
+    reasons.push(`仕様の承認もありません。write権限のある人が \`${specApprovalLine(spec.digest ?? '<spec digest>')}\` をIssueにコメントすると承認になります（pnpm harness:spec-approve ${ref.url}）`);
+  }
   if (reasons.length) throw new Error([`SBI Issue ${ref.url} はreadyではありません。Runは開始していません。`, ...reasons.map(r => `- ${r}`)].join('\n'));
   const sbi = sbiFromIssue({ ref, issue, config });
   const waiting = await unfinishedDependencies({ ref, issue, config, github });

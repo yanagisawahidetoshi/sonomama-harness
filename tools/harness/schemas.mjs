@@ -202,7 +202,8 @@ export const dependencyBotPolicySchema = z.strictObject({
   bots: z.array(z.strictObject({ login: text.regex(/\[bot\]$/), type: z.literal('Bot') })),
   paths: z.array(relativePath),
 });
-export const githubCommentSchema = z.object({ id: z.number().int().positive(), body: z.string().nullable().default(null), html_url: z.url() });
+export const githubCommentSchema = z.object({ id: z.number().int().positive(), body: z.string().nullable().default(null), html_url: z.url(),
+  user: z.object({ login: z.string(), type: z.string().optional() }).nullable().optional(), created_at: z.string().optional(), updated_at: z.string().optional() });
 export const githubCommentListSchema = z.array(githubCommentSchema);
 export const githubLabelListSchema = z.array(z.object({ name: z.string() }));
 

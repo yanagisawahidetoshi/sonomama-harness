@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { renderSbiBody } from './planner.mjs';
 import { loadSbiIssue } from './sbi-issue.mjs';
-import { specDigest, specApprovals, specApprovalLine } from './spec-approval.mjs';
+import { specDigest, specApprovals, specApprovalLine, postSpecApproval } from './spec-approval.mjs';
 
 const ref = { owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' };
 const pbi = { owner: 'acme', repo: 'app', number: 3, url: 'https://github.com/acme/app/issues/3', title: '講座' };
@@ -90,5 +90,36 @@ describe('Starting a run from a spec-approved SBI Issue', () => {
   it('when GitHub cannot read the comments then the run does not start', async () => {
     const broken = { ...github(), listComments: async () => { throw new Error('gh: Server Error (HTTP 502)'); } };
     await assert.rejects(load(broken), /HTTP 502/);
+  });
+});
+
+describe('harness:spec-approve', () => {
+  const recorder = (own = issue()) => {
+    const calls = [];
+    return { calls, github: {
+      fetchIssue: async () => own,
+      addComment: async (_, text) => { calls.push(['comment', text]); return { id: 9, body: text, html_url: `${ref.url}#issuecomment-9` }; },
+      ensureLabels: async (_, names) => { calls.push(['ensure', names]); },
+      addLabels: async (_, names) => { calls.push(['add', names]); },
+      removeLabel: async (_, name) => { calls.push(['remove', name]); },
+    } };
+  };
+  it('when a human approves then posts the approval line for the current spec digest and shows the spec-approved label', async () => {
+    const { calls, github } = recorder();
+    const result = await postSpecApproval({ issueUrl: ref.url, decision: 'approve', github });
+    assert.equal(result.digest, specDigest(body()));
+    assert.ok(calls.some(([kind, text]) => kind === 'comment' && text.split('\n').includes(specApprovalLine(result.digest))));
+    assert.ok(calls.some(([kind, names]) => kind === 'add' && names.includes('spec-approved')));
+  });
+  it('when a human revokes then posts the revoke line and removes the label', async () => {
+    const { calls, github } = recorder(issue({ labels: labels('sbi', 'spec-approved') }));
+    const result = await postSpecApproval({ issueUrl: ref.url, decision: 'revoke', github });
+    assert.ok(calls.some(([kind, text]) => kind === 'comment' && text.split('\n').includes(`harness-spec-revoke: ${result.digest}`)));
+    assert.ok(calls.some(([kind, name]) => kind === 'remove' && name === 'spec-approved'));
+  });
+  it('when the Issue has no Gherkin then nothing is posted', async () => {
+    const { calls, github } = recorder(issue({ body: '## 目的\n\nなし\n' }));
+    await assert.rejects(postSpecApproval({ issueUrl: ref.url, decision: 'approve', github }), /spec digest/);
+    assert.deepEqual(calls, []);
   });
 });

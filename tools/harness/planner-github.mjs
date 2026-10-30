@@ -50,6 +50,10 @@ export const githubCli = {
   async listComments({ owner, repo, number }) {
     return listAll(`repos/${owner}/${repo}/issues/${number}/comments`, {}, githubCommentListSchema);
   },
+  // GitHub reports maintain as write and triage as read. A non-collaborator is none.
+  async permission({ owner, repo }, login) {
+    return (await api('GET', `repos/${owner}/${repo}/collaborators/${encodeURIComponent(login)}/permission`)).permission;
+  },
   async updateComment({ owner, repo }, id, body) {
     return githubCommentSchema.parse(await api('PATCH', `repos/${owner}/${repo}/issues/comments/${id}`, { body }));
   },
