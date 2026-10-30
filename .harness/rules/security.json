@@ -22,7 +22,7 @@
       "contentExceptions": [
         {
           "pathPatterns": [
-            "^apps/api/spec/support/api_contract/"
+            "^apps/api/spec/support/api_contract/[^/]+\\.rb$"
           ],
           "ignoredPatterns": [
             "\\bsecuritySchemes\\b"

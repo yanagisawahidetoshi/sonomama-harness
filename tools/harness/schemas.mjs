@@ -244,12 +244,14 @@ export const apiSchemaGenerationRecordSchema = z.strictObject({
   signature: text,
 });
 
+const narrowPattern = text.refine(p => { try { return !new RegExp(p).test(''); } catch { return false; } }, 'pattern must not match empty text');
 export const securityPolicySchema = z.strictObject({
   version: z.literal(1), alwaysRequiredVerifiers: z.array(text).min(1),
   rules: z.array(z.strictObject({
     id: text.regex(/^SEC-[A-Z]+-\d+$/), description: text, categories: z.array(text).min(1),
     pathPatterns: z.array(text), contentPatterns: z.array(text), metadataPatterns: z.array(text),
-    contentExceptions: z.array(z.strictObject({ pathPatterns: z.array(text).min(1), ignoredPatterns: z.array(text).min(1) })).optional(),
+    // A pattern that matches empty text would exempt every path or erase every content, so it is rejected.
+    contentExceptions: z.array(z.strictObject({ pathPatterns: z.array(narrowPattern).min(1), ignoredPatterns: z.array(narrowPattern).min(1) })).optional(),
     preImplementationGate: z.literal(true), minimumRiskLevel: z.literal(3),
     requiredHumanApprovals: z.number().int().min(2), requiredVerifiers: z.array(text).min(1), policyDocument: relativePath,
   })).min(1),
