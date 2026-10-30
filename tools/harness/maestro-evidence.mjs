@@ -1,4 +1,6 @@
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { createWriteStream } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -22,7 +24,7 @@ const resultSchema = z.strictObject({
   artifacts: z.array(z.string().min(1)),
 });
 const runListSchema = z.looseObject({ workflow_runs: z.array(z.looseObject({ id: z.number().int(), path: z.string(), head_sha: z.string() })) });
-const artifactListSchema = z.looseObject({ artifacts: z.array(z.looseObject({ id: z.number().int(), name: z.string(), expired: z.boolean() })) });
+const artifactListSchema = z.looseObject({ artifacts: z.array(z.looseObject({ id: z.number().int(), name: z.string(), expired: z.boolean(), created_at: z.string().nullable().optional() })) });
 
 export const githubActionsCli = {
   checkRuns: githubPrCli.checkRuns,
@@ -32,14 +34,25 @@ export const githubActionsCli = {
   async artifacts({ owner, repo }, runId) {
     return artifactListSchema.parse(await api('GET', `repos/${owner}/${repo}/actions/runs/${runId}/artifacts?per_page=100`)).artifacts;
   },
-  // gh downloads and unpacks the artifact; only the file names and contents leave this function.
-  async download({ owner, repo }, runId, name) {
+  // The artifact is downloaded by the ID that was checked, so a re-run that kept several artifacts of one name cannot swap it.
+  // Only the file names and contents leave this function.
+  async download({ owner, repo }, artifactId) {
     const dir = await mkdtemp(join(tmpdir(), 'harness-maestro-'));
     try {
-      const result = await execute('gh', ['run', 'download', String(runId), '-R', `${owner}/${repo}`, '-n', name, '-D', dir], { timeoutMs: 120000 });
-      if (!result.ok) throw new Error(`gh run download ${runId} ${name}: ${redactText(result.error || result.stderr.trim() || `exit ${result.code}`)}`);
+      const zip = join(dir, 'artifact.zip'), out = join(dir, 'files');
+      const failure = await new Promise(resolve => {
+        const child = spawn('gh', ['api', `repos/${owner}/${repo}/actions/artifacts/${artifactId}/zip`], { stdio: ['ignore', 'pipe', 'pipe'] });
+        let stderr = '';
+        child.stdout.pipe(createWriteStream(zip));
+        child.stderr.on('data', chunk => { stderr += chunk; });
+        child.on('error', error => resolve(error.message));
+        child.on('close', code => resolve(code === 0 ? null : stderr.trim() || `exit ${code}`));
+      });
+      if (failure) throw new Error(`artifact ${artifactId} をダウンロードできません（${redactText(failure)}）`);
+      const unzip = await execute('unzip', ['-q', '-o', zip, '-d', out], { timeoutMs: 60000 });
+      if (!unzip.ok) throw new Error(`artifact ${artifactId} を展開できません（${redactText(unzip.error || unzip.stderr.trim() || `exit ${unzip.code}`)}）`);
       const files = {};
-      for (const file of await readdir(dir)) files[file] = await readFile(join(dir, file), 'utf8');
+      for (const file of await readdir(out)) files[file] = await readFile(join(out, file), 'utf8');
       return files;
     } finally { await rm(dir, { recursive: true, force: true }); }
   },
@@ -65,9 +78,12 @@ async function laneResult({ ref, lane, head, actions }) {
   if (!check || check.status !== 'completed' || check.conclusion !== 'success') throw new Error(`merged head ${head.slice(0, 12)} のharness checkがsuccessではありません`);
   const runs = (await actions.workflowRuns(ref, check.check_suite?.id)).filter(r => r.path === workflow && r.head_sha === head);
   if (runs.length !== 1) throw new Error(`harness check ${check.id} の${workflow}のworkflow runを1件に特定できません（${runs.length}件）`);
-  const artifact = (await actions.artifacts(ref, runs[0].id)).find(a => a.name === 'maestro-results');
+  // A re-run keeps the artifacts of earlier attempts under the same name. The one the Completion Judge read is the newest made before the
+  // passing harness check started; that one is checked and downloaded by ID, and an expired one never falls back to an older attempt.
+  const before = artifact => !check.started_at || (artifact.created_at && artifact.created_at <= check.started_at);
+  const artifact = (await actions.artifacts(ref, runs[0].id)).filter(a => a.name === 'maestro-results' && before(a)).sort((a, b) => b.id - a.id)[0];
   if (!artifact || artifact.expired) throw new Error(`workflow run ${runs[0].id} のmaestro-results artifactが${artifact ? '期限切れ' : 'ありません'}`);
-  const files = await actions.download(ref, runs[0].id, 'maestro-results');
+  const files = await actions.download(ref, artifact.id);
   const name = `${lane}.json`;
   if (typeof files[name] !== 'string') throw new Error(`maestro-results に ${name} がありません`);
   let parsed;
