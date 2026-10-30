@@ -44,7 +44,7 @@ describe('Health metrics signal collection', () => {
       assert.equal(metrics.security.preImplementationGateRequired, false);
       assert.equal(metrics.security.verification.pass, run.securityAssessment.requiredVerifiers.length);
       assert.equal(metrics.security.verification.notConfigured, 0);
-      assert.deepEqual(metrics.approvals.design, { required: false, state: 'NOT_REQUIRED' });
+      assert.equal(metrics.approvals.design, undefined);
       assert.deepEqual(metrics.approvals.implementationGate, { required: false, state: 'NOT_REQUIRED' });
       assert.deepEqual(metrics.approvals.merge, { required: 1, valid: 0, requestedChanges: false });
       assert.deepEqual(metrics.review, { policyReview: 'PASS', semanticReview: { enabled: false, status: 'SKIP' }, humanReviewRequired: true });
@@ -110,7 +110,7 @@ describe('Health metrics signal collection', () => {
       assert.equal(metrics.riskLevel, 3);
       assert.equal(metrics.riskPhase, 'preflight');
       assert.deepEqual(metrics.approvals.implementationGate, { required: true, state: 'WAITING_FOR_HUMAN_GATE' });
-      assert.deepEqual(metrics.approvals.design, { required: false, state: 'NOT_REQUIRED' });
+      assert.equal(metrics.approvals.design, undefined);
       assert.deepEqual(metrics.approvals.merge, { required: null, valid: null, requestedChanges: false });
       assert.deepEqual(metrics.iterations, { total: 0, failed: 0, done: false, limitReached: false, consecutiveFailure: false });
       assert.deepEqual(metrics.verifiers, { summary: { pass: 0, fail: 0, skip: 0, notConfigured: 0 }, checks: [] });
@@ -133,15 +133,14 @@ describe('Health metrics signal collection', () => {
       assert.ok(metrics.executionDurationMs < Date.parse(resumed.events.filter(e => e.phase === 'execution').at(-1).at) - Date.parse(run.startedAt));
       assert.ok(metrics.executionDurationMs < metrics.durationMs);
     }));
-    it('when Design Approval is required then records it separately from the implementation gate', () => fixture(async root => {
+    it('when a prototype is promoted then the metrics have no Design Approval and the run reaches merge review', () => fixture(async root => {
       const { agent } = await prototype(root, { promotion: true });
       const run = await runHarness({ root, quiet: true, agent });
-      assert.equal(run.status, 'WAITING_FOR_DESIGN_APPROVAL');
       const metrics = await metricsOf(root, run);
       assert.equal(metrics.lane, 'production');
-      assert.deepEqual(metrics.approvals.design, { required: true, state: 'WAITING_FOR_DESIGN_APPROVAL' });
+      assert.equal(metrics.approvals.design, undefined);
       assert.deepEqual(metrics.approvals.implementationGate, { required: false, state: 'NOT_REQUIRED' });
-      assert.equal(metrics.mergeStatus, 'NOT_ASSESSED');
+      assert.equal(metrics.mergeStatus, 'WAITING_FOR_HUMAN_REVIEW');
       assert.equal(metrics.escalation, null);
     }));
     it('when the SBI is ambiguous then records SPEC_AMBIGUOUS with no lane', () => fixture(async root => {
@@ -218,7 +217,7 @@ describe('Health metrics signal collection', () => {
       assert.equal(metrics.executionDurationMs, null);
       assert.equal(metrics.riskLevel, null);
       assert.equal(metrics.riskPhase, null);
-      assert.deepEqual(metrics.approvals.design, { required: false, state: 'NOT_REQUIRED' });
+      assert.equal(metrics.approvals.design, undefined);
       assert.deepEqual(metrics.security, { securitySensitive: null, matchedRules: [], requiredVerifierCount: null, preImplementationGateRequired: null, verification: { pass: 0, fail: 0, skip: 0, notConfigured: 0 } });
       assert.equal(metrics.escalation, null);
     });

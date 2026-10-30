@@ -30,6 +30,7 @@ const labelDefinitions = {
   'api-schema': { color: '1d76db', description: 'Issue with a Planner-generated API Schema Proposal' },
   'needs-api-schema-review': { color: 'fbca04', description: 'API Schema Proposal awaiting human review; implementation must wait' },
   'api-schema-approved': { color: '0e8a16', description: 'Projection of a signed API Schema approval; not the source of truth' },
+  'spec-approved': { color: '0e8a16', description: 'Projection of a harness-spec approval comment; not the source of truth' },
 };
 export const githubCli = {
   async fetchIssue({ owner, repo, number }) {
@@ -49,6 +50,10 @@ export const githubCli = {
   },
   async listComments({ owner, repo, number }) {
     return listAll(`repos/${owner}/${repo}/issues/${number}/comments`, {}, githubCommentListSchema);
+  },
+  // GitHub reports maintain as write and triage as read. A non-collaborator is none.
+  async permission({ owner, repo }, login) {
+    return (await api('GET', `repos/${owner}/${repo}/collaborators/${encodeURIComponent(login)}/permission`)).permission;
   },
   async updateComment({ owner, repo }, id, body) {
     return githubCommentSchema.parse(await api('PATCH', `repos/${owner}/${repo}/issues/comments/${id}`, { body }));

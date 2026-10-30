@@ -66,13 +66,12 @@ pnpm --filter prototype-mobile storybook                                # 2回�
 Figma / Design Intent
   → prototypes/mobile で試作
   → Storybook / Simulator Review
-  → Design Approval
   → Production SBI（promotion.source = prototypes/mobile）
   → apps/mobile で実装
   → Production Harness
 ```
 
-prototypeのPASSは本番実装の承認にならない。Design Approvalのあと、新しいProduction SBIで `apps/mobile` に実装し直し、本番の検証を通す。
+prototypeのPASSは本番実装の承認にならない。採用する試作は、新しいProduction SBI（SBI Issueのレビューと `ready` が本番実装の承認になる）で `apps/mobile` に実装し直し、本番の検証を通す。
 
 ## Harness
 

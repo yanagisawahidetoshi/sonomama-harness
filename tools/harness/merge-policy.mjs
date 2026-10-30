@@ -21,7 +21,6 @@ export function mergeDecision({ risk, checks, approvals = [], headSha, contextDi
   let decision = 'BLOCKED';
   const reasons = [];
   if (!/^[0-9a-f]{40,64}$/.test(headSha || '') || !contextDigest || ![1, 2, 3].includes(risk.level)) reasons.push('missing_or_invalid_snapshot');
-  else if (lane?.requiresDesignApproval && !lane.designApproved) { decision = 'WAITING_FOR_DESIGN_APPROVAL'; reasons.push('design_approval_not_approved'); }
   else if (humanGate && !gateApproved) { decision = 'WAITING_FOR_HUMAN_GATE'; reasons.push('implementation_gate_not_approved'); }
   else if (!checkOk) reasons.push('required_checks_not_passed');
   else if (!securityPassed(securityVerification) || (securityVerification.headSha && securityVerification.headSha !== headSha)) reasons.push('required_security_checks_not_passed');

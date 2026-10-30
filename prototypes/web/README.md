@@ -44,13 +44,12 @@ pnpm --filter prototype-web check              # Biome (lint + format + import�
 Figma / Design Intent
   → prototypes/web で試作
   → Storybook Review
-  → Design Approval
   → Production SBI（promotion.source = prototypes/web）
   → apps/admin で実装
   → Production Harness
 ```
 
-prototypeのPASSは本番実装の承認にならない。Design Approvalのあと、新しいProduction SBIで `apps/admin` に実装し直し、本番の検証を通す。
+prototypeのPASSは本番実装の承認にならない。採用する試作は、新しいProduction SBI（SBI Issueのレビューと `ready` が本番実装の承認になる）で `apps/admin` に実装し直し、本番の検証を通す。
 
 ## Harness
 

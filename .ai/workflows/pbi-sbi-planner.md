@@ -10,8 +10,9 @@
 7. 採用するSBIは、ACごとのTrusted Acceptanceを人間が書いてレビューし、
    `.harness/acceptance/sbi-<SBI番号>.json`に`{ "version": 1, "sbiIssue": <SBI番号>, "verifiers": [{ "id", "trustedScript", "planned", "acceptanceIds": [IssueのAC ID] }] }`で登録する。
 8. 全ACの対応を確認したら`needs-review`を外して`ready`を付ける。`gh issue edit <number> --remove-label needs-review --add-label ready`。
+   新方式（#147、[ADR-0005](../../docs/adr/0005-generated-trusted-acceptance.md)）: Trusted Acceptanceを手書きせず、`needs-review`を外して`pnpm harness:spec-approve <SBI Issue URL>`で仕様を承認する。正本はIssueの`harness-spec: <spec digest>`コメント（write以上・未編集）で、`spec-approved` labelは表示だけ。受け入れ要件・Gherkin・想定変更範囲・Risk / Security Impactを編集すると承認は無効になる。テストの生成はまだ実装されていないので、今は新方式のrunは開始前に止まる。
 9. PBIの`## SBI構成`を確認し、`pnpm harness:pbi-plan-approve <PBI URL>`で一度だけ承認する（下記「PBI plan」）。
-9. `pnpm harness:run <SBI Issue URL>`で実行する。SBI JSONは書かない。HarnessがIssueを取得・検証し、Run snapshotを保存して実装・検証・PR作成まで進める。
+10. `pnpm harness:run <SBI Issue URL>`で実行する。SBI JSONは書かない。HarnessがIssueを取得・検証し、Run snapshotを保存して実装・検証・PR作成まで進める。
 
 ## SBIの種類
 
@@ -23,7 +24,7 @@
 人間確認はコード変更も実テストも持たないので、SBIにしない。PBI Human Acceptance Gateとして扱い、
 すべての実装SBIが完了し、最終確認SBIがあればPASSした後に、そのEvidence digestに対する人間の`pbi-acceptance`承認で通る。
 PBIは、すべてのSBIが完了し、PBI Human Acceptance Gateが承認され、PBIのblocker（GitHub issue dependenciesの`blocked by`）がすべてclosedのときだけ完了する。判定は`pbi-judge.mjs`の`judgePbi`で行う。
-`pbi-acceptance`はImplementation Gate・Design Approval・Merge Approval・API Schema Approvalとは別の承認で、どれの代わりにもならない。
+`pbi-acceptance`はImplementation Gate・Merge Approval・API Schema Approvalとは別の承認で、どれの代わりにもならない。
 Maestroのlane（実装SBIはモックAPI、最終確認SBIは実API）とCompletion Judgeでの必須判定は[ci.md](ci.md)にある。
 
 ### PBI plan（PBIのSBI集合）
