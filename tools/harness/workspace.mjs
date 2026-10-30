@@ -14,6 +14,8 @@ export function assertWritablePath(path, { allowSensitiveDeclaration = false } =
   if (!allowSensitiveDeclaration && isSecretPath(path)) throw new Error('scope/path is a prohibited secret file');
   if (/(^|\/)(\.git|\.harness|\.github|\.githooks|\.ai|node_modules|sources|tools)(\/|$)|(^|\/)AGENTS\.md$/.test(path)) throw new Error(`scope/path is reserved: ${path}`);
   if (/\.(test|spec)\.[^/]+$/.test(path) && !/^(apps|packages|prototypes)\//.test(path)) throw new Error(`trusted test path is reserved: ${path}`);
+  // Generated Trusted Acceptance (#147) lives in these app directories; only the Harness registration writes there.
+  if (/^apps\/[^/]+\/spec\/acceptance(\/|$)|(^|\/)__acceptance__(\/|$)/i.test(path)) throw new Error(`generated acceptance path is reserved: ${path}`);
 }
 export async function sourceIntegrity(root, baselineSha) {
   const head = (await git(root, ['rev-parse', 'HEAD'])).stdout.trim();

@@ -37,7 +37,8 @@ export function inspectGeneratedAcceptance({ spec, generated }) {
   const findings = [], add = (path, message) => findings.push({ path, message });
   const directory = acceptanceDirectory(spec.sbiIssue), files = new Map();
   for (const file of generated.files ?? []) {
-    if (!file.path.startsWith(directory) || !file.path.endsWith('_spec.rb')) { add(file.path, `generated tests must be *_spec.rb files under ${directory}`); continue; }
+    const unsafe = typeof file.path !== 'string' || file.path.split('/').some(s => s === '..' || s === '.' || s === '');
+    if (unsafe || !file.path.startsWith(directory) || !file.path.endsWith('_spec.rb')) { add(String(file.path), `generated tests must be *_spec.rb files under ${directory}`); continue; }
     files.set(file.path, examples(file.content));
     file.content.split('\n').forEach((line, index) => {
       for (const [name, pattern] of stubs) if (pattern.test(code(line))) add(`${file.path}:${index + 1}`, `${name} replaces what the scenario checks`);
