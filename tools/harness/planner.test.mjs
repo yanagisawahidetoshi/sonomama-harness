@@ -122,6 +122,13 @@ describe('PBI → SBI Planner', () => {
       assert.equal(result.planDigest, planDigest(parsePlan(body, pbiUrl).plan));
       assert.match(body, /pnpm harness:pbi-plan-approve https:\/\/github\.com\/acme\/app\/issues\/8/);
     })));
+    it('when a human edits the PBI body while the Planner runs then ## SBI構成 is added to the edited body instead of overwriting the edit', () => fixture(root => mockGitHub({}, async github => {
+      const agent = async () => { await github.update(state => { state.issue.body += '\n\n追記: 管理者向けの表示は対象外'; }); return { sbis: validPlan(), escalation: null }; };
+      await plan(root, { agent });
+      const body = (await github.state()).issue.body;
+      assert.match(body, /追記: 管理者向けの表示は対象外/);
+      assert.match(body, /^## SBI構成$/m);
+    })));
     it('when the planner is re-run with the same SBIs then the PBI body is not written again', () => fixture(root => mockGitHub({}, async github => {
       await plan(root);
       const before = (await github.calls()).length;
