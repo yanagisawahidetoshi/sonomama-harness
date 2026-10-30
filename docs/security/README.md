@@ -36,9 +36,13 @@ Harnessが確かめるのは、IDと文書の対応が取れているかどう�
 
 | 実行場所 | 検査するファイルと内容 | 検査対象が0件のとき |
 | --- | --- | --- |
-| ローカルのrun（harness:run） | run worktreeのbaselineからコミットまでの差分にあるファイル（削除を除く）と、SBIがファイル名で許可したファイル。どちらも全文を読む | SKIPとし、Securityは不合格になる |
+| ローカルのrun（harness:run） | run worktreeのbaselineからコミットまでの差分にあるファイル（削除とSBI Issueのsnapshotを除く）と、SBIがファイル名で許可したファイル。どちらも全文を読む | SKIPとし、Securityは不合格になる |
 | CI（harness:judge --base） | PRの差分にあるファイル（削除を除く）の追加行 | PASSのまま |
 | CI（harness:judge --all、mainへのpush） | 差分がないため検査しない | PASSのまま |
 
 SBI Issueから作ったSBIはディレクトリ単位で範囲を許可し、ファイル名では何も許可しない。そのため、ローカルのrunは許可範囲ではなく実際の差分を検査する。
-CIの0件をPASSとしている扱い（削除だけのPR、mainへのpush）は未決定で、人が判断する。
+SBI Issueのsnapshot（.harness/state/sbi-<N>.json）はHarnessがIssue本文から書くもので、Agentが書いたコードではないため、ローカルのrunでは検査対象に数えない。CIはPRの差分として検査する。
+次の扱いは未決定で、人が判断する。
+
+- CIで検査対象が0件のときPASSのままにすること（削除だけのPR、mainへのpush）。
+- ローカルのrunで削除だけの変更が、検査対象0件のためSKIPとなり完了できないこと。
