@@ -91,6 +91,7 @@ describe('Maestro in the Completion Judge', () => {
   for (const [name, results, needs, pattern] of [
     ['the maestro job was skipped', { mock: ok('mock') }, { maestro: { result: 'skipped' } }, /maestro: skipped/],
     ['the maestro job failed', { mock: ok('mock') }, { maestro: { result: 'failure' } }, /maestro: failure/],
+    ['the maestro job was cancelled', { mock: ok('mock') }, { maestro: { result: 'cancelled' } }, /maestro: cancelled/],
     ['the maestro job did not report', { mock: ok('mock') }, {}, /maestro: missing/],
     ['the result of the lane is missing', {}, undefined, /mock.*result/],
     ['the result is for another commit', { mock: { ...ok('mock'), headSha: 'b'.repeat(40) } }, undefined, /mock.*bbbbbbbbbbbb/],

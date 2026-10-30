@@ -41,8 +41,11 @@ describe('Spec digest of an SBI Issue', () => {
 describe('Spec approval records on the SBI Issue', () => {
   const digest = specDigest(body());
   const approvals = comments => specApprovals({ comments, permissions, digest });
-  it('when a person with write access posts the approval line for the current digest then the spec is approved', () => {
-    assert.deepEqual(approvals([comment(1, 'alice', `仕様を確認しました\n${specApprovalLine(digest)}\n`)]), { approved: true, approvers: ['alice'] });
+  it('when a person with write access posts exactly the approval line for the current digest then the spec is approved', () => {
+    assert.deepEqual(approvals([comment(1, 'alice', `${specApprovalLine(digest)}\n`)]), { approved: true, approvers: ['alice'] });
+  });
+  it('when the approval line comes with an explanation then it does not count, since only a comment that is exactly the line is a decision (#150, 2026-10-30)', () => {
+    assert.equal(approvals([comment(1, 'alice', `仕様を確認しました\n${specApprovalLine(digest)}\n`)]).approved, false);
   });
   it('when the planner operator approves the Issue the Planner created then it counts, since the Issue author is not the reviewer of code', () => {
     assert.equal(approvals([comment(1, 'alice', specApprovalLine(digest))]).approved, true);
@@ -110,13 +113,13 @@ describe('harness:spec-approve', () => {
     const { calls, github } = recorder();
     const result = await postSpecApproval({ issueUrl: ref.url, decision: 'approve', github });
     assert.equal(result.digest, specDigest(body()));
-    assert.ok(calls.some(([kind, text]) => kind === 'comment' && text.split('\n').includes(specApprovalLine(result.digest))));
+    assert.ok(calls.some(([kind, text]) => kind === 'comment' && text === specApprovalLine(result.digest)));
     assert.ok(calls.some(([kind, names]) => kind === 'add' && names.includes('spec-approved')));
   });
   it('when a human revokes then posts the revoke line and removes the label', async () => {
     const { calls, github } = recorder(issue({ labels: labels('sbi', 'spec-approved') }));
     const result = await postSpecApproval({ issueUrl: ref.url, decision: 'revoke', github });
-    assert.ok(calls.some(([kind, text]) => kind === 'comment' && text.split('\n').includes(`harness-spec-revoke: ${result.digest}`)));
+    assert.ok(calls.some(([kind, text]) => kind === 'comment' && text === `harness-spec-revoke: ${result.digest}`));
     assert.ok(calls.some(([kind, name]) => kind === 'remove' && name === 'spec-approved'));
   });
   it('when the Issue has no Gherkin then nothing is posted', async () => {
