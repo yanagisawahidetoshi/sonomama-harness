@@ -215,6 +215,7 @@ describe('Re-verification of an existing PR after main moved', () => {
       await reviewBy(github, b.pullRequest.number, 'alice', 'APPROVED', first.headSha);
       const mainAfterC = await mergeA(root, { 'docs/feature-c.md': '# Cの機能\n' });
       const second = await reverifyPullRequest({ root, pullUrl, quiet: true });
+      assert.notEqual(second.alreadyVerified, true, 'a new base SHA is verified again');
       assert.notEqual(second.id, first.id);
       assert.equal(second.reverify.parentRunId, b.id, 'the parent stays the run that implemented the SBI');
       assert.equal(second.reverify.previousTestedSha, first.headSha);
@@ -359,6 +360,48 @@ describe('Re-verification of an existing PR after main moved', () => {
     })));
   });
 
+  // The PASS run bound to this PR, this PR head and this base SHA is the only source; GitHub Reviews are not read for it.
+  describe('given main has not moved since the PR head was verified', () => {
+    it('when B is re-verified then it reports the run the head is bound to and creates no run, commit, push or PR update', () => fixture(root => withPullRequestB(root, async ({ bare, github, b, pullUrl }) => {
+      const before = { runs: await runs(root), body: (await github.state()).pulls[0].body };
+      const result = await reverifyPullRequest({ root, pullUrl, quiet: true });
+      assert.equal(result.alreadyVerified, true);
+      assert.equal(result.id, b.id);
+      assert.equal(result.headSha, b.headSha);
+      assert.deepEqual(await runs(root), before.runs);
+      assert.equal(await remoteSha(bare, `harness/${b.id}`), b.headSha);
+      assert.equal((await github.state()).pulls[0].body, before.body);
+      assert.equal((await github.calls()).some(c => c.args.includes('PATCH')), false);
+    })));
+    it('when someone pushed onto the PR head then the new head is verified in a new run', () => fixture(root => withPullRequestB(root, async ({ bare, b, pullUrl }) => {
+      const head = await commitOnBranch(bare, `harness/${b.id}`, { 'apps/admin/src/extra.txt': '追加' });
+      const run = await reverifyPullRequest({ root, pullUrl, quiet: true });
+      assert.notEqual(run.alreadyVerified, true);
+      assert.notEqual(run.id, b.id);
+      assert.equal(run.reverify.previousTestedSha, head);
+    })));
+    it('when the run of the head stopped as ESCALATED then the head is verified in a new run', () => fixture(root => withPullRequestB(root, async ({ b, pullUrl }) => {
+      await git(root, ['commit', '--allow-empty', '-m', 'local only']);
+      assert.equal((await resumeRun({ root, runId: b.id, quiet: true })).status, 'ESCALATED');
+      await git(root, ['checkout', '--quiet', '--detach', b.baselineSha]);
+      const run = await reverifyPullRequest({ root, pullUrl, quiet: true });
+      assert.notEqual(run.alreadyVerified, true);
+      assert.notEqual(run.id, b.id);
+    })));
+    it('when the signed state of the run cannot be verified then the head is verified in a new run', () => fixture(root => withPullRequestB(root, async ({ b, pullUrl }) => {
+      await update(root, `${b.runDir}/summary.json`, s => { s.reason = '手で書き換えた'; });
+      const run = await reverifyPullRequest({ root, pullUrl, quiet: true });
+      assert.notEqual(run.alreadyVerified, true);
+      assert.notEqual(run.id, b.id);
+    })));
+    it('when the run ref no longer points at the PR head then the binding is not trusted and the head is verified in a new run', () => fixture(root => withPullRequestB(root, async ({ b, pullUrl }) => {
+      await git(root, ['update-ref', `refs/harness/runs/${b.id}`, b.baselineSha]);
+      const run = await reverifyPullRequest({ root, pullUrl, quiet: true });
+      assert.notEqual(run.alreadyVerified, true);
+      assert.notEqual(run.id, b.id);
+    })));
+  });
+
   describe('given the same re-verification is repeated', () => {
     it('when the earlier run failed then running it again starts a new run instead of returning the stopped one', () => fixture(root => withPullRequestB(root, async ({ bare, b, pullUrl }) => {
       await mergeA(root, { '.harness/verification/issue-7.mjs': acceptance('ホーム（新しい見出し）') });
@@ -376,6 +419,7 @@ describe('Re-verification of an existing PR after main moved', () => {
       const again = await reverifyPullRequest({ root, pullUrl, quiet: true });
       assert.equal(again.id, first.id);
       assert.equal(again.headSha, first.headSha);
+      assert.equal(again.alreadyVerified, true);
       assert.deepEqual(await runs(root), before);
       assert.equal((await github.state()).pulls.length, 1);
     })));
