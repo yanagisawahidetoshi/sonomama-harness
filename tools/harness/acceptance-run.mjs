@@ -8,14 +8,15 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { runIsolated } from './isolation.mjs';
 import { acceptanceResultSchema } from './schemas.mjs';
-const notMet = new Set(['RSpec::Expectations::ExpectationNotMetError', 'RSpec::Expectations::MultipleExpectationsNotMetError']);
+export const expectationNotMet = new Set(['RSpec::Expectations::ExpectationNotMetError', 'RSpec::Expectations::MultipleExpectationsNotMetError']);
 const run = (...task) => ['docker', 'compose', '-f', 'compose.yaml', 'run', '--rm', '-e', 'RAILS_ENV=test', '-e', 'DATABASE_URL=postgres://postgres@db:5432/sonomama_acceptance_test', 'api', ...task];
 
-export function acceptanceCommands(sbiIssue) {
+// examples narrows the run to the examples of one Scenario (a controlled violation); -e matches by description.
+export function acceptanceCommands(sbiIssue, { examples = [] } = {}) {
   return [
     ['docker', 'compose', '-f', 'compose.yaml', 'build', 'api'],
     run('bin/rails', 'db:prepare'),
-    run('bundle', 'exec', 'rspec', `spec/acceptance/sbi_${sbiIssue}`, '--format', 'json'),
+    run('bundle', 'exec', 'rspec', `spec/acceptance/sbi_${sbiIssue}`, ...examples.flatMap(e => ['-e', e]), '--format', 'json'),
     ['docker', 'compose', '-f', 'compose.yaml', 'down'],
   ];
 }
@@ -41,17 +42,20 @@ export function judgeDetection({ registration, report }) {
   const reasons = [];
   if (report.error) reasons.push(report.error);
   if (report.errorsOutsideOfExamples) reasons.push(`${report.errorsOutsideOfExamples} errors occurred outside of examples (the specs could not be loaded)`);
+  const undeterminable = (entry, reason) => { reasons.push(reason); return { ...entry, outcome: 'undeterminable', reason }; };
   const outcomes = mapped(registration).map(entry => {
     const result = resultOf(report, entry.description);
-    if (!result) { reasons.push(`"${entry.description}" did not run`); return { ...entry, outcome: 'undeterminable' }; }
+    if (!result) return undeterminable(entry, `"${entry.description}" did not run`);
     if (result.status === 'passed') return { ...entry, outcome: 'already satisfied' };
-    if (result.status === 'failed' && notMet.has(result.exceptionClass)) return { ...entry, outcome: 'detected' };
-    reasons.push(`"${entry.description}" ${result.status}${result.exceptionClass ? ` with ${result.exceptionClass}` : ''}, which is not a failed expectation`);
-    return { ...entry, outcome: 'undeterminable' };
+    // The failed expectation is kept, so the evidence shows which expected outcome of which Scenario was missing.
+    if (result.status === 'failed' && expectationNotMet.has(result.exceptionClass)) return { ...entry, outcome: 'detected', failure: { description: entry.description, message: result.message ?? null } };
+    return undeterminable(entry, `"${entry.description}" ${result.status}${result.exceptionClass ? ` with ${result.exceptionClass}` : ''}, which is not a failed expectation`);
   });
   const scenarios = registration.mapping.map(m => {
     const own = outcomes.filter(o => o.scenario === m.scenario);
-    return { scenario: m.scenario, outcome: own.some(o => o.outcome === 'undeterminable') ? 'undeterminable' : own.some(o => o.outcome === 'detected') ? 'detected' : 'already satisfied' };
+    const outcome = report.error || report.errorsOutsideOfExamples || own.some(o => o.outcome === 'undeterminable') ? 'undeterminable' : own.some(o => o.outcome === 'detected') ? 'detected' : 'already satisfied';
+    const reason = own.filter(o => o.reason).map(o => o.reason).join('; ') || (outcome === 'undeterminable' ? reasons.join('; ') : null);
+    return { scenario: m.scenario, acceptanceIds: m.acceptanceIds, outcome, failures: own.filter(o => o.failure).map(o => o.failure), ...(reason ? { reason } : {}) };
   });
   return { status: reasons.length ? 'UNDETERMINABLE' : 'PASS', scenarios, reasons };
 }
@@ -72,8 +76,8 @@ export function judgeAcceptance({ registration, report }) {
 }
 
 // The default runner: the generated specs of one SBI through the compose isolation, read back as the RSpec report.
-export async function runGeneratedAcceptance({ workspace, sbiIssue, config }) {
-  const adapter = { id: `generated-acceptance-sbi-${sbiIssue}`, isolation: 'compose', network: true, commands: acceptanceCommands(sbiIssue) };
+export async function runGeneratedAcceptance({ workspace, sbiIssue, config, examples }) {
+  const adapter = { id: `generated-acceptance-sbi-${sbiIssue}`, isolation: 'compose', network: true, commands: acceptanceCommands(sbiIssue, { examples }) };
   const result = await runIsolated({ workspace, adapter, config, cwd: workspace });
   const report = parseRspecJson(result.processes?.[2]?.stdout);
   return result.reason && report.error ? { ...report, error: `${report.error} (${result.reason})` } : report;
