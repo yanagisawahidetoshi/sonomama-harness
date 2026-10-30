@@ -108,6 +108,36 @@ describe('Security enforcement in the execution loop', () => {
       const assessment = await readJson(join(root, run.runDir, 'security-assessment.json'));
       assert.ok(assessment.matchedRules.includes('SEC-RLS-001'));
     }));
+  });
+  // An SBI from an Issue names only directories (allowedFiles is empty), so the content checks must read the committed diff instead.
+  describe('given an approved SecurityConfig SBI that allows a directory and no file by name', () => {
+    const tls = "process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';\n";
+    const directoryRun = async (root, files) => {
+      await writeFile(join(root, '.harness/verification/lib.mjs'), 'console.log(JSON.stringify({ acceptance: ["LIB"] }));');
+      await update(root, '.harness/config/harness.json', c => c.verifiers.push({ id: 'lib', trust: 'acceptance', trustedScript: '.harness/verification/lib.mjs', directory: '.', planned: ['lib'], commands: [], acceptanceIds: ['LIB'], appliesTo: ['^never/'] }));
+      await update(root, '.harness/state/sample-sbi.json', s => {
+        Object.assign(s, { allowedFiles: [], allowedDirs: ['lib/'], securityImpact: ['SecurityConfig'], acceptanceCriteria: [{ id: 'LIB', description: 'lib', verifier: 'lib' }] });
+      });
+      const agent = async () => ({ files });
+      const run = await runHarness({ root, quiet: true, agent });
+      for (const id of ['A', 'B']) await recordDecision({ root, runId: run.id, purpose: 'implementation-gate', identityProvider: human(id) });
+      await resumeRun({ root, runId: run.id, quiet: true, agent });
+      return readJson(join(root, run.runDir, 'iteration-1/security-verification.json'));
+    };
+    it('when the agent adds a forbidden pattern under that directory then the forbidden pattern check fails on that file', () => fixture(async root => {
+      const evidence = await directoryRun(root, [{ path: 'lib/tls.mjs', content: tls }]);
+      const check = evidence.checks.find(c => c.id === 'forbidden-pattern-check');
+      assert.equal(check.status, 'FAIL');
+      assert.deepEqual(check.findings.map(f => f.path), ['lib/tls.mjs']);
+      assert.equal(securityPassed(evidence), false);
+    }));
+    it('when the agent changes no file then the content checks do not report PASS for scanning nothing', () => fixture(async root => {
+      const evidence = await directoryRun(root, []);
+      for (const id of ['secret-scan', 'forbidden-pattern-check']) assert.notEqual(evidence.checks.find(c => c.id === id).status, 'PASS', id);
+      assert.equal(securityPassed(evidence), false);
+    }));
+  });
+  describe('given security rules on the docs lane', () => {
     it('when docs/security changes then minimum security risk overrides docs LOW and AI LOW', () => {
       const result = assess([{ path: 'docs/security/pii.md', added: 'Security requirements update.' }]);
       assert.equal(result.minimumRiskLevel, 3);
