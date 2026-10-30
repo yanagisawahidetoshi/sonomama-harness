@@ -82,3 +82,9 @@ RSpec.configure do |config|
   config.include ApiContract::Matchers, type: :request
   config.after(:suite) { |_| config.reporter.message(ApiContract.verify_suite_coverage.join("\n")) }
 end
+
+# A dry run skips after(:suite), so the Verifier's coverage requirement could never fail. Stop while loading instead.
+if RSpec.configuration.dry_run? && ENV["API_CONTRACT_COVERAGE"] == "required"
+  raise ApiContract::CoverageError,
+        "API contract coverage: a dry run checks no contract (API_CONTRACT_COVERAGE=required)"
+end

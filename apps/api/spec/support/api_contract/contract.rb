@@ -37,7 +37,7 @@ module ApiContract
       rack_request = rebuild(request)
       method = rack_request.request_method.downcase
       template = template_for(rack_request.path, method)
-      return undefined(rack_request, response) unless template
+      return undefined(request, response) unless template
 
       exchange = Exchange.new(self, template, method)
       Result.new(operation: "#{method.upcase} #{template}", status: response.status, undefined: false,
@@ -103,12 +103,13 @@ module ApiContract
       /\A#{template.split(/(\{[^}]+\})/).map { |part| part.start_with?('{') ? '[^/]+' : Regexp.escape(part) }.join}\z/
     end
 
-    # Segments that may carry IDs or personal data are masked; resource names and versions such as v1 stay readable.
-    def undefined(rack_request, response)
-      path = rack_request.path.split("/", -1).map do |segment|
-        segment.match?(/\A(?:[A-Za-z_-]*|v\d+)\z/) ? segment : ":param"
+    # Path parameter values (IDs, slugs) and segments with digits are masked; static names such as v1 stay readable.
+    def undefined(request, response)
+      values = request.path_parameters.except(:controller, :action, :format).values.map(&:to_s)
+      path = request.path.split("/", -1).map do |segment|
+        values.include?(segment) || !segment.match?(/\A(?:[A-Za-z_-]*|v\d+)\z/) ? ":param" : segment
       end
-      Result.new(operation: "#{rack_request.request_method} #{path.join('/')}", status: response.status,
+      Result.new(operation: "#{request.request_method} #{path.join('/')}", status: response.status,
                  request_violations: [], response_violations: [], undefined: true)
     end
 

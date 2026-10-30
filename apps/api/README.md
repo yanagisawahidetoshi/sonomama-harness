@@ -95,7 +95,7 @@ end
 - pointerを持たない違反（required bodyが無い、宣言していないmedia type）は `request: :invalid` で書く。4xxと契約どおりのエラーresponseは同じく必須。
 - 照合するもの: method / pathのoperation、path / query / header / cookie parameter、request bodyの有無・Content-Type・schema、response status・media type・body・宣言されたheader。bodyなしと宣言したstatus（204等）でbodyを返すとFAIL。
 - schemaは必須、型、enum、配列、入れ子、null許容（`type: [string, "null"]`）、`additionalProperties` を契約どおりに扱う。schemaの `default` は欠けたpropertyを補わない（必須なら欠落でFAIL）。
-- 失敗メッセージはoperation・status・違反箇所のJSON pointerだけを出し、tokenやbodyの値は出さない。契約に無いoperationでは、pathのうち英字だけのsegmentと `v1` 等以外を `:param` に伏せる。
+- 失敗メッセージはoperation・status・違反箇所のJSON pointerだけを出し、tokenやbodyの値は出さない。契約に無いoperationでは、pathのうちRailsのpath parameterの値（ID・slug）と数字を含むsegmentを `:param` に伏せる。
 - 契約の読込に失敗した、OpenAPI 3.1でない、OpenAPI 3.1のschemaとして不正な値（`type: strng` 等）がある、validatorが扱えない機能（未知の `format`、外部ファイルへの `$ref`、JSON以外のmedia type）を使う場合は、照合せずに失敗する。`properties` 等の下では `default` や `example` という名前のpropertyも検査する。
 - 検出できないもの: keywordの綴り違い（`requried` 等）。JSON Schemaでは未知のkeywordとして無視される。
 - 照合しないもの: `security`（認証）。認証・認可の振る舞いは通常のrequest specで確かめる。
@@ -103,7 +103,8 @@ end
 full suite（`bundle exec rspec`）の最後に、Railsの業務route（`config/routes.manifest.json`）ごとに契約照合したrequest specを `COVERED` / `UNCOVERED` で出す。
 業務routeに、契約照合が通ったspecが1件も無い（skipを含む）、routeが契約に無い、`openapi.yaml` が無いのに業務routeがある場合はsuiteをFAILにする。
 Railsが未実装の契約operationは `UNIMPLEMENTED` と出すだけでFAILにしない。業務routeも `openapi.yaml` も無い間は `NOT CHECKED` と出し、照合済みとは扱わない。
-一部のファイル・exampleだけを実行したときはcoverageを判定せず `NOT CHECKED` と出す。rails Verifierは `API_CONTRACT_COVERAGE=required` を渡すので、そこで `.rspec` や `spec_helper` のfilter・patternによって一部しか実行されなければFAILする。
+一部のファイル・exampleだけを実行したときはcoverageを判定せず `NOT CHECKED` と出す。rails Verifierは `API_CONTRACT_COVERAGE=required` を渡すので、そこで `.rspec` や `spec_helper` のfilter・patternによって一部しか実行されなければFAILし、`--dry-run` は読込時にFAILする。
+既知の制約: 判定はrspecのプロセス内で行うため、spec_helper等が `ENV["API_CONTRACT_COVERAGE"]` を書き換えると外せる。防ぐにはHarness側の検査が要る（範囲外）。
 coverageに数えるのは、通った `match_api_contract` だけ。`request: :invalid` の負のテストも、入力違反を検出し、operationを特定でき、エラーresponseが契約どおりで通ったときは数える。失敗した照合と `not_to match_api_contract` は数えない。
 
 照合の仕組みは `spec/support/api_contract_spec.rb` が、本番routeに追加しないfixture用のRails route（`spec/support/api_contract_fixture.rb`）と契約（`spec/fixtures/api_contract/`）で検証する。

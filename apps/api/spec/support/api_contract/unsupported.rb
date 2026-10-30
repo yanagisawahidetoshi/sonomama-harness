@@ -7,7 +7,12 @@ module ApiContract
     KNOWN_FORMATS = (JSONSchemer::Draft202012::FORMATS.keys + JSONSchemer::OpenAPI31::FORMATS.keys).freeze
     # Keys whose values are data, not OpenAPI objects or schema keywords.
     DATA_KEYS = %w[example examples default enum const].freeze
-    SCHEMA_MAPS = %w[properties patternProperties $defs definitions dependentSchemas schemas].freeze
+    # Maps whose keys are names (a property, a status such as default, a header such as x-trace-id), so no key is
+    # skipped as data or as an x- extension there.
+    NAME_MAPS = %w[
+      properties patternProperties $defs definitions dependentSchemas schemas responses headers parameters
+      requestBodies securitySchemes links callbacks content paths
+    ].freeze
     # Objects whose `content` maps media types to schemas: request bodies, responses, parameters and headers.
     CONTENT_OWNER = %r{/(?:requestBody|requestBodies/[^/]+|responses/[^/]+|parameters/[^/]+|headers/[^/]+)\z}
 
@@ -44,9 +49,8 @@ module ApiContract
       node["content"].keys.grep_v(JSON_MEDIA_TYPE).map { |media_type| "media type #{media_type} (only JSON bodies)" }
     end
 
-    # Under properties, $defs and the like every key names a schema, even one called default or example.
     def skip?(key, parent)
-      return false if SCHEMA_MAPS.include?(parent)
+      return false if NAME_MAPS.include?(parent)
 
       DATA_KEYS.include?(key) || key.to_s.start_with?("x-")
     end
