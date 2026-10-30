@@ -7,6 +7,10 @@ import { changeTypeRulesSchema } from './schemas.mjs';
 const dependencySections = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'];
 const gemLine = /^\s*gem\s+(["'])([A-Za-z0-9_.-]+)\1((?:\s*,\s*(["'])[^"'\n]*\4)*)\s*$/;
 const parse = text => { try { return JSON.parse(text); } catch { return undefined; } };
+// A semver range only: an npm alias, a URL, a path, a workspace link or a dist tag can point an existing name at other code.
+const semverPart = /^(\^|~|[<>]=?|=)?v?(\d+|[xX*])(\.(\d+|[xX*])){0,2}(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/;
+const isSemverRange = value => typeof value === 'string' && value.trim() !== '' && value.trim().split(/\s*\|\|\s*|\s+/).every(part => part === '-' || semverPart.test(part));
+const gemRequirement = /^\s*(=|!=|>=|<=|>|<|~>)?\s*\d+(\.[0-9A-Za-z]+)*\s*$/;
 
 // Only the versions of dependencies that were already there may change; scripts, overrides and any other key keep the file ambiguous.
 function dependencyVersionsOnly(before, after) {
@@ -14,7 +18,8 @@ function dependencyVersionsOnly(before, after) {
   if (!old || !now || typeof old !== 'object' || typeof now !== 'object') return false;
   const rest = value => Object.fromEntries(Object.entries(value).filter(([key]) => !dependencySections.includes(key)));
   if (!isDeepStrictEqual(rest(old), rest(now))) return false;
-  return dependencySections.every(key => isDeepStrictEqual(Object.keys(old[key] ?? {}).sort(), Object.keys(now[key] ?? {}).sort()));
+  return dependencySections.every(key => isDeepStrictEqual(Object.keys(old[key] ?? {}).sort(), Object.keys(now[key] ?? {}).sort())
+    && Object.entries(now[key] ?? {}).every(([name, value]) => value === old[key][name] || isSemverRange(value)));
 }
 
 // Every changed line is the same gem with only its version strings changed; a gem added, removed, regrouped or given options is not.
@@ -24,7 +29,8 @@ function gemVersionsOnly(before, after) {
   return old.every((line, i) => {
     if (line === now[i]) return true;
     const [a, b] = [gemLine.exec(line), gemLine.exec(now[i])];
-    return Boolean(a && b && a[2] === b[2]);
+    const requirements = [...(b?.[3] ?? '').matchAll(/(["'])([^"']*)\1/g)].map(m => m[2]);
+    return Boolean(a && b && a[2] === b[2] && requirements.every(v => gemRequirement.test(v)));
   });
 }
 

@@ -54,7 +54,7 @@ Production（`apps/`・`packages/`と`.harness/config/lanes.json`の`productionP
 
 ### SBI source: SBI Run snapshot
 
-SBI sourceはchange-typeとは別の軸で判定する。`requiresSbi = true`のPRと、Production diffで`.harness/state/sbi-*.json`を追加・変更・削除したPRに、次の検査を行う。`Harness-Run:` / `SBI-Issue:` trailerだけでは有効なSBI sourceにならない。
+SBI sourceはchange-typeとは別の軸で判定する。`requiresSbi = true`のPRと、`.harness/state/sbi-*.json`を追加・変更・削除したPR（change-typeを問わない）に、次の検査を行う。`Harness-Run:` / `SBI-Issue:` trailerだけでは有効なSBI sourceにならない。
 
 Completion Judge（`harness` job）が次をすべて確かめ、1つでも欠ければFAILする。
 

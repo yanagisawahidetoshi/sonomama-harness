@@ -199,9 +199,9 @@ export async function runCompletionJudge({ root, base, all = false, needs, repos
   const exemption = impact.sbiRequired && pullNumber !== undefined
     ? await dependencyBotExemption({ policy: dependencyBotPolicySchema.parse(await readJson(join(root, '.harness/rules/dependency-bots.json'))), files, headSha, repository, pullNumber, github })
     : null;
-  // The SBI source is a separate axis from the change type: a changed, broken or deleted snapshot in a Production diff is always verified,
+  // The SBI source is a separate axis from the change type: a changed, broken or deleted snapshot is always verified,
   // while the Run trailers alone are no source and never change the change type.
-  const snapshotChanged = impact.changeType && files.some(f => sbiFilePattern.test(f.path));
+  const snapshotChanged = files.some(f => sbiFilePattern.test(f.path));
   const required = exemption?.exempt ? [] : impact.sbiRequiredReasons.length ? impact.sbiRequiredReasons : snapshotChanged ? ['sbi-snapshot'] : [];
   const verified = await verifySbiSource({ root, base, files, required, config, repository, github });
   const source = { ...verified, ...(exemption ? { exemption } : {}) };
