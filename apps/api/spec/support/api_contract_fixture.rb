@@ -39,11 +39,18 @@ module ApiContractFixture
       render json: { error: { code: "invalid_request", message: "name and grade are required" } }, status: :bad_request
     end
 
+    def create_accepting_invalid_input = render(json: STUDENT, status: :created, location: "/students/s-1")
     def create_without_location = render(json: STUDENT, status: :created)
     def create_with_malformed_error = render(json: { errors: ["invalid"] }, status: :bad_request)
     def destroy = head(:no_content)
-    def archive = head(:accepted)
-    def archive_with_body = render(json: { archived: true }, status: :accepted)
+
+    def archive
+      response.headers["Location"] = "/students/s-1"
+      head(:accepted)
+    end
+
+    def archive_without_location = head(:accepted)
+    def archive_with_body = render(json: { archived: true }, status: :accepted, location: "/students/s-1")
 
     private
 

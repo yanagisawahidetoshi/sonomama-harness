@@ -77,6 +77,11 @@ paths:
       responses:
         "202":
           description: Accepted without a body
+          headers:
+            Location:
+              required: true
+              schema:
+                type: string
 components:
   responses:
     Error:

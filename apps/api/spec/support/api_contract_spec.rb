@@ -178,6 +178,16 @@ RSpec.describe "API contract for request specs", type: :request do
       end
     end
 
+    context "when the contract requires a header on a bodyless response and Rails does not send it" do
+      let(:fixture_app) { ApiContractFixture.app(archive: :archive_without_location) }
+
+      it "fails and names the header" do
+        post "/students/s-1/archive"
+
+        expect(contract_failure).to include("POST /students/{studentId}/archive", "202", "Location")
+      end
+    end
+
     context "when the contract declares no content and Rails returns none" do
       it "passes" do
         post "/students/s-1/archive"
@@ -237,6 +247,32 @@ RSpec.describe "API contract for request specs", type: :request do
       end
     end
 
+    context "when a negative spec names the invalid property and Rails answers with the declared 400" do
+      it "passes, because the expected violation was detected" do
+        post "/students", params: { name: "Taro", grade: "third" }, as: :json
+
+        expect(response).to match_api_contract(contract, request: { invalid: "/grade" })
+      end
+    end
+
+    context "when a negative spec names the invalid property but the request breaks the contract elsewhere" do
+      it "fails, because the expected violation was not the one detected" do
+        post "/students", params: { name: "Taro", grade: "third" }
+
+        expect(contract_failure(request: { invalid: "/grade" })).to include("POST /students", "/grade")
+      end
+    end
+
+    context "when a negative spec sends an invalid request and Rails accepts it with 201" do
+      let(:fixture_app) { ApiContractFixture.app(create: :create_accepting_invalid_input) }
+
+      it "fails, because an invalid request must get a declared 4xx error response" do
+        post "/students", params: { name: "Taro", grade: "third" }, as: :json
+
+        expect(contract_failure(request: { invalid: "/grade" })).to include("POST /students", "201", "4xx")
+      end
+    end
+
     context "when a negative spec declares an invalid request but the request conforms" do
       it "fails, because the spec did not send the violation it describes" do
         post "/students", params: { name: "Taro", grade: 3 }, as: :json
@@ -265,11 +301,12 @@ RSpec.describe "API contract for request specs", type: :request do
     end
 
     context "when a query parameter breaks its schema" do
-      it "detects the request violation on that parameter", :aggregate_failures do
+      it "detects the request violation on that parameter, and a negative spec fails when Rails answers 200",
+         :aggregate_failures do
         get "/students", params: { grade: 0 }
 
         expect(contract_failure).to include("GET /students", "grade")
-        expect(response).to match_api_contract(contract, request: :invalid)
+        expect(contract_failure(request: { invalid: "/grade" })).to include("GET /students", "200", "4xx")
       end
     end
 
@@ -291,8 +328,14 @@ RSpec.describe "API contract for request specs", type: :request do
       it "fails even for a negative spec, because the operation cannot be resolved", :aggregate_failures do
         get "/teachers/t-1"
 
-        expect(contract_failure).to include("GET /teachers/t-1")
-        expect(contract_failure(request: :invalid)).to include("GET /teachers/t-1")
+        expect(contract_failure).to include("GET /teachers/", "not defined")
+        expect(contract_failure(request: :invalid)).to include("GET /teachers/", "not defined")
+      end
+
+      it "does not print the path parameter values of the request" do
+        get "/teachers/t-1"
+
+        expect(contract_failure).not_to include("t-1")
       end
     end
   end
@@ -432,6 +475,20 @@ RSpec.describe "API contract for request specs", type: :request do
       it "fails and lists each unsupported feature instead of passing silently" do
         expect { ApiContract::Contract.load(ApiContractFixture.contract_path("unsupported")) }
           .to raise_error(ApiContract::ContractError, %r{report-code.*application/xml.*errors\.yaml}m)
+      end
+    end
+
+    context "when a schema value breaks the OpenAPI 3.1 schema dialect" do
+      it "fails instead of validating against a schema that checks nothing" do
+        expect { ApiContract::Contract.load(ApiContractFixture.contract_path("invalid_schema")) }
+          .to raise_error(ApiContract::ContractError, /studentId/)
+      end
+    end
+
+    context "when properties named default or example use unsupported features" do
+      it "lists them, because a property schema is not example data" do
+        expect { ApiContract::Contract.load(ApiContractFixture.contract_path("unsupported_property_names")) }
+          .to raise_error(ApiContract::ContractError, /settings-code.*examples\.yaml/m)
       end
     end
 
