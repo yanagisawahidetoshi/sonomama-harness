@@ -1,7 +1,9 @@
 // Machine-countable stop reasons for Health Metrics. Human-facing reason text is kept separately.
 export const escalationCodes = Object.freeze(['SPEC_AMBIGUOUS', 'DESIGN_DECISION_REQUIRED', 'AGENT_ESCALATION', 'SECRET_PROPOSAL', 'NEW_SECURITY_SCOPE', 'NEW_HIGH_RISK',
   'VERIFIER_NOT_CONFIGURED', 'SECURITY_VERIFIER_NOT_CONFIGURED', 'SCOPE_VIOLATION', 'LANE_ESCALATION', 'ITERATION_LIMIT', 'CONSECUTIVE_FAILURE',
-  'SOURCE_DIRTY', 'SOURCE_CHANGED', 'WORKSPACE_CHANGED', 'APPROVAL_INVALID', 'SECURITY_CHECKS_CHANGED', 'REVERIFY_CONFLICT', 'UNKNOWN']);
+  'SOURCE_DIRTY', 'SOURCE_CHANGED', 'WORKSPACE_CHANGED', 'APPROVAL_INVALID', 'SECURITY_CHECKS_CHANGED', 'REVERIFY_CONFLICT',
+  // #147: generated Trusted Acceptance that failed the quality checks, and detection (G) that could not be judged.
+  'ACCEPTANCE_REJECTED', 'DETECTION_UNDETERMINABLE', 'UNKNOWN']);
 export function classifyEscalation(message) {
   const text = String(message ?? '');
   if (/^scope[ /]|^trusted test path is reserved/.test(text)) return 'SCOPE_VIOLATION';

@@ -4,6 +4,7 @@
 // G (before the implementation): every mapped example must either fail on an expectation (the missing behavior is detected) or already pass
 // (the existing implementation meets the spec). Anything else (an error that is not an expectation, a load error, a missing or pending
 // example, no report) is undeterminable and stops the run. I (after the implementation): every mapped example passes.
+import { runIsolated } from './isolation.mjs';
 const notMet = new Set(['RSpec::Expectations::ExpectationNotMetError', 'RSpec::Expectations::MultipleExpectationsNotMetError']);
 const run = (...task) => ['docker', 'compose', '-f', 'compose.yaml', 'run', '--rm', '-e', 'RAILS_ENV=test', '-e', 'DATABASE_URL=postgres://postgres@db:5432/sonomama_acceptance_test', 'api', ...task];
 
@@ -65,4 +66,12 @@ export function judgeAcceptance({ registration, report }) {
   // An acceptance criterion is met only when every example mapped to it passed.
   const acceptance = [...met].filter(id => !failed.has(id)).sort();
   return { status: reasons.length ? 'FAIL' : 'PASS', acceptance, reasons };
+}
+
+// The default runner: the generated specs of one SBI through the compose isolation, read back as the RSpec report.
+export async function runGeneratedAcceptance({ workspace, sbiIssue, config }) {
+  const adapter = { id: `generated-acceptance-sbi-${sbiIssue}`, isolation: 'compose', network: true, commands: acceptanceCommands(sbiIssue) };
+  const result = await runIsolated({ workspace, adapter, config, cwd: workspace });
+  const report = parseRspecJson(result.processes?.[2]?.stdout);
+  return result.reason && report.error ? { ...report, error: `${report.error} (${result.reason})` } : report;
 }
