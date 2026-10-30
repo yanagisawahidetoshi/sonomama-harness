@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { recordPbiAcceptance, pbiAcceptanceRecords, pbiAcceptanceLedgerPath } from './pbi-acceptance.mjs';
+import { recordPbiAcceptance, pbiAcceptanceRecords, pbiAcceptanceLedgerPath, recordEvidenceManifest, evidenceManifests } from './pbi-acceptance.mjs';
 import { parseIssueUrl } from './planner.mjs';
 
 const pbiUrl = 'https://github.com/acme/app/issues/8';
@@ -69,6 +69,27 @@ describe('PBI Human Acceptance ledger', () => {
       await recordPbiAcceptance({ root, pbiUrl: 'https://github.com/acme/app/issues/9', evidenceDigest: digest, decision: 'APPROVE', identityProvider: human() });
       await writeFile(pbiAcceptanceLedgerPath(root, parseIssueUrl(pbiUrl)), await readFile(pbiAcceptanceLedgerPath(root, parseIssueUrl('https://github.com/acme/app/issues/9')), 'utf8'));
       await assert.rejects(pbiAcceptanceRecords(root, pbiUrl), /signature invalid/);
+    }));
+  });
+});
+
+describe('PBI Evidence manifest ledger', () => {
+  const manifest = (overrides = {}) => ({ evidenceDigest: digest, plan: { digest: 'c'.repeat(64), revision: 1, approvalKey: 'd'.repeat(64) }, sbis: [{
+    id: 'SBI-001', number: 11, kind: 'implementation', pullRequest: 21, headSha: 'a'.repeat(40), mergeCommitSha: 'b'.repeat(40), requiredChecks: [{ name: 'harness', status: 'SUCCESS' }],
+    e2e: { status: 'PASS', api: 'mock' }, lane: 'mock', resultDigest: 'e'.repeat(64), workflowRunId: 900, artifactId: 1,
+  }], ...overrides });
+  describe('given the trusted CLI after a verified APPROVE', () => {
+    it('when a manifest is recorded then it is read back signed and bound to the PBI', () => withRoot(async root => {
+      const recorded = await recordEvidenceManifest({ root, pbiUrl, manifest: manifest() });
+      const [read] = await evidenceManifests(root, pbiUrl);
+      assert.deepEqual(read, recorded);
+      assert.equal(read.pbiUrl, pbiUrl);
+      assert.match(read.signature, /^[0-9a-f]{64}$/);
+    }));
+    it('when the manifest misses a field then nothing is recorded', () => withRoot(async root => {
+      const { lane, ...partial } = manifest().sbis[0];
+      await assert.rejects(recordEvidenceManifest({ root, pbiUrl, manifest: manifest({ sbis: [partial] }) }));
+      assert.deepEqual(await evidenceManifests(root, pbiUrl), []);
     }));
   });
 });

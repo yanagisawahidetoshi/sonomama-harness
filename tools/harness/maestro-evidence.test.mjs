@@ -52,7 +52,8 @@ describe('Maestro Evidence adapter', () => {
   describe('given an implementation SBI whose merged Harness PR ran the mock lane in CI', () => {
     it('when the evidence is read then the mock result of the run behind the passing harness check of the merged head is returned with its digest', async () => {
       const { state, adapter } = world();
-      assert.deepEqual(await adapter.read({ sbi: sbi(), pull }), { connected: true, e2e: { status: 'PASS', api: 'mock' }, evidenceDigest: sha256(state.files['mock.json']) });
+      assert.deepEqual(await adapter.read({ sbi: sbi(), pull }), { connected: true, e2e: { status: 'PASS', api: 'mock' }, evidenceDigest: sha256(state.files['mock.json']),
+        source: { workflowRunId: 900, artifactId: 1, lane: 'mock', resultDigest: sha256(state.files['mock.json']) } });
       assert.deepEqual(state.calls, [['fileAt', '.harness/state/sbi-11.json', head], ['checkRuns', head], ['workflowRuns', 77], ['artifacts', 900], ['download', 1]]);
     });
     it('when a flow failed then the E2E result is FAIL', async () => {
@@ -98,7 +99,8 @@ describe('Maestro Evidence adapter', () => {
         snapshot: JSON.stringify(snapshot({ source: { repo: 'acme/app', number: 13, url: 'https://github.com/acme/app/issues/13' } }, { kind: 'validation', issueUrl: 'https://github.com/acme/app/issues/13' })),
         files: { 'mock.json': JSON.stringify(result()), 'real.json': real },
       });
-      assert.deepEqual(await adapter.read({ sbi: sbi({ id: 'SBI-003', kind: 'validation', number: 13, issueUrl: 'https://github.com/acme/app/issues/13' }), pull }), { connected: true, e2e: { status: 'PASS', api: 'real' }, evidenceDigest: sha256(real) });
+      assert.deepEqual(await adapter.read({ sbi: sbi({ id: 'SBI-003', kind: 'validation', number: 13, issueUrl: 'https://github.com/acme/app/issues/13' }), pull }), { connected: true, e2e: { status: 'PASS', api: 'real' }, evidenceDigest: sha256(real),
+        source: { workflowRunId: 900, artifactId: 1, lane: 'real', resultDigest: sha256(real) } });
     });
   });
 
@@ -114,6 +116,28 @@ describe('Maestro Evidence adapter', () => {
       const { state, adapter } = world({ snapshot: JSON.stringify(snapshot({}, { e2e: null })) });
       assert.equal((await adapter.read({ sbi: sbi(), pull })).e2e.api, 'mock');
       assert.ok(state.calls.some(([call]) => call === 'download'));
+    });
+  });
+
+  describe('given a raw artifact that is gone', () => {
+    for (const [name, overrides] of [
+      ['it expired', { artifacts: [{ id: 1, name: 'maestro-results', expired: true, created_at: '2026-10-30T00:50:00Z' }] }],
+      ['it is missing', { artifacts: [] }],
+    ]) {
+      it(`when ${name} then reading fails with an artifact-unavailable error, so a signed manifest may stand in`, async () => {
+        const { adapter } = world(overrides);
+        await assert.rejects(adapter.read({ sbi: sbi(), pull }), error => error.artifactUnavailable === true);
+      });
+    }
+    it('when the download fails then reading fails with an artifact-unavailable error', async () => {
+      const { state, adapter } = world();
+      state.files = null;
+      const failing = maestroEvidence({ ref, github: { fileAt: async () => state.snapshot }, actions: { checkRuns: async () => state.checkRuns, workflowRuns: async () => state.runs, artifacts: async () => state.artifacts, download: async () => { throw new Error('artifact 1 をダウンロードできません（HTTP 410）'); } } });
+      await assert.rejects(failing.read({ sbi: sbi(), pull }), error => error.artifactUnavailable === true);
+    });
+    it('when the result was read but is for another lane then the error is not artifact-unavailable', async () => {
+      const { adapter } = world({ files: { 'mock.json': JSON.stringify(result({ lane: 'real' })) } });
+      await assert.rejects(adapter.read({ sbi: sbi(), pull }), error => !error.artifactUnavailable);
     });
   });
 

@@ -11,7 +11,9 @@ import { execute } from './io.mjs';
 import { collectPbiStatus, renderPbiStatus, acceptPbi } from './pbi-status.mjs';
 // An adapter that has no evidence to offer, e.g. for an SBI without a merged Harness PR.
 const notConnected = { async read() { return { connected: false, reason: 'Maestro E2E Evidenceを接続できません' }; } };
-import { pbiAcceptanceRecords } from './pbi-acceptance.mjs';
+import { pbiAcceptanceRecords, evidenceManifests, pbiEvidenceLedgerPath } from './pbi-acceptance.mjs';
+import { parseIssueUrl } from './planner.mjs';
+import { readFile as readText, writeFile as writeText } from 'node:fs/promises';
 import { planOf, planDigest, renderPlanSection, approvalKey } from './pbi-plan.mjs';
 
 const pbi = { owner: 'acme', repo: 'app', number: 8, url: 'https://github.com/acme/app/issues/8', title: '受講生ログイン' };
@@ -553,6 +555,89 @@ describe('PBI Acceptance from the trusted CLI', () => {
         assert.equal(result.record.decision, decision);
       }));
     }
+  });
+});
+
+describe('PBI Evidence manifest', () => {
+  const human = async () => ({ id: 'os:501:reviewer', kind: 'human', source: 'local-os-user' });
+  async function withRoot(fn) {
+    const root = await mkdtemp(join(tmpdir(), 'harness-pbi-manifest-'));
+    try { await fn(root); } finally { await rm(root, { recursive: true, force: true }); }
+  }
+  const resultDigest = id => mockDigest(id);
+  const source = sbi => ({ workflowRunId: 900 + sbi.number, artifactId: 1000 + sbi.number, lane: sbi.kind === 'validation' ? 'real' : 'mock', resultDigest: sbi.kind === 'validation' ? validationDigest : resultDigest(sbi.id) });
+  // The raw CI artifact: readable until it expires, then the adapter says the artifact is unavailable.
+  const ci = (expired = new Set()) => ({
+    async read({ sbi }) {
+      if (expired.has(sbi.id)) throw Object.assign(new Error('workflow run 900 のmaestro-results artifactが期限切れ'), { artifactUnavailable: true });
+      return sbi.kind === 'validation' ? { connected: true, e2e: { status: 'PASS', api: 'real' }, evidenceDigest: validationDigest, source: source(sbi) }
+        : { connected: true, e2e: { status: 'PASS', api: 'mock' }, evidenceDigest: resultDigest(sbi.id), source: source(sbi) };
+    },
+  });
+  const run = (root, { evidence = ci(), state, decision } = {}) => {
+    const { github, githubPr } = world(state);
+    const options = { root, pbiUrl: pbi.url, config, github, githubPr, evidence };
+    return decision ? acceptPbi({ ...options, evidenceDigest: acceptedDigest, decision, identityProvider: human }) : collectPbiStatus(options);
+  };
+  describe('given a human approving the PBI Human Acceptance', () => {
+    it('when APPROVE is recorded then a signed manifest of the verified evidence is stored with the plan, each SBI, its PR, SHAs, required checks, lane, result digest, run and artifact', () => withRoot(async root => {
+      await run(root, { decision: 'APPROVE' });
+      const [manifest] = await evidenceManifests(root, pbi.url);
+      assert.equal(manifest.evidenceDigest, acceptedDigest);
+      assert.deepEqual(manifest.plan, { digest: planDigest(fullPlan), revision: 1, approvalKey: keyOf(fullPlan) });
+      assert.deepEqual(manifest.sbis[0], {
+        id: 'SBI-001', number: 11, kind: 'implementation', pullRequest: 21, headSha: sha('1'), mergeCommitSha: sha('1'),
+        requiredChecks: [{ name: 'harness', status: 'SUCCESS' }], e2e: { status: 'PASS', api: 'mock' },
+        lane: 'mock', resultDigest: resultDigest('SBI-001'), workflowRunId: 911, artifactId: 1011,
+      });
+      assert.equal(manifest.sbis[2].lane, 'real');
+      assert.match(manifest.signature, /^[0-9a-f]{64}$/);
+    }));
+    it('when the evidence cannot be verified from the raw artifact at APPROVE then APPROVE is refused and no manifest is stored', () => withRoot(async root => {
+      await assert.rejects(run(root, { decision: 'APPROVE', evidence: ci(new Set(['SBI-001'])) }), /まだ受け入れ確認できません/);
+      assert.deepEqual(await evidenceManifests(root, pbi.url), []);
+      assert.deepEqual(await pbiAcceptanceRecords(root, pbi.url), []);
+    }));
+  });
+  describe('given the raw artifact expired', () => {
+    it('when nobody approved yet then there is no manifest and the PBI is NOT_DONE', () => withRoot(async root => {
+      const result = await run(root, { evidence: ci(new Set(['SBI-001'])) });
+      assert.equal(result.status, 'NOT_DONE');
+      assert.match(result.reasons.join('\n'), /SBI-001.*期限切れ/);
+    }));
+    it('when it expired after APPROVE then the signed manifest keeps the PBI DONE and the SBI shows it came from the manifest', () => withRoot(async root => {
+      await run(root, { decision: 'APPROVE' });
+      const result = await run(root, { evidence: ci(new Set(['SBI-001', 'SBI-003'])) });
+      assert.equal(result.status, 'DONE', result.reasons.join('\n'));
+      assert.equal(result.sbis[0].evidence, 'MANIFEST');
+      assert.match(renderPbiStatus(result).join('\n'), /SBI-001 implementation .*E2E mock PASS \(manifest\)/);
+    }));
+    for (const [name, state] of [
+      ['the plan changed', { plan: implementationOnlyPlan, issues: implementationOnlyIssues }],
+      ['the merged head of an SBI changed', { pulls: { 21: mergedPull(11, 21, sha('7')), 22: mergedPull(12, 22, sha('2')) }, checkRuns: { [sha('7')]: passing, [sha('2')]: passing } }],
+      ['the merge commit of an SBI changed', { pulls: { 21: mergedPull(11, 21, sha('1'), { merge_commit_sha: sha('8') }), 22: mergedPull(12, 22, sha('2')) } }],
+      ['another Issue now claims an SBI ID', { issues: [sbiIssue(plannedSbis[0], { number: 15, html_url: issueUrl(15) }), ...plannedSbis.slice(1).map(s => sbiIssue(s))], timeline: { 15: [21], 12: [22], 13: [] } }],
+    ]) {
+      it(`when ${name} after APPROVE then the manifest no longer counts and the PBI is NOT_DONE`, () => withRoot(async root => {
+        await run(root, { decision: 'APPROVE' });
+        const result = await run(root, { evidence: ci(new Set(['SBI-001', 'SBI-002', 'SBI-003'])), state });
+        assert.equal(result.status, 'NOT_DONE');
+        assert.ok(result.sbis.every(s => s.evidence !== 'MANIFEST'), JSON.stringify(result.sbis));
+      }));
+    }
+    it('when the manifest ledger was edited then the PBI is NOT_DONE with the reason', () => withRoot(async root => {
+      await run(root, { decision: 'APPROVE' });
+      const path = pbiEvidenceLedgerPath(root, parseIssueUrl(pbi.url));
+      await writeText(path, (await readText(path, 'utf8')).replace('"PASS"', '"FAIL"'));
+      const result = await run(root, { evidence: ci(new Set(['SBI-001'])) });
+      assert.equal(result.status, 'NOT_DONE');
+      assert.match(result.reasons.join('\n'), /signature invalid/);
+    }));
+    it('when the human re-approves while an artifact is available only through the manifest then APPROVE is refused', () => withRoot(async root => {
+      await run(root, { decision: 'APPROVE' });
+      await run(root, { decision: 'REVOKE' });
+      await assert.rejects(run(root, { decision: 'APPROVE', evidence: ci(new Set(['SBI-001'])) }), /まだ受け入れ確認できません/);
+    }));
   });
 });
 
