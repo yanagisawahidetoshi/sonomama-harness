@@ -8,7 +8,7 @@ export const githubMock = defaults => async (state, test) => {
   const dir = await mkdtemp(join(tmpdir(), 'harness-gh-'));
   const previous = { PATH: process.env.PATH, GH_MOCK_DIR: process.env.GH_MOCK_DIR, GITHUB_STEP_SUMMARY: process.env.GITHUB_STEP_SUMMARY };
   try {
-    await writeFile(join(dir, 'state.json'), JSON.stringify({ labels: [], created: [], comments: [], failOnCreate: null, pulls: [], reviews: {}, checkRuns: {}, rules: [], permissions: {}, blockedBy: {}, contents: {}, workflowRuns: {}, runArtifacts: {}, artifactFiles: {}, viewer: 'harness-operator', bare: null, ...defaults, ...state }));
+    await writeFile(join(dir, 'state.json'), JSON.stringify({ labels: [], created: [], comments: [], failOnCreate: null, pulls: [], reviews: {}, checkRuns: {}, rules: [], permissions: {}, blockedBy: {}, contents: {}, workflowRuns: {}, runArtifacts: {}, artifactFiles: {}, artifactZips: {}, viewer: 'harness-operator', bare: null, ...defaults, ...state }));
     await writeFile(join(dir, 'gh'), `#!${process.execPath}
       const fs = require('node:fs'), path = require('node:path');
       const dir = process.env.GH_MOCK_DIR, file = path.join(dir, 'state.json');
@@ -57,6 +57,9 @@ export const githubMock = defaults => async (state, test) => {
       } else if (method === 'GET' && endpoint === 'repos/acme/app/actions/runs') {
         const runs = state.workflowRuns[params.check_suite_id] || [];
         process.stdout.write(JSON.stringify({ total_count: runs.length, workflow_runs: page(runs) }));
+      } else if (method === 'GET' && (m = endpoint.match(/^repos\\/acme\\/app\\/actions\\/artifacts\\/(\\d+)\\/zip$/))) {
+        if (!state.artifactZips[m[1]]) fail('gh: Not Found (HTTP 404)');
+        process.stdout.write(Buffer.from(state.artifactZips[m[1]], 'base64'));
       } else if (method === 'GET' && (m = endpoint.match(/^repos\\/acme\\/app\\/actions\\/runs\\/(\\d+)\\/artifacts$/))) {
         const artifacts = state.runArtifacts[m[1]] || [];
         process.stdout.write(JSON.stringify({ total_count: artifacts.length, artifacts: page(artifacts) }));

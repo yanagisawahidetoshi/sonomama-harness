@@ -1,6 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { execute } from './io.mjs';
 import { maestroEvidence, githubActionsCli } from './maestro-evidence.mjs';
 import { githubCli } from './planner-github.mjs';
 import { githubMock } from './test-github.mjs';
@@ -27,9 +31,9 @@ const result = (overrides = {}) => ({ version: 1, lane: 'mock', headSha: head, s
 function world(overrides = {}) {
   const state = {
     snapshot: JSON.stringify(snapshot()),
-    checkRuns: [{ id: 5, name: 'harness', status: 'completed', conclusion: 'success', check_suite: { id: 77 } }],
+    checkRuns: [{ id: 5, name: 'harness', status: 'completed', conclusion: 'success', check_suite: { id: 77 }, started_at: '2026-10-30T01:00:00Z' }],
     runs: [{ id: 900, path: '.github/workflows/harness.yml', head_sha: head, event: 'pull_request' }],
-    artifacts: [{ id: 1, name: 'maestro-results', expired: false, digest: `sha256:${'e'.repeat(64)}` }],
+    artifacts: [{ id: 1, name: 'maestro-results', expired: false, created_at: '2026-10-30T00:50:00Z' }],
     files: { 'mock.json': JSON.stringify(result()) },
     calls: [],
     ...overrides,
@@ -39,7 +43,7 @@ function world(overrides = {}) {
     async checkRuns(_ref, sha) { state.calls.push(['checkRuns', sha]); return state.checkRuns; },
     async workflowRuns(_ref, suite) { state.calls.push(['workflowRuns', suite]); return state.runs; },
     async artifacts(_ref, run) { state.calls.push(['artifacts', run]); return state.artifacts; },
-    async download(_ref, run, name) { state.calls.push(['download', run, name]); return state.files; },
+    async download(_ref, artifactId) { state.calls.push(['download', artifactId]); return state.files; },
   };
   return { state, adapter: maestroEvidence({ ref, github, actions }) };
 }
@@ -49,11 +53,33 @@ describe('Maestro Evidence adapter', () => {
     it('when the evidence is read then the mock result of the run behind the passing harness check of the merged head is returned with its digest', async () => {
       const { state, adapter } = world();
       assert.deepEqual(await adapter.read({ sbi: sbi(), pull }), { connected: true, e2e: { status: 'PASS', api: 'mock' }, evidenceDigest: sha256(state.files['mock.json']) });
-      assert.deepEqual(state.calls, [['fileAt', '.harness/state/sbi-11.json', head], ['checkRuns', head], ['workflowRuns', 77], ['artifacts', 900], ['download', 900, 'maestro-results']]);
+      assert.deepEqual(state.calls, [['fileAt', '.harness/state/sbi-11.json', head], ['checkRuns', head], ['workflowRuns', 77], ['artifacts', 900], ['download', 1]]);
     });
     it('when a flow failed then the E2E result is FAIL', async () => {
       const { adapter } = world({ files: { 'mock.json': JSON.stringify(result({ status: 'FAIL', flows: [{ name: 'login', status: 'FAIL', message: 'not found' }] })) } });
       assert.deepEqual((await adapter.read({ sbi: sbi(), pull })).e2e, { status: 'FAIL', api: 'mock' });
+    });
+  });
+
+  describe('given a re-run CI run that kept several maestro-results artifacts', () => {
+    const artifacts = [
+      { id: 1, name: 'maestro-results', expired: false, created_at: '2026-10-30T00:10:00Z' },
+      { id: 2, name: 'maestro-results', expired: false, created_at: '2026-10-30T00:50:00Z' },
+      { id: 3, name: 'maestro-results', expired: false, created_at: '2026-10-30T01:30:00Z' },
+    ];
+    it('when the evidence is read then the newest artifact made before the passing harness check started is checked and downloaded by its ID', async () => {
+      const { state, adapter } = world({ artifacts });
+      await adapter.read({ sbi: sbi(), pull });
+      assert.deepEqual(state.calls.at(-1), ['download', 2]);
+    });
+    it('when that artifact expired then reading fails closed instead of falling back to an older one', async () => {
+      const { state, adapter } = world({ artifacts: artifacts.map(a => a.id === 2 ? { ...a, expired: true } : a) });
+      await assert.rejects(adapter.read({ sbi: sbi(), pull }), /期限切れ/);
+      assert.ok(!state.calls.some(([call]) => call === 'download'));
+    });
+    it('when every artifact was made after the harness check started then reading fails closed', async () => {
+      const { adapter } = world({ artifacts: [artifacts[2]] });
+      await assert.rejects(adapter.read({ sbi: sbi(), pull }), /artifact/);
     });
   });
 
@@ -129,18 +155,27 @@ describe('GitHub adapter for the Maestro Evidence', () => {
       assert.equal(await githubCli.fileAt(ref, '.harness/state/sbi-11.json', head), '{"a":1}');
       assert.equal(await githubCli.fileAt(ref, '.harness/state/sbi-12.json', head), null);
     }));
-    it('when the CI run of a check suite and its artifacts are read then the Actions API is used and the artifact files are downloaded with gh run download', () => githubMock({})({
-      workflowRuns: { 77: [{ id: 900, path: '.github/workflows/harness.yml', head_sha: head, event: 'pull_request' }] },
-      runArtifacts: { 900: [{ id: 1, name: 'maestro-results', expired: false }] },
-      artifactFiles: { 900: { 'maestro-results': { 'mock.json': '{"lane":"mock"}' } } },
-    }, async github => {
-      assert.deepEqual((await githubActionsCli.workflowRuns(ref, 77)).map(r => r.id), [900]);
-      assert.deepEqual((await githubActionsCli.artifacts(ref, 900)).map(a => a.name), ['maestro-results']);
-      assert.deepEqual(await githubActionsCli.download(ref, 900, 'maestro-results'), { 'mock.json': '{"lane":"mock"}' });
-      assert.ok((await github.calls()).some(c => c.args[1].startsWith('repos/acme/app/actions/runs?') && c.args[1].includes('check_suite_id=77')));
-    }));
+    it('when the CI run of a check suite and its artifacts are read then the Actions API is used and the artifact is downloaded by its ID', async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'harness-zip-'));
+      try {
+        await writeFile(join(dir, 'mock.json'), '{"lane":"mock"}');
+        assert.ok((await execute('zip', ['-q', '-j', join(dir, 'a.zip'), join(dir, 'mock.json')])).ok);
+        await githubMock({})({
+          workflowRuns: { 77: [{ id: 900, path: '.github/workflows/harness.yml', head_sha: head, event: 'pull_request' }] },
+          runArtifacts: { 900: [{ id: 1, name: 'maestro-results', expired: false, created_at: '2026-10-30T00:50:00Z' }] },
+          artifactZips: { 1: (await readFile(join(dir, 'a.zip'))).toString('base64') },
+        }, async github => {
+          assert.deepEqual((await githubActionsCli.workflowRuns(ref, 77)).map(r => r.id), [900]);
+          assert.deepEqual((await githubActionsCli.artifacts(ref, 900)).map(a => [a.id, a.created_at]), [[1, '2026-10-30T00:50:00Z']]);
+          assert.deepEqual(await githubActionsCli.download(ref, 1), { 'mock.json': '{"lane":"mock"}' });
+          const calls = (await github.calls()).map(c => c.args[1]);
+          assert.ok(calls.some(c => c.startsWith('repos/acme/app/actions/runs?') && c.includes('check_suite_id=77')));
+          assert.ok(calls.includes('repos/acme/app/actions/artifacts/1/zip'));
+        });
+      } finally { await rm(dir, { recursive: true, force: true }); }
+    });
     it('when the artifact cannot be downloaded then reading fails', () => githubMock({})({}, async () => {
-      await assert.rejects(githubActionsCli.download(ref, 900, 'maestro-results'), /gh run download/);
+      await assert.rejects(githubActionsCli.download(ref, 1), /artifact 1/);
     }));
   });
 });
