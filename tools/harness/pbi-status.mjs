@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { z } from 'zod';
 import { check } from './check.mjs';
 import { parseIssueUrl, markerPattern } from './planner.mjs';
 import { githubCli } from './planner-github.mjs';
@@ -13,11 +14,17 @@ import { localHumanIdentity } from './human-approvals.mjs';
 // An adapter that cannot answer adds a reason, and any reason keeps the PBI NOT_DONE; judgePbi itself stays adapter-independent.
 
 // The Maestro result files of #68 (PR #142) are not on main yet. Until they are connected, no SBI has E2E evidence, and that is never read
-// as "no E2E target": the PBI stays NOT_DONE. A connected adapter returns { connected: true, e2e: null | { status, api }, evidenceDigest? }.
+// as "no E2E target": the PBI stays NOT_DONE. A connected adapter returns { connected: true, e2e: null | { status, api }, evidenceDigest? } (evidenceSchema).
 export const maestroEvidenceNotConnected = Object.freeze({
   async read() { return { connected: false, reason: 'Maestro E2E Evidenceが未接続です（#142のマージ後に接続します）' }; },
 });
 
+// The adapter answer is validated as a whole: a missing e2e key is invalid evidence, never "no E2E target". Validation needs its evidence digest.
+const e2eSchema = z.strictObject({ status: z.string().min(1), api: z.enum(['mock', 'real']) });
+const evidenceSchema = z.discriminatedUnion('connected', [
+  z.strictObject({ connected: z.literal(false), reason: z.string().min(1) }),
+  z.strictObject({ connected: z.literal(true), e2e: e2eSchema.nullable(), evidenceDigest: z.string().regex(/^[0-9a-f]{64}$/).optional() }),
+]);
 const digestOf = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const sha256 = /^[0-9a-f]{64}$/;
 
@@ -36,6 +43,8 @@ async function sbisOfPbi(ref, github, problems) {
     sbis.push({ id, kind: issueKind(issue.body), dependsOn: issueDependsOn(issue.body), number: issue.number, title: issue.title, issueUrl: issue.html_url });
   }
   if (!sbis.length && !problems.length) problems.push(`${ref.url} に紐づくSBI Issue（sbiラベルとPlannerのmarker）がありません`);
+  // An SBI that dropped out of the list (label or marker removed) is still named by the SBIs that depend on it.
+  for (const sbi of sbis) for (const id of sbi.dependsOn) if (!byId.has(id)) problems.push(`SBI ${sbi.id} の依存SBI ${id} がこのPBIのSBI Issueにありません`);
   return sbis;
 }
 
@@ -58,6 +67,7 @@ export async function collectPbiStatus({ root, pbiUrl, config, github = githubCl
   const sbis = issue && !issue.pull_request ? await attempt('SBI Issueの一覧', () => sbisOfPbi(ref, github, problems), []) : [];
   const required = await attempt('必須check', () => requiredChecks(ref, config, githubPr), null);
   const base = config.github?.base ?? 'main', results = {}, merged = [];
+  const composition = sbis.map(({ id, number, kind }) => ({ id, number, kind }));
   for (const sbi of sbis) {
     const where = `SBI ${sbi.id}（#${sbi.number}）`;
     const pull = await attempt(`${where} のHarness PR`, () => mergedHarnessPull({ ref, dependency: { number: sbi.number }, base, github }), undefined);
@@ -65,13 +75,19 @@ export async function collectPbiStatus({ root, pbiUrl, config, github = githubCl
       requiredVerifiers: null, e2e: null, evidence: 'UNREADABLE', status: null };
     output.sbis.push(row);
     let read;
-    try { read = await evidence.read({ sbi, pull: pull ?? null }); } catch (error) { problems.push(`${where} のMaestro E2E Evidenceを読めません（${error.message}）`); }
+    try {
+      const parsed = evidenceSchema.safeParse(await evidence.read({ sbi, pull: pull ?? null }));
+      if (!parsed.success) problems.push(`${where} のMaestro E2E Evidenceの形式が不正です（${parsed.error.issues.map(i => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; ')}）`);
+      else if (parsed.data.connected && sbi.kind === 'validation' && !parsed.data.evidenceDigest) problems.push(`${where} のMaestro E2E Evidenceの形式が不正です（validationにevidenceDigestがありません）`);
+      else read = parsed.data;
+    } catch (error) { problems.push(`${where} のMaestro E2E Evidenceを読めません（${error.message}）`); }
     if (read && !read.connected) problems.push(`${where}: ${read.reason}`);
-    const e2e = read?.connected ? read.e2e ?? null : null;
+    const e2e = read?.connected ? read.e2e : null;
     row.e2e = e2e;
     if (read) row.evidence = read.connected ? 'CONNECTED' : 'NOT_CONNECTED';
     if (sbi.kind === 'validation') {
-      if (read?.connected) results[sbi.id] = { e2e, evidenceDigest: read.evidenceDigest };
+      // The digest the human approves also binds the SBI composition, so adding, dropping or swapping an SBI voids an earlier APPROVE.
+      if (read?.connected) results[sbi.id] = { e2e, evidenceDigest: digestOf({ sbis: composition, evidence: read.evidenceDigest }) };
       continue;
     }
     if (pull === null) problems.push(`${where} にmainへmergeされたHarness PR（Closes #${sbi.number} と SBI-Issue trailer）がありません`);
@@ -88,7 +104,7 @@ export async function collectPbiStatus({ root, pbiUrl, config, github = githubCl
   const implementations = sbis.filter(s => s.kind === 'implementation'), validations = sbis.filter(s => s.kind === 'validation');
   // Without a validation SBI the human confirms the merged implementation evidence; the digest changes whenever any part of it does.
   const evidenceDigest = validations.length ? (sha256.test(results[validations[0].id]?.evidenceDigest ?? '') ? results[validations[0].id].evidenceDigest : null)
-    : implementations.length && merged.length === implementations.length ? digestOf(merged) : null;
+    : implementations.length && merged.length === implementations.length ? digestOf({ sbis: composition, evidence: merged }) : null;
   output.blockers = issue && !issue.pull_request ? (await attempt('PBIをブロックしているIssue（blocked by）', () => github.blockedBy(ref), [])).map(i => ({ url: i.html_url, title: i.title, state: i.state ?? null })) : [];
   let records = [];
   try { records = await acceptanceRecords(ref.url); } catch (error) { problems.push(`PBI Human Acceptanceの台帳を読めません（${error.message}）`); }
