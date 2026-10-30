@@ -10,7 +10,7 @@
 7. 採用するSBIは、ACごとのTrusted Acceptanceを人間が書いてレビューし、
    `.harness/acceptance/sbi-<SBI番号>.json`に`{ "version": 1, "sbiIssue": <SBI番号>, "verifiers": [{ "id", "trustedScript", "planned", "acceptanceIds": [IssueのAC ID] }] }`で登録する。
 8. 全ACの対応を確認したら`needs-review`を外して`ready`を付ける。`gh issue edit <number> --remove-label needs-review --add-label ready`。
-   新方式（#147、[ADR-0005](../../docs/adr/0005-generated-trusted-acceptance.md)）: Trusted Acceptanceを手書きせず、`needs-review`を外して`pnpm harness:spec-approve <SBI Issue URL>`で仕様を承認する。正本はIssueの`harness-spec: <spec digest>`コメント（write以上・未編集）で、`spec-approved` labelは表示だけ。受け入れ要件・Gherkin・想定変更範囲・Risk / Security Impactを編集すると承認は無効になる。テストの生成はまだ実装されていないので、今は新方式のrunは開始前に止まる。
+   新方式（#147、[ADR-0005](../../docs/adr/0005-generated-trusted-acceptance.md)）: Trusted Acceptanceを手書きせず、`needs-review`を外して`pnpm harness:spec-approve <SBI Issue URL>`で仕様を承認する。正本はIssueの`harness-spec: <spec digest>`コメント（write以上・未編集・本文がその1行だけ）で、`spec-approved` labelは表示だけ。受け入れ要件・Gherkin・想定変更範囲・Risk / Security Impactを編集すると承認は無効になる。テストの生成はまだ実装されていないので、今は新方式のrunは開始前に止まる。
 9. PBIの`## SBI構成`を確認し、`pnpm harness:pbi-plan-approve <PBI URL>`で一度だけ承認する（下記「PBI plan」）。
 10. `pnpm harness:run <SBI Issue URL>`で実行する。SBI JSONは書かない。HarnessがIssueを取得・検証し、Run snapshotを保存して実装・検証・PR作成まで進める。
 
@@ -33,7 +33,7 @@ PBIのSBI集合の正本は、Plannerが書いた`## SBI構成`と、それに�
 `pnpm harness:pbi-plan-approve <PBI URL>`は、`## SBI構成`がGitHub上のSBI Issue（`sbi`ラベルとPlannerのmarker）と一致するときだけ、人の`gh`でPBIに`harness-pbi-plan: <digest>`をコメントする。撤回は`--decision revoke`（`harness-pbi-plan-revoke: <digest>`）。
 
 - digestは、PBI番号と、SBIごとのSBI ID・Issue番号・kind・依存（ID順に並べ、依存も並べる）のsha256。`## SBI構成`を書き換える、SBIを足す・外すとdigestが変わり、承認は無効になる。
-- 承認として数えるのは、write以上の権限を持つ人の、承認行だけのコメント。botは数えない。権限を読めない人、編集されたコメントも数えない。人ごとに最新の判断を使い、1人で足りる。検証は`github-approval-records.mjs`（#147の`harness-spec`と共有）。
+- 承認として数えるのは、write以上の権限を持つ人の、本文全体（前後の空白を除く）が承認の1行と一致するコメントだけ。説明文付き・引用・HTMLコメント・コードブロックの中の行は数えない（`harness-spec`も同じ）。botは数えない。権限を読めない人、編集されたコメントも数えない。人ごとに最新の判断を使い、1人で足りる。検証は`github-approval-records.mjs`（#147の`harness-spec`と共有）。
 - `## SBI構成`が無い既存のPBIは、`pnpm harness:pbi-plan <PBI URL>`でGitHub上のSBI IssueからPBI本文に書いてから承認する。Plannerは再実行しない。
 
 ### PBIの完了判定
