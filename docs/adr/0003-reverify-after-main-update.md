@@ -37,7 +37,7 @@ ADR-0001は、PRのbaseをrunのbaselineに固定し、mainが進んだら`base_
 ## 決定
 
 - mainが進んだPRは、`pnpm harness:reverify <PR URL>`で再検証する。入口の正本はPR。旧runのローカル証跡は任意の参照で、あれば署名済みstateとtested SHAの一致を記録する。
-- 新しいrun（`kind: reverify`）を作り、最新のmain（新baseline）からdetached worktreeを作って、PR HEADを`git merge --no-ff`で取り込んだcommitを候補にする。
+- 新しいrun（`kind: reverify`）を作り、最新のmain（新baseline）からdetached worktreeを作って、PR HEADを取り込んだmerge commitを候補にする。候補は`git merge-tree --write-tree`と`git commit-tree`でGitのobjectから作る。操作者のGit設定（`merge.log`など）でcommit messageやtreeが変わらず、`verifyReverifyLink`が照合するtreeと同じ方法で作るため。
   候補はPR HEADの子孫なので、PRブランチへは通常のpush（fast-forward）で更新できる。rebaseとforce pushは使わない。
 - PR HEADがすでに新baselineを含む場合（人がPRブランチで競合を解消した場合）は、PR HEADのtreeをそのまま使い、関連付けのための空commitだけを上に足す。
   承認された設計案の「PR HEADをそのまま候補にする」に対する追加で、下記の関連付けを候補HEADに必ず持たせるために足した。
@@ -49,6 +49,7 @@ ADR-0001は、PRのbaseをrunのbaselineに固定し、mainが進んだら`base_
   trailerはどちらもないHEADは「再検証ではない」（`NONE`）として扱い、通常のPRを失敗させない。
   この関連付けは改ざんを検出するためのもので、認証ではない。承認の根拠は引き続き、そのHEADへのGitHub Review。
 - SBI snapshot（`runId`は実装run）とCIのsnapshot/trailer契約は変えない。PR HEADのsnapshotが、現在のSBI Issueと新baselineのTrusted Acceptance登録から組み立てたSBIと一致しなければ、再検証せずに停止し、新しいrunでの実装に戻す。
+- PR HEADが変えたファイルは、worktreeへ取り出す前にGitのobject上で、baselineと同じ検査（symlink・submodule・運用証跡のパス・秘密値を含むファイル全体）にかける。
 - 差分の判定対象は`baseline..候補`。上流mainの変更は含まない。人が競合解消で触れたファイルも含めて、SBIのscope外や予約パスがあれば検証前に停止する。
 - 入力（config・rules・policy・Trusted Acceptance・Harnessのコード）は新baselineの元checkoutから取る。lane・Security・Risk・Gate要否も新baselineのルールで計算し直す。
 - 実装前GateとDesign Approvalは、既存の束縛（`baselineSha`と新runの`inputsDigest`を含むcontext）どおり**毎回取り直す**。SBI・scope・Securityが変わらなくても引き継がない。

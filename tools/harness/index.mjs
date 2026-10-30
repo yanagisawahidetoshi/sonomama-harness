@@ -16,7 +16,7 @@ import { authenticatedRecords, recordDecision, waitsForIssue } from './human-app
 import { classifySecurity, verifySecurity, combineSecurity, securityPassed } from './security-enforcement.mjs';
 import { withEvidenceProtection, redact, redactText, hasSecret, assertSafeInput, isSecretPath } from './evidence-protection.mjs';
 import { githubPrCli, githubState, pullRequestBody } from './github-pr.mjs';
-import { digest, prepareWorkspace, commitWorkspace, changedFiles, workspaceIntegrity, toolFingerprint, assertWritablePath, workspaceFingerprint, sourceIntegrity, assertWorktreeOwner, git } from './workspace.mjs';
+import { digest, prepareWorkspace, commitWorkspace, changedFiles, workspaceIntegrity, toolFingerprint, assertWritablePath, workspaceFingerprint, sourceIntegrity, assertWorktreeOwner, assertSafeCommit, git } from './workspace.mjs';
 import { saveRun, loadRun, readRunState, runPaths, withRunLock } from './run-store.mjs';
 import { classifyLane } from './lanes.mjs';
 import { assertState } from './state-machine.mjs';
@@ -512,7 +512,7 @@ async function resumeReverify({ root, summary, inputs, quiet, reviewer, semantic
   if (summary.executionStatus === 'PENDING' && !summary.iterations.length) return reverifyExecute({ root, summary, inputs, quiet, reviewer, semanticReviewer });
   // Until the candidate is on the PR branch, GitHub shows the previous head; the merge is assessed only after the push.
   if (summary.executionStatus === 'DONE') return reverifyReached(summary, 'PUSHED') ? settleMerge(root, summary, inputs, quiet, github) : summary;
-  throw new Error('A failed re-verification does not resume; fix the cause on the PR branch or main and run harness:reverify again');
+  throw new Error(`A failed re-verification does not resume; run pnpm harness:reverify ${summary.pullRequest.url} to start a new run`);
 }
 async function reverifyExecute({ root, summary, inputs, quiet, reviewer = review, semanticReviewer }) {
   const { directory, workspace } = runPaths(root, summary.id);
@@ -599,6 +599,8 @@ async function existingReverify(root, { parentRunId, baselineSha, pullHead }) {
     if (!runIdSchema.safeParse(name).success || !await exists(runPaths(root, name).summary)) continue;
     let summary;
     try { summary = await readRunState(root, name); } catch { continue; }
+    // A failed or escalated run is evidence only; running the command again starts a new run for the same head.
+    if (['FAILED', 'ESCALATED'].includes(summary.executionStatus) || summary.status === 'ESCALATED') continue;
     if (summary.kind === 'reverify' && !summary.cleanedAt && summary.reverify.parentRunId === parentRunId && summary.baselineSha === baselineSha
       && (summary.reverify.previousTestedSha === pullHead || (summary.headSha === pullHead && reverifyReached(summary, 'PUSHING')))) found.push(name);
   }
@@ -643,8 +645,7 @@ async function reverifyProtected({ root, pullUrl, quiet = false, reviewer = revi
     const reasons = matchSbiSource({ snapshot, issue: source.issue, config: checked.config });
     throw new Error([`${path} のSBI snapshotが、現在のSBI Issueと${base}のTrusted Acceptance登録から組み立てたSBIと一致しません。SBIが変わったため再検証せず、新しいrunで実装してください`, ...reasons.map(r => `- ${r}`)].join('\n'));
   }
-  const ours = await changedFiles(root, (await git(root, ['merge-base', baselineSha, pullHead])).stdout.trim(), pullHead);
-  if (ours.some(f => isSecretPath(f.path) || hasSecret(f.added))) throw new Error('PRの変更に秘密値を含むファイルがあります。worktreeへ取り出さずに停止します');
+  await assertSafeCommit(root, baselineSha, pullHead);
   const existing = await existingReverify(root, { parentRunId, baselineSha, pullHead });
   if (existing) {
     // A waiting gate is re-checked and an updated PR is re-assessed; a verified candidate continues to publish; a stopped run stays stopped.
@@ -671,25 +672,39 @@ async function reverifyProtected({ root, pullUrl, quiet = false, reviewer = revi
   const { transition, escalate } = controller(root, summary, quiet);
   await transition('PENDING', `re-verify ${branch} ${pullHead.slice(0, 12)} on ${base} ${baselineSha.slice(0, 12)}`);
   return withRunLock(root, id, async () => {
-    // A head that already contains the baseline (a person resolved a conflict there) is kept as is; only the link commit is added.
+    // The candidate is built from Git objects, so the message is exactly ours (no merge.log shortlog after the trailers) and the tree is
+    // the one verifyReverifyLink recomputes. A head that already contains the baseline (a person resolved a conflict there) keeps its
+    // tree; only the link commit is added.
     const message = `Re-verify SBI ${sbi.id} on ${base} ${baselineSha.slice(0, 12)}\n\n${reverifyTrailers({ runId: id, parentRunId })}`;
+    let candidate;
     if ((await git(workspace, ['merge-base', '--is-ancestor', baselineSha, pullHead], true)).ok) {
-      await git(workspace, ['checkout', '--quiet', '--detach', pullHead]);
-      await git(workspace, ['commit', '--quiet', '--allow-empty', '-m', message]);
-    } else if (!(await git(workspace, ['merge', '--quiet', '--no-ff', '-m', message, pullHead], true)).ok) {
-      summary.reverify.conflicts = (await git(workspace, ['diff', '--name-only', '--diff-filter=U', '-z'])).stdout.split('\0').filter(Boolean).sort();
-      await git(workspace, ['merge', '--abort']);
-      return escalate(`${base} ${baselineSha.slice(0, 12)} と ${pullHead.slice(0, 12)} の統合で競合しました: ${summary.reverify.conflicts.join(', ')}。${branch} で競合を解消してpushし、pnpm harness:reverify ${pull.html_url} を再実行してください`, 'REVERIFY_CONFLICT');
+      candidate = (await git(workspace, ['commit-tree', `${pullHead}^{tree}`, '-p', pullHead, '-m', message])).stdout.trim();
+    } else {
+      const merged = await git(workspace, ['merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', baselineSha, pullHead], true);
+      const [tree, ...conflicts] = merged.stdout.split('\0').filter(Boolean);
+      if (merged.code === 1) {
+        summary.reverify.conflicts = [...new Set(conflicts)].sort();
+        return escalate(`${base} ${baselineSha.slice(0, 12)} と ${pullHead.slice(0, 12)} の統合で競合しました: ${summary.reverify.conflicts.join(', ')}。${branch} で競合を解消してpushし、pnpm harness:reverify ${pull.html_url} を再実行してください`, 'REVERIFY_CONFLICT');
+      }
+      if (!merged.ok) throw new Error(`git merge-tree: ${merged.stderr || merged.error}`);
+      candidate = (await git(workspace, ['commit-tree', tree, '-p', baselineSha, '-p', pullHead, '-m', message])).stdout.trim();
     }
-    summary.headSha = (await git(workspace, ['rev-parse', 'HEAD'])).stdout.trim();
-    await git(workspace, ['update-ref', `refs/harness/runs/${id}`, summary.headSha]);
-    summary.workspaceDigest = await workspaceFingerprint(workspace);
-    // A person may have changed any file while resolving a conflict, so every changed file is held to the SBI scope again.
-    for (const file of await changedFiles(workspace, baselineSha, summary.headSha)) {
-      if (file.path === snapshotPath(snapshot)) continue;
-      try { assertWritablePath(file.path); } catch (error) { return escalate(error.message); }
-      if (!inScope(sbi, file.path)) return escalate(`scope/path violation: ${file.path}`);
-    }
+    // The run records the candidate as soon as the worktree points at it, so cleanup and a failure below see the same HEAD.
+    await git(workspace, ['checkout', '--quiet', '--detach', candidate]);
+    await git(workspace, ['update-ref', `refs/harness/runs/${id}`, candidate]);
+    summary.headSha = candidate;
+    try {
+      summary.workspaceDigest = await workspaceFingerprint(workspace);
+      await saveRun(root, summary);
+      const link = await reverifyLinkCheck(workspace, summary);
+      if (link.status !== 'PASS') return escalate(`the candidate commit does not link this re-verification run: ${link.reasons.join('; ')}`);
+      // A person may have changed any file while resolving a conflict, so every changed file is held to the SBI scope again.
+      for (const file of await changedFiles(workspace, baselineSha, summary.headSha)) {
+        if (file.path === snapshotPath(snapshot)) continue;
+        try { assertWritablePath(file.path); } catch (error) { return escalate(error.message); }
+        if (!inScope(sbi, file.path)) return escalate(`scope/path violation: ${file.path}`);
+      }
+    } catch (error) { return escalate(`Runtime error: ${error.message}`, classifyEscalation(error.message)); }
     const stopped = await assessPreflight(root, summary, inputs, quiet);
     if (stopped) return stopped;
     return reverifyExecute({ root, summary, inputs, quiet, reviewer, semanticReviewer });
