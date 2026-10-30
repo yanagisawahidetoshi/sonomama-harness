@@ -97,7 +97,7 @@ export async function collectPbiStatus({ root, pbiUrl, config, github = githubCl
     row.requiredVerifiers = ci?.status ?? null;
     if (!read?.connected || !ci) continue;
     results[sbi.id] = { merged: true, requiredVerifiers: ci.status, e2e };
-    merged.push({ sbi: sbi.id, issueUrl: sbi.issueUrl, pullRequest: pull.number, headSha: pull.head.sha, mergeCommitSha: pull.merge_commit_sha ?? null, e2e });
+    merged.push({ sbi: sbi.id, issueUrl: sbi.issueUrl, pullRequest: pull.number, headSha: pull.head.sha, mergeCommitSha: pull.merge_commit_sha ?? null, e2e, e2eDigest: read.evidenceDigest ?? null });
   }
 
   const implementations = sbis.filter(s => s.kind === 'implementation'), validations = sbis.filter(s => s.kind === 'validation');
