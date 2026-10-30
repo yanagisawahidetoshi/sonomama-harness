@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fixture, update } from './test-fixture.mjs';
 import { readJson } from './io.mjs';
-import { analyzeImpact, describeImpact, describeJudge, judgeCi, runCompletionJudge } from './impact.mjs';
+import { analyzeImpact, describeImpact, describeJudge, judgeCi, judgeTestedCommit, runCompletionJudge } from './impact.mjs';
 import { renderSbiBody } from './planner.mjs';
 import { sbiFromIssue } from './sbi-issue.mjs';
 import { withAcceptance } from './acceptance-registry.mjs';
@@ -346,6 +346,65 @@ describe('CI Completion Judge', () => {
       assert.equal(judged({ impact, needs: { ...needs('success'), impact: { result: 'failure' } }, acceptance }).status, 'FAIL');
     });
   });
+
+  // Runs 40984230168 and 40985538230 (#163): a Gemfile and CI document change with no SBI asked for no Maestro lane, the maestro job
+  // still ran and failed, and the Judge passed.
+  describe('given a job that ran although the impact did not require it', () => {
+    const railsImpact = analyzeImpact({ config, sbis: [], files: files('apps/api/Gemfile', '.ai/workflows/ci.md') });
+    const ran = maestro => ({ ...needs('success', 'success', 'success'), maestro: { result: maestro } });
+
+    for (const result of ['failure', 'cancelled']) {
+      it(`when the maestro job ended in ${result} then fails although no lane was required`, () => {
+        const judgedRun = judged({ impact: railsImpact, needs: ran(result), acceptance });
+        assert.deepEqual(railsImpact.maestro, []);
+        assert.equal(judgedRun.status, 'FAIL');
+        assert.ok(judgedRun.reasons.includes(`maestro: ${result}`), judgedRun.reasons.join('; '));
+      });
+    }
+
+    for (const result of ['success', 'skipped']) {
+      it(`when the maestro job ended in ${result} then passes`, () => {
+        assert.equal(judged({ impact: railsImpact, needs: ran(result), acceptance }).status, 'PASS');
+      });
+    }
+
+    it('when the workflow did not hand over the maestro job then passes, as before the job existed', () => {
+      assert.equal(judged({ impact: railsImpact, needs: needs('success', 'success', 'success'), acceptance }).status, 'PASS');
+    });
+
+    it('when a job this Judge does not know failed then fails', () => {
+      const judgedRun = judged({ impact: railsImpact, needs: { ...needs('success', 'success', 'success'), 'future-job': { result: 'failure' } }, acceptance });
+      assert.equal(judgedRun.status, 'FAIL');
+      assert.ok(judgedRun.reasons.includes('future-job: failure'), judgedRun.reasons.join('; '));
+    });
+  });
+});
+
+describe('Tested commit of the Completion Judge', () => {
+  const head = 'a'.repeat(40), other = 'b'.repeat(40);
+  const needs = sha => ({ impact: { result: 'success', outputs: { head_sha: sha } } });
+
+  it('when the checkout, the event head and the impact job are on the same commit then nothing fails', () => {
+    assert.deepEqual(judgeTestedCommit({ headSha: head, expectedHeadSha: head, needs: needs(head) }), []);
+  });
+
+  for (const [name, expectedHeadSha, impactSha, pattern] of [
+    ['the workflow did not say which head it tests', '', head, /head sha: not provided/],
+    ['the checkout is not the head of the event', other, head, /checkout aaaaaaaaaaaa is not the head bbbbbbbbbbbb/],
+    ['the impact job did not report its commit', head, undefined, /impact: analyzed missing, not aaaaaaaaaaaa/],
+    ['the impact job analyzed another commit', head, other, /impact: analyzed bbbbbbbbbbbb, not aaaaaaaaaaaa/],
+  ]) {
+    it(`when ${name} then fails closed`, () => {
+      assert.match(judgeTestedCommit({ headSha: head, expectedHeadSha, needs: needs(impactSha) }).join('\n'), pattern);
+    });
+  }
+
+  it('when the Judge runs then the checked-out commit must be the head the workflow names', async () => fixture(async root => {
+    const headSha = (await git(root, ['rev-parse', 'HEAD'])).stdout.trim();
+    const judgedRun = await runCompletionJudge({ root, base: 'HEAD', needs: needs(headSha), expectedHeadSha: other });
+    assert.equal(judgedRun.status, 'FAIL');
+    assert.ok(judgedRun.reasons.some(r => r.includes(`is not the head ${other.slice(0, 12)}`)), judgedRun.reasons.join('; '));
+  }));
 });
 
 describe('CI Completion Judge for Trusted Acceptance and Security', () => {
@@ -579,6 +638,43 @@ describe('CI workflow setup', () => {
       assert.deepEqual(harness('harness-test'), ['pnpm harness:test']);
       assert.deepEqual(harness('harness-demo'), ['pnpm harness:demo --full']);
       assert.deepEqual(harness('harness'), ['pnpm harness:judge $HARNESS_SCOPE']);
+    });
+  });
+
+  // A pull_request run reads this workflow from the merge ref but checks out the Harness of the PR head. In runs 40984230168 and
+  // 40985538230 (#163) the head was branched before the maestro job existed: its impact reported no maestro output, the job still ran
+  // and failed, and the head's Judge, which did not know the job, passed.
+  describe('given a PR head whose Harness is older than this workflow', () => {
+    const head = '${{ github.event.pull_request.head.sha || github.sha }}';
+    const judge = workflow.jobs.harness.steps.find(s => s.run === 'pnpm harness:judge $HARNESS_SCOPE');
+    const guards = workflow.jobs.harness.steps.filter(s => s.run && !s.run.startsWith('pnpm ') && /exit 1/.test(s.run));
+
+    it('when the impact job runs then it reports the commit it analyzed', () => {
+      assert.equal(workflow.jobs.impact.outputs.head_sha, '${{ steps.impact.outputs.head_sha }}');
+    });
+
+    it('when the Judge runs then it is told the head the workflow checked out', () => {
+      assert.equal(judge.env.HARNESS_HEAD_SHA, head);
+    });
+
+    it('when the impact reported no maestro output then the maestro job does not start', () => {
+      assert.match(workflow.jobs.maestro.if, /needs\.impact\.outputs\.maestro != ''/);
+    });
+
+    for (const [name, pattern] of [
+      ['a job failed', /contains\(needs\.\*\.result, 'failure'\)/],
+      ['a job was cancelled', /contains\(needs\.\*\.result, 'cancelled'\)/],
+      ['the impact reported no maestro output', /needs\.impact\.outputs\.maestro == ''/],
+    ]) {
+      it(`when ${name} then the workflow fails the required check whatever the head's Judge says`, () => {
+        assert.ok(guards.some(s => s.if.startsWith('always()') && pattern.test(s.if)), guards.map(s => s.if).join('\n'));
+      });
+    }
+
+    it('when the Judge reads the maestro results then it downloads them from this run only', () => {
+      const download = workflow.jobs.harness.steps.find(s => s.uses?.startsWith('actions/download-artifact@'));
+      assert.equal(download.with['run-id'], undefined);
+      assert.equal(download.with['github-token'], undefined);
     });
   });
 });
