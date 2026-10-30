@@ -65,6 +65,14 @@ export const githubCli = {
   async addComment({ owner, repo, number }, body) {
     return githubCommentSchema.parse(await api('POST', `repos/${owner}/${repo}/issues/${number}/comments`, { body }));
   },
+  // A file as committed at a commit; null when that commit does not have it.
+  async fileAt({ owner, repo }, path, ref) {
+    let file;
+    try { file = await api('GET', `repos/${owner}/${repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}?${new URLSearchParams({ ref })}`); }
+    catch (error) { if (error.httpStatus === '404') return null; throw error; }
+    if (file?.type !== 'file' || file.encoding !== 'base64') throw new Error(`${path} at ${ref} is not a file`);
+    return Buffer.from(file.content, 'base64').toString('utf8');
+  },
   // GitHub issue dependencies: the Issues registered as blocking this one (blocked by).
   async blockedBy({ owner, repo, number }) {
     return listAll(`repos/${owner}/${repo}/issues/${number}/dependencies/blocked_by`, {}, githubIssueListSchema);

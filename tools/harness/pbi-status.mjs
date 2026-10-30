@@ -8,16 +8,14 @@ import { issueKind, issueDependsOn, mergedHarnessPull } from './sbi-issue.mjs';
 import { judgePbi } from './pbi-judge.mjs';
 import { pbiAcceptanceRecords, recordPbiAcceptance } from './pbi-acceptance.mjs';
 import { localHumanIdentity } from './human-approvals.mjs';
+import { maestroEvidence } from './maestro-evidence.mjs';
 
 // harness:pbi-status collects what judgePbi needs from trusted adapters only: GitHub (SBI Issues, merged Harness PRs, required checks on the
 // merged head, the Issues the PBI is blocked by), the Maestro E2E Evidence and the signed pbi-acceptance ledger. Nothing comes from an agent or a PR body.
 // An adapter that cannot answer adds a reason, and any reason keeps the PBI NOT_DONE; judgePbi itself stays adapter-independent.
 
-// The Maestro result files of #68 (PR #142) are not on main yet. Until they are connected, no SBI has E2E evidence, and that is never read
-// as "no E2E target": the PBI stays NOT_DONE. A connected adapter returns { connected: true, e2e: null | { status, api }, evidenceDigest? } (evidenceSchema).
-export const maestroEvidenceNotConnected = Object.freeze({
-  async read() { return { connected: false, reason: 'Maestro E2E Evidenceが未接続です（#142のマージ後に接続します）' }; },
-});
+// The evidence adapter (maestro-evidence.mjs by default) answers { connected: true, e2e: null | { status, api }, evidenceDigest? }
+// or { connected: false, reason }; a missing answer is never read as "no E2E target" (evidenceSchema).
 
 // The adapter answer is validated as a whole: a missing e2e key is invalid evidence, never "no E2E target". Validation needs its evidence digest.
 const e2eSchema = z.strictObject({ status: z.string().min(1), api: z.enum(['mock', 'real']) });
@@ -54,9 +52,10 @@ async function requiredChecks(ref, config, githubPr) {
   return [...new Map([...configured, ...await githubPr.rulesetChecks(ref, base)].map(c => [`${c.context}\0${c.integrationId}`, c])).values()];
 }
 
-export async function collectPbiStatus({ root, pbiUrl, config, github = githubCli, githubPr = githubPrCli, evidence = maestroEvidenceNotConnected,
+export async function collectPbiStatus({ root, pbiUrl, config, github = githubCli, githubPr = githubPrCli, actions, evidence,
   acceptanceRecords = url => pbiAcceptanceRecords(root, url) }) {
   const ref = parseIssueUrl(pbiUrl);
+  evidence ??= maestroEvidence({ ref, github, ...(actions ? { actions } : {}) });
   config ??= (await check(root)).config;
   const problems = [], output = { pbi: { url: ref.url, number: ref.number, title: null }, sbis: [], blockers: [] };
   const attempt = async (what, fn, fallback) => { try { return await fn(); } catch (error) { problems.push(`${what}をGitHubから読めません（${error.message}）`); return fallback; } };
