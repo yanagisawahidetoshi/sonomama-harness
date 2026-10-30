@@ -12,9 +12,9 @@ module ApiContract
         subject_contract = contract || ApiContract.default
         @result = subject_contract.check(response.request, response)
         matched = problems.empty?
-        # Coverage counts only a conforming request whose response followed the contract. A failed check or a negative
-        # spec (request: :invalid) does not show that the route serves the contract.
-        ApiContract.record(subject_contract, @result.operation) if matched && request == :valid
+        # Coverage counts a passing check only: the operation was resolved, the response followed the contract and, for
+        # request: :invalid, the violation was detected. A failed check (or not_to match_api_contract) never counts.
+        ApiContract.record(subject_contract, @result.operation) if matched
         matched
       end
 
