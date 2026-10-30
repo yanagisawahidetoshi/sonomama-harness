@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "open3"
 require "rails_helper"
 
 RSpec.describe ApiContract do
@@ -21,6 +22,15 @@ RSpec.describe ApiContract do
 
         expect { described_class.verify_suite_coverage(configuration) }
           .to raise_error(ApiContract::CoverageError, /only part of the suite/)
+      end
+    end
+
+    context "when the rails Verifier requires coverage and rspec runs as a dry run" do
+      it "fails, because a dry run never checks the contract" do
+        env = { "API_CONTRACT_COVERAGE" => "required" }
+        _, status = Open3.capture2e(env, "bundle", "exec", "rspec", "--dry-run", "spec/lib/route_manifest_spec.rb")
+
+        expect(status).not_to be_success
       end
     end
 

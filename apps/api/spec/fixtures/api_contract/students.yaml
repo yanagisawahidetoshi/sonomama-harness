@@ -20,6 +20,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/StudentList"
+        "400":
+          $ref: "#/components/responses/Error"
     post:
       operationId: createStudent
       requestBody:

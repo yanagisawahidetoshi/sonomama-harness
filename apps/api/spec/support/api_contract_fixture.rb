@@ -28,6 +28,13 @@ module ApiContractFixture
     def malformed_not_found = render(json: { message: "Student not found" }, status: :not_found)
 
     def index = render(json: { students: [STUDENT] })
+
+    def index_rejecting_invalid_grade
+      return index if params[:grade].nil? || params[:grade].to_i >= 1
+
+      render json: { error: { code: "invalid_request", message: "grade must be 1 or more" } }, status: :bad_request
+    end
+
     def index_with_extra_property = render(json: { students: [STUDENT], total: 1 })
 
     def create

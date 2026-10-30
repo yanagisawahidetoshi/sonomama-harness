@@ -310,6 +310,16 @@ RSpec.describe "API contract for request specs", type: :request do
       end
     end
 
+    context "when a negative spec names the invalid query parameter and Rails answers with the declared 400" do
+      let(:fixture_app) { ApiContractFixture.app(index: :index_rejecting_invalid_grade) }
+
+      it "passes, because the violation at that parameter was detected" do
+        get "/students", params: { grade: 0 }
+
+        expect(response).to match_api_contract(contract, request: { invalid: "/grade" })
+      end
+    end
+
     context "when a body is sent to an operation that declares no request body" do
       it "detects the request violation" do
         post "/students/s-1/archive", params: { reason: "moved" }, as: :json
@@ -336,6 +346,13 @@ RSpec.describe "API contract for request specs", type: :request do
         get "/teachers/t-1"
 
         expect(contract_failure).not_to include("t-1")
+      end
+
+      it "does not print a path parameter value made of letters only", :aggregate_failures do
+        get "/teachers/taro"
+
+        expect(contract_failure).to include("GET /teachers/")
+        expect(contract_failure).not_to include("taro")
       end
     end
   end
@@ -489,6 +506,13 @@ RSpec.describe "API contract for request specs", type: :request do
       it "lists them, because a property schema is not example data" do
         expect { ApiContract::Contract.load(ApiContractFixture.contract_path("unsupported_property_names")) }
           .to raise_error(ApiContract::ContractError, /settings-code.*examples\.yaml/m)
+      end
+    end
+
+    context "when a default response or an x- header uses unsupported features" do
+      it "lists them, because response statuses and header names are entries, not data or extensions" do
+        expect { ApiContract::Contract.load(ApiContractFixture.contract_path("unsupported_named_entries")) }
+          .to raise_error(ApiContract::ContractError, /trace-code.*error-code/m)
       end
     end
 
