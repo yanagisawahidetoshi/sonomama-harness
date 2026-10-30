@@ -35,9 +35,9 @@
 - 承認は信頼するidentity adapter経由だけ。agentのJSONや証跡ファイルを承認の正本にしない。
 - LEVEL 2は1人、LEVEL 3は異なる2人以上。重複、AI、旧SHA、撤回済みの承認は無効。
 - 必須チェックはすべてPASS。任意の非該当チェックと未生成placeholderだけSKIP可能。
-- 出力はMERGE_ALLOWEDとautoMergeEligibleまで。実mergeとMERGED遷移は実装しない。
+- 出力はMERGE_ALLOWEDとautoMergeEligible。LEVEL 1でautoMergeEligibleがtrueのときだけ自動mergeしてよい。LEVEL 2・3は人間がmergeする。
 - 承認待ちのresumeと実装の再試行は分離し、Plannerより実行・判定の整合性を優先する。
-- 通常prototypeのLEVEL 1候補はpr-risk.jsonの明示的safe ruleで定義する。laneだけで承認数を減らさない。prototypeのautoMergeEligibleは常にfalse。
+- 通常prototypeのLEVEL 1候補はpr-risk.jsonの明示的safe ruleで定義する。laneだけで承認数を減らさない。prototypeもLEVEL 1なら他と同じ条件で自動mergeしてよい。
 
 ## Lane
 
