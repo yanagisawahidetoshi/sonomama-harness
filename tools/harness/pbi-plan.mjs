@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import { parseIssueUrl, markerPattern } from './planner.mjs';
 import { githubCli } from './planner-github.mjs';
-import { githubPrCli } from './github-pr.mjs';
 import { issueKind, issueDependsOn } from './sbi-issue.mjs';
 import { hasSecret } from './evidence-protection.mjs';
 import { approvalLine, readCommentApprovals } from './github-approval-records.mjs';
@@ -113,7 +112,7 @@ export async function writePlanSection({ ref, issue, plan, github }) {
 }
 
 // pnpm harness:pbi-plan-approve PBI_URL: the human's gh posts the approval line. Only a plan that matches the SBI Issues on GitHub can be approved.
-export async function approvePbiPlan({ pbiUrl, decision = 'approve', github = githubCli, githubPr = githubPrCli }) {
+export async function approvePbiPlan({ pbiUrl, decision = 'approve', github = githubCli }) {
   const ref = parseIssueUrl(pbiUrl);
   if (!['approve', 'revoke'].includes(decision)) throw new Error('Unknown PBI plan decision');
   const { plan, errors } = await readPlan(ref, github);
@@ -125,5 +124,5 @@ export async function approvePbiPlan({ pbiUrl, decision = 'approve', github = gi
     if (problems.length) throw new Error(['## SBI構成 がGitHubのSBI Issueと一致しません。承認していません。', ...problems.map(p => `- ${p}`)].join('\n'));
   }
   const comment = await github.addComment(ref, approvalLine(planPrefix, digest, decision));
-  return { plan, digest, comment: comment.html_url, ...await readCommentApprovals({ ref, prefix: planPrefix, digest, github, githubPr }) };
+  return { plan, digest, comment: comment.html_url, ...await readCommentApprovals({ ref, prefix: planPrefix, digest, github }) };
 }

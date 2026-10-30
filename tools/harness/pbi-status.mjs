@@ -51,7 +51,7 @@ export async function collectPbiStatus({ root, pbiUrl, config, github = githubCl
   problems.push(...planErrors.map(e => `PBI plan: ${e}（pnpm harness:pbi-plan ${ref.url} で生成し、pnpm harness:pbi-plan-approve ${ref.url} で承認する）`));
   if (plan) {
     output.plan.digest = planDigest(plan);
-    Object.assign(output.plan, await attempt('PBI planの承認', () => readCommentApprovals({ ref, prefix: planPrefix, digest: output.plan.digest, github, githubPr }), {}));
+    Object.assign(output.plan, await attempt('PBI planの承認', () => readCommentApprovals({ ref, prefix: planPrefix, digest: output.plan.digest, github }), {}));
     if (!output.plan.approved) problems.push(`PBI plan（digest ${output.plan.digest.slice(0, 12)}）が承認されていません。## SBI構成 を確認して pnpm harness:pbi-plan-approve ${ref.url}`);
     problems.push(...comparePlan(plan, sbis));
   }
