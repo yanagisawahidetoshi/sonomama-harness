@@ -4,7 +4,10 @@
 // G (before the implementation): every mapped example must either fail on an expectation (the missing behavior is detected) or already pass
 // (the existing implementation meets the spec). Anything else (an error that is not an expectation, a load error, a missing or pending
 // example, no report) is undeterminable and stops the run. I (after the implementation): every mapped example passes.
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { runIsolated } from './isolation.mjs';
+import { acceptanceResultSchema } from './schemas.mjs';
 const notMet = new Set(['RSpec::Expectations::ExpectationNotMetError', 'RSpec::Expectations::MultipleExpectationsNotMetError']);
 const run = (...task) => ['docker', 'compose', '-f', 'compose.yaml', 'run', '--rm', '-e', 'RAILS_ENV=test', '-e', 'DATABASE_URL=postgres://postgres@db:5432/sonomama_acceptance_test', 'api', ...task];
 
@@ -74,4 +77,22 @@ export async function runGeneratedAcceptance({ workspace, sbiIssue, config }) {
   const result = await runIsolated({ workspace, adapter, config, cwd: workspace });
   const report = parseRspecJson(result.processes?.[2]?.stdout);
   return result.reason && report.error ? { ...report, error: `${report.error} (${result.reason})` } : report;
+}
+
+// CI: the verifier matrix runs the generated specs and leaves the report for the Completion Judge, bound to the commit it ran on.
+const resultPath = (dir, sbiIssue) => join(dir, `sbi-${sbiIssue}.json`);
+export async function writeAcceptanceResult({ dir, sbiIssue, headSha, report }) {
+  await mkdir(dir, { recursive: true });
+  await writeFile(resultPath(dir, sbiIssue), `${JSON.stringify(acceptanceResultSchema.parse({ sbiIssue, headSha, report }), null, 2)}\n`);
+}
+// A missing, malformed or foreign report reads as a report with an error, so judgeAcceptance fails every mapped example.
+export async function readAcceptanceResult({ dir, sbiIssue, headSha }) {
+  const failed = error => ({ error, examples: [], errorsOutsideOfExamples: 0 });
+  let parsed;
+  try { parsed = acceptanceResultSchema.safeParse(JSON.parse(await readFile(resultPath(dir, sbiIssue), 'utf8'))); }
+  catch (error) { return failed(error.code === 'ENOENT' ? 'no report from the verifier matrix' : `the report cannot be read (${error.message})`); }
+  if (!parsed.success) return failed(`the report is malformed (${parsed.error.issues.map(i => `${i.path.join('.') || '(root)'} ${i.message}`).join(', ')})`);
+  if (parsed.data.sbiIssue !== sbiIssue) return failed(`the report is for SBI Issue #${parsed.data.sbiIssue}`);
+  if (parsed.data.headSha !== headSha) return failed(`the report is for ${parsed.data.headSha.slice(0, 12)}, not ${headSha.slice(0, 12)}`);
+  return parsed.data.report;
 }

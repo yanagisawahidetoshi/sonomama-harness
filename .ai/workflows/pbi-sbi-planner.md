@@ -10,7 +10,7 @@
 7. 採用するSBIは、ACごとのTrusted Acceptanceを人間が書いてレビューし、
    `.harness/acceptance/sbi-<SBI番号>.json`に`{ "version": 1, "sbiIssue": <SBI番号>, "verifiers": [{ "id", "trustedScript", "planned", "acceptanceIds": [IssueのAC ID] }] }`で登録する。
 8. 全ACの対応を確認したら`needs-review`を外して`ready`を付ける。`gh issue edit <number> --remove-label needs-review --add-label ready`。
-   新方式（#147、[ADR-0005](../../docs/adr/0005-generated-trusted-acceptance.md)）: Trusted Acceptanceを手書きせず、`needs-review`を外して`pnpm harness:spec-approve <SBI Issue URL>`で仕様を承認する。正本はIssueの`harness-spec: <spec digest>`コメント（write以上・未編集）で、`spec-approved` labelは表示だけ。受け入れ要件・Gherkin・想定変更範囲・Risk / Security Impactを編集すると承認は無効になる。テストの生成はまだ実装されていないので、今は新方式のrunは開始前に止まる。
+   新方式（#147、[ADR-0005](../../docs/adr/0005-generated-trusted-acceptance.md)）: Trusted Acceptanceを手書きせず、`needs-review`を外して`pnpm harness:spec-approve <SBI Issue URL>`で仕様を承認する。正本はIssueの`harness-spec: <spec digest>`コメント（write以上・未編集）で、`spec-approved` labelは表示だけ。受け入れ要件・Gherkin・想定変更範囲・Risk / Security Impactを編集すると承認は無効になる。runがテストを生成し、`.harness/acceptance/sbi-<番号>.json`（version 2）と一緒に実装PRに入れる。今はRailsのrequest specだけを生成できる。
 9. `pnpm harness:run <SBI Issue URL>`で実行する。SBI JSONは書かない。HarnessがIssueを取得・検証し、Run snapshotを保存して実装・検証・PR作成まで進める。
 
 ## SBIの種類

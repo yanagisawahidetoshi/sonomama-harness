@@ -29,3 +29,4 @@ node_modules/
 !docs/security/secrets.md
 .harness/exports/
 /.maestro-ci/
+/.acceptance-ci/
