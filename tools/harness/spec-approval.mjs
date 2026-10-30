@@ -41,9 +41,8 @@ export async function postSpecApproval({ issueUrl, decision = 'approve', github 
   const issue = await github.fetchIssue(ref);
   const digest = specDigest(issue.body);
   if (!digest) throw new Error(`${ref.url} に ## Gherkin が無いため spec digest を作れません。仕様を承認できません`);
-  const line = decision === 'approve' ? specApprovalLine(digest) : `harness-spec-revoke: ${digest}`;
-  const text = [decision === 'approve' ? '受け入れ要件・Gherkin・想定変更範囲・Risk / Security Impact を確認し、仕様を承認します。' : '仕様の承認を取り消します。', '', line, ''].join('\n');
-  const comment = await github.addComment(ref, text);
+  // Only a comment that is exactly the line counts (github-approval-records.mjs), so nothing else is posted with it.
+  const comment = await github.addComment(ref, decision === 'approve' ? specApprovalLine(digest) : `harness-spec-revoke: ${digest}`);
   const names = (issue.labels ?? []).map(l => l.name);
   try {
     if (decision === 'approve') { await github.ensureLabels(ref, ['spec-approved']); if (!names.includes('spec-approved')) await github.addLabels(ref, ['spec-approved']); }
