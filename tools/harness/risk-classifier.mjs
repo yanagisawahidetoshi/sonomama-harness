@@ -31,7 +31,7 @@ export function assessRisk({ files = [], metadata = {}, humanGate = false, aiRis
   }
   const safeMatches = files.map(file => {
     if (file.binary || file.previousPath || file.modeChanged || (file.mode && file.mode !== '100644')) return null;
-    return policy.safeRules.find(rule => (!rule.requiredLane || (lane?.name === rule.requiredLane && !lane.requiresSecurityGate && !lane.requiresDesignApproval))
+    return policy.safeRules.find(rule => (!rule.requiredLane || (lane?.name === rule.requiredLane && !lane.requiresSecurityGate))
       && new RegExp(rule.pattern).test(file.path) && rule.allowedStatuses.includes(file.status)
       && Buffer.byteLength(`${file.added || ''}${file.deleted || ''}`) <= rule.maxChangedBytes);
   });

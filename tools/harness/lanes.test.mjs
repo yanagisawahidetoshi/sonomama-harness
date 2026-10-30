@@ -30,28 +30,22 @@ describe('Lane quality and promotion enforcement',()=>{
       const run=await runFixture({root,quiet:true,agent:async()=>{throw Error('must not run')}});
       assert.equal(run.lane.name,'production');assert.equal(run.gate.required,true);assert.equal(run.status,'WAITING_FOR_HUMAN_GATE');assert.equal(run.iterations.length,0);
     }));
-    it('when promoting then Design Approval is independent from post-implementation merge approval',()=>fixture(async root=>{
+    // #155: the SBI Issue approval already decides the production implementation, so a promotion adds no Design Approval Gate.
+    it('when promoting a prototype then the run implements without a Design Approval and only merge approval remains',()=>fixture(async root=>{
       const {agent}=await prototype(root,{promotion:true});
       const run=await runFixture({root,quiet:true,agent});
-      assert.equal(run.executionStatus,'PENDING');assert.equal(run.designApproval.required,true);
-      assert.equal(run.status,'WAITING_FOR_DESIGN_APPROVAL');
+      assert.equal(run.executionStatus,'DONE');assert.equal(run.designApproval,undefined);
+      assert.notEqual(run.status,'WAITING_FOR_DESIGN_APPROVAL');
       assert.deepEqual(run.gate,{required:false,state:'NOT_REQUIRED'});
-      assert.equal(JSON.parse(await readFile(join(root,run.runDir,'human-gate.json'),'utf8')).state,'NOT_REQUIRED');
-      await assert.rejects(recordDecision({root,runId:run.id,purpose:'merge',identityProvider:human('designer')}),/gate|Execution/);
-      await recordDecision({root,runId:run.id,purpose:'design-approval',identityProvider:human('designer')});
-      const done=await resumeRun({root,runId:run.id,quiet:true,agent});
-      assert.equal(done.designApproval.state,'APPROVED');assert.equal(done.executionStatus,'DONE');
-      assert.deepEqual(done.gate,{required:false,state:'NOT_REQUIRED'});
-      assert.equal(JSON.parse(await readFile(join(root,run.runDir,'human-gate.json'),'utf8')).state,'NOT_REQUIRED');
-      assert.equal(done.lane.name,'production');assert.equal(done.status,'WAITING_FOR_HUMAN_REVIEW');assert.equal(done.merge.validApprovals,0);
+      assert.equal(run.lane.name,'production');assert.equal(run.status,'WAITING_FOR_HUMAN_REVIEW');
+      assert.equal(await readFile(join(root,run.runDir,'design-approval.json'),'utf8').catch(()=>null),null);
       await recordDecision({root,runId:run.id,purpose:'merge',identityProvider:human('reviewer')});
       assert.equal((await resumeRun({root,runId:run.id,quiet:true})).status,'MERGE_ALLOWED');
-      await recordDecision({root,runId:run.id,purpose:'design-approval',decision:'REVOKE',identityProvider:human('designer')});
-      const revoked=await resumeRun({root,runId:run.id,quiet:true});
-      assert.equal(revoked.status,'WAITING_FOR_DESIGN_APPROVAL');
-      assert.equal(revoked.merge.state,'WAITING_FOR_DESIGN_APPROVAL');
-      assert.deepEqual(revoked.gate,{required:false,state:'NOT_REQUIRED'});
-      assert.equal(revoked.designApproval.state,'WAITING_FOR_DESIGN_APPROVAL');
+    }));
+    it('when a Design Approval is recorded then it is rejected as an unknown purpose',()=>fixture(async root=>{
+      const {agent}=await prototype(root,{promotion:true});
+      const run=await runFixture({root,quiet:true,agent});
+      await assert.rejects(recordDecision({root,runId:run.id,purpose:'design-approval',identityProvider:human('designer')}),/purpose|Invalid/);
     }));
   });
 });
