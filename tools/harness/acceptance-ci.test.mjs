@@ -176,20 +176,22 @@ describe('CI for a PR whose Trusted Acceptance was generated from a spec-approve
 
 describe('CI workflow for the generated acceptance', () => {
   const steps = job => workflow.jobs[job].steps;
-  it('when a verifier matrix leg runs the generated acceptance then it uploads its report under a name unique to the leg, even when the leg fails', () => {
-    const upload = steps('verifiers').find(s => s.uses?.startsWith('actions/upload-artifact@') && s.with?.path === `${results}/`);
+  // Outside the checkout, so a report committed in the PR is never read in place of the one the matrix leg produced.
+  const outside = '${{ runner.temp }}/acceptance-results';
+  it('when a verifier matrix leg runs the generated acceptance then it uploads its report from outside the checkout under a name unique to the leg, even when the leg fails', () => {
+    assert.equal(workflow.jobs.verifiers.env.HARNESS_ACCEPTANCE_RESULTS, outside);
+    const upload = steps('verifiers').find(s => s.uses?.startsWith('actions/upload-artifact@') && s.with?.path === outside);
     assert.ok(upload, 'upload step for the generated acceptance report');
     assert.match(upload.if, /always\(\)/);
     assert.match(upload.with.name, /\$\{\{ matrix\.verifier \}\}/);
-    assert.equal(workflow.jobs.verifiers.env.HARNESS_ACCEPTANCE_RESULTS, results);
   });
-  it('when the Completion Judge runs then it downloads every report and reads them from the same directory, judging a missing one as a failure', () => {
-    const download = steps('harness').find(s => s.uses?.startsWith('actions/download-artifact@') && s.with?.path === results);
+  it('when the Completion Judge runs then it downloads every report outside the checkout and reads them from there, judging a missing one as a failure', () => {
+    const download = steps('harness').find(s => s.uses?.startsWith('actions/download-artifact@') && s.with?.path === outside);
     assert.ok(download, 'download step for the generated acceptance reports');
     assert.equal(download['continue-on-error'], true);
     assert.equal(download.with['merge-multiple'], true);
     assert.ok(download.with.pattern);
     const run = steps('harness').find(s => s.run?.startsWith('pnpm harness:judge'));
-    assert.equal(run.env.HARNESS_ACCEPTANCE_RESULTS, results);
+    assert.equal(run.env.HARNESS_ACCEPTANCE_RESULTS, outside);
   });
 });
