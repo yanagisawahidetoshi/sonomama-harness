@@ -15,11 +15,8 @@ describe('Approval records in GitHub Issue comments', () => {
     it('when a person with write access posted it then the digest is approved by that person', () => {
       assert.deepEqual(judge([approve(1)]), { approved: true, approvers: ['alice'] });
     });
-    it('when the line has trailing whitespace then it still counts', () => {
-      assert.equal(judge([comment(1, 'alice', `harness-pbi-plan: ${digest}  \n`)]).approved, true);
-    });
-    it('when the comment explains the decision around the approval line then it counts, as harness-spec does', () => {
-      assert.equal(judge([comment(1, 'alice', `## SBI構成を確認しました。\n\nharness-pbi-plan: ${digest}\n`)]).approved, true);
+    it('when the line has surrounding whitespace then it still counts', () => {
+      assert.equal(judge([comment(1, 'alice', `\n  harness-pbi-plan: ${digest}  \n`)]).approved, true);
     });
     it('when the approval line is rendered then it is the exact line the checker accepts', () => {
       assert.equal(approvalLine('harness-pbi-plan', digest), `harness-pbi-plan: ${digest}`);
@@ -31,6 +28,11 @@ describe('Approval records in GitHub Issue comments', () => {
     for (const [name, comments, permissions] of [
       ['the approval is for another digest', [comment(1, 'alice', `harness-pbi-plan: ${'b'.repeat(64)}`)]],
       ['the approval line is only quoted inside another line', [comment(1, 'alice', `> harness-pbi-plan: ${digest}`)]],
+      ['the comment explains the decision around the approval line', [comment(1, 'alice', `## SBI構成を確認しました。\n\nharness-pbi-plan: ${digest}\n`)]],
+      ['the line is inside an HTML comment', [comment(1, 'alice', `<!--\nharness-pbi-plan: ${digest}\n-->`)]],
+      ['the line is inside a code block', [comment(1, 'alice', `\`\`\`\nharness-pbi-plan: ${digest}\n\`\`\``)]],
+      ['the line follows a refusal', [comment(1, 'alice', `承認しない:\nharness-pbi-plan: ${digest}`)]],
+      ['the approval and the revoke lines are in one comment', [comment(1, 'alice', `harness-pbi-plan: ${digest}\nharness-pbi-plan-revoke: ${digest}`)]],
       ['the line uses another prefix', [comment(1, 'alice', `harness-spec: ${digest}`)]],
       ['the comment was edited after it was posted', [approve(1, 'alice', { updated_at: '2026-10-30T01:00:00Z' })]],
       ['a bot posted it', [approve(1, 'renovate[bot]', { user: { login: 'renovate[bot]', type: 'Bot' } })]],
