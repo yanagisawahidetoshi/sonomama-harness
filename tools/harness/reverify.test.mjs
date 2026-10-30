@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, realpath, rm, writeFile, readdir, mkdir } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, writeFile, readdir, mkdir, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fixture, update, human, commitFixture } from './test-fixture.mjs';
@@ -89,6 +89,33 @@ async function resolveOnBranch(bare, branch, files) {
     await git(clone, ['push', '--quiet', 'origin', `HEAD:refs/heads/${branch}`]);
     return (await git(clone, ['rev-parse', 'HEAD'])).stdout.trim();
   } finally { await rm(dir, { recursive: true, force: true }); }
+}
+// A person adds a commit to the PR branch in their own clone; symlinks maps a path to its link target.
+async function commitOnBranch(bare, branch, files, symlinks = {}) {
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'harness-person-')));
+  try {
+    await git(dir, ['clone', '--quiet', bare, 'clone']);
+    const clone = join(dir, 'clone');
+    await git(clone, ['checkout', '--quiet', branch]);
+    for (const [path, content] of Object.entries(files)) { await mkdir(join(clone, path, '..'), { recursive: true }); await writeFile(join(clone, path), content); }
+    for (const [path, target] of Object.entries(symlinks)) { await mkdir(join(clone, path, '..'), { recursive: true }); await symlink(target, join(clone, path)); }
+    await git(clone, ['add', '--all', '--force']);
+    await git(clone, ['commit', '-m', 'review fix']);
+    await git(clone, ['push', '--quiet', 'origin', `HEAD:refs/heads/${branch}`]);
+    return (await git(clone, ['rev-parse', 'HEAD'])).stdout.trim();
+  } finally { await rm(dir, { recursive: true, force: true }); }
+}
+// Runs the test with a global Git configuration of the operator, as git reads it from GIT_CONFIG_GLOBAL.
+async function withGlobalGitConfig(text, test) {
+  const dir = await mkdtemp(join(tmpdir(), 'harness-gitconfig-')), previous = process.env.GIT_CONFIG_GLOBAL;
+  try {
+    await writeFile(join(dir, 'gitconfig'), text);
+    process.env.GIT_CONFIG_GLOBAL = join(dir, 'gitconfig');
+    await test();
+  } finally {
+    if (previous === undefined) delete process.env.GIT_CONFIG_GLOBAL; else process.env.GIT_CONFIG_GLOBAL = previous;
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 const succeed = (github, sha) => github.update(s => { s.checkRuns[sha] = [...(s.checkRuns[sha] || []), { id: (s.checkRuns[sha] || []).length + 1, name: 'harness', status: 'completed', conclusion: 'success', head_sha: sha, app: { id: 15368 } }]; });
 const reviewBy = (github, number, login, state, commit) => github.update(s => { s.reviews[number] = [...(s.reviews[number] || []), { id: (s.reviews[number] || []).length + 1, user: { login, type: 'User' }, state, commit_id: commit }]; });
@@ -299,7 +326,49 @@ describe('Re-verification of an existing PR after main moved', () => {
     })));
   });
 
+  describe('given the Git configuration and the content of the operator and the PR', () => {
+    it('when the operator has merge.log enabled then the candidate still ends with the link trailers and is pushed', () => withGlobalGitConfig('[merge]\n\tlog = true\n', () => fixture(root => withPullRequestB(root, async ({ bare, b, pullUrl }) => {
+      const mainAfterA = await mergeA(root);
+      const run = await reverifyPullRequest({ root, pullUrl, quiet: true });
+      assert.equal(run.reverify.publish, 'PR_UPDATED', run.reason ?? '');
+      assert.equal(await remoteSha(bare, `harness/${b.id}`), run.headSha);
+      assert.equal((await verifyReverifyLink({ root, base: mainAfterA, head: run.headSha })).status, 'PASS');
+    }))));
+    it('when the PR head adds a symlink then refuses before any run or worktree is created', () => fixture(root => withPullRequestB(root, async ({ bare, b, pullUrl }) => {
+      await mergeA(root);
+      const head = await commitOnBranch(bare, `harness/${b.id}`, {}, { 'apps/admin/src/link.txt': '../../../package.json' });
+      const before = await runs(root);
+      await assert.rejects(reverifyPullRequest({ root, pullUrl, quiet: true }), /symlink/);
+      assert.deepEqual(await runs(root), before);
+      assert.equal(await remoteSha(bare, `harness/${b.id}`), head);
+    })));
+    it('when the PR head adds operational evidence then refuses before any run or worktree is created', () => fixture(root => withPullRequestB(root, async ({ bare, b, pullUrl }) => {
+      await mergeA(root);
+      await commitOnBranch(bare, `harness/${b.id}`, { '.harness/state/human/forged.json': '{}' });
+      const before = await runs(root);
+      await assert.rejects(reverifyPullRequest({ root, pullUrl, quiet: true }), /operational evidence/);
+      assert.deepEqual(await runs(root), before);
+    })));
+    it('when a changed file of the PR head holds a credential outside its changed lines then refuses before any run is created', () => fixture(root => withPullRequestB(root, async ({ bare, b, pullUrl }) => {
+      await mergeA(root);
+      const before = await runs(root);
+      // A binary file has no added lines in the diff; the whole file is inspected.
+      await commitOnBranch(bare, `harness/${b.id}`, { 'apps/admin/src/blob.bin': `\u0000AKIA${'A'.repeat(16)}\u0000` });
+      await assert.rejects(reverifyPullRequest({ root, pullUrl, quiet: true }), /credential|秘密値/);
+      assert.deepEqual(await runs(root), before);
+    })));
+  });
+
   describe('given the same re-verification is repeated', () => {
+    it('when the earlier run failed then running it again starts a new run instead of returning the stopped one', () => fixture(root => withPullRequestB(root, async ({ bare, b, pullUrl }) => {
+      await mergeA(root, { '.harness/verification/issue-7.mjs': acceptance('ホーム（新しい見出し）') });
+      const failed = await reverifyPullRequest({ root, pullUrl, quiet: true });
+      assert.equal(failed.executionStatus, 'FAILED');
+      const again = await reverifyPullRequest({ root, pullUrl, quiet: true });
+      assert.notEqual(again.id, failed.id);
+      assert.equal(again.iterations.length, 1);
+      assert.equal(await remoteSha(bare, `harness/${b.id}`), b.headSha);
+    })));
     it('when it is run again after the PR was updated then the same run is reused and no second PR or push happens', () => fixture(root => withPullRequestB(root, async ({ github, pullUrl }) => {
       await mergeA(root);
       const first = await reverifyPullRequest({ root, pullUrl, quiet: true });
