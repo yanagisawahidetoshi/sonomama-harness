@@ -1,15 +1,15 @@
 # ADR-0006: Production変更の起点を、決定的なルールによるchange-type判定で決め、Engineering Issueを必須にしない
 
-- 状態: Proposed
+- 状態: Accepted（2026-10-30、柳沢英俊が承認）
 - 日付: 2026-10-30
-- 判断者: 未定
+- 判断者: 柳沢英俊
 - 関連Issue: なし
 - 関連SBI: なし
 - 関連Design Docs: [docs/workflows/engineering-changes.md](../workflows/engineering-changes.md)、[.ai/workflows/ci.md](../../.ai/workflows/ci.md)
 - Supersedes:
 - Superseded by:
 
-状態の意味とAIの扱いは[README](README.md)を参照する。Proposedの間は、AIはこのADRを決まったものとして実装や提案の根拠にしない。
+状態の意味とAIの扱いは[README](README.md)を参照する。
 
 ## 背景
 
@@ -43,23 +43,29 @@ Engineering Issueのlabelは人がPRのレビューと別に付ける承認で�
 
 ## 決定
 
-未決定。現時点の提案は次のとおり。
-
 ### 判定のしくみ
 
-- Production変更を含むPRに、Harnessが`changeType`と`requiresSbi`を付ける。
+- Production変更を含むPRのdiffに、Harnessが`changeType`と`requiresSbi`を付ける。diffの分類は次の2つだけとする。
 
 | changeType | 条件 | requiresSbi | ログ |
 | --- | --- | --- | --- |
-| `product` | PRがSBIのsnapshot（`.harness/state/sbi-*.json`）か、`Harness-Run:`・`SBI-Issue:`のtrailerを持つ | true | `Change type: product / SBI required` |
 | `engineering` | Production配下の変更ファイルが、すべてEngineeringのルールに当たる | false | `Change type: engineering / SBI not required` |
-| `ambiguous` | 上のどちらでもない。1ファイルでもEngineeringのルールに当たらない | true | `Change type: ambiguous / SBI required (fail-closed)` |
+| `ambiguous` | 1ファイルでもEngineeringのルールに当たらない | true | `Change type: ambiguous / SBI required (fail-closed)` |
 
-- `ambiguous`は`product`に変換しない。`changeType = ambiguous`のまま保持し、`requiresSbi = true`にする。ログでも、Productと判定したものと、判定できなかったものを区別する。
+- `ambiguous`は「Productと判定した」ではなく「Engineeringと証明できなかった」を表す。別の値に変換せず、`changeType = ambiguous`のまま保持する。
 - `ambiguous`で人には質問しない。SBIが無ければCompletion JudgeはFAILする。
 - 判定に使うのは、パス、ファイルの種類、diffの内容に対する決定的なルールだけとする。LLMの判定、PR本文、commit message、ブランチ名、「refactor」などの自己申告は使わない。
 - ログには、どのファイルがどのルールに当たったか、どのファイルで`ambiguous`になったかも書く。
 - ルールは`.harness/rules/`に置く。Agentは書き込めず、変更は既存のHuman Gateの対象になる。
+
+### SBI sourceは別の軸で扱う
+
+change-type（diffが何を変えているか）と、SBI source（変更がどのSBIから来たか）は混ぜない。
+
+- PRがSBIのsnapshot（`.harness/state/sbi-*.json`）を追加・変更・削除している場合は、change-typeにかかわらず、今のSBI sourceの検査（`sbi-source.mjs`）を行う。検査に失敗すればFAILする。
+- `Harness-Run:`・`SBI-Issue:`のtrailerがあるだけでは、有効なSBI sourceとみなさない。trailerはchange-typeの判定にも使わない。snapshotの無いPRに残ったtrailerで、Engineeringのdiffが`ambiguous`になることも、`ambiguous`のdiffが通ることもない。
+- `requiresSbi = true`のPRは、SBI sourceの検査に通ったsnapshotがあるときだけ通る。
+- SBI sourceの検査に通った後だけ、ログに`Source: SBI #123`を別の行で出す。
 
 ### Engineeringと判定する変更（例）
 
@@ -106,7 +112,7 @@ Engineering Issueのlabelは人がPRのレビューと別に付ける承認で�
 ### 変えないこと
 
 - change-typeが決めるのは`requiresSbi`だけ。Verifier、Security Verifier、Risk Level、Human Gate、PRのHuman Reviewの判定は変えない。
-- PRがSBIのsnapshotやtrailerを持つ場合は、今と同じSBIの検査を行う。
+- SBIのsnapshotを持つPRへのSBI sourceの検査の内容。
 - trusted dependency botの例外は残す。
 
 ## 理由
@@ -143,11 +149,13 @@ Engineering Issueのlabelは人がPRのレビューと別に付ける承認で�
 ## 検証方法
 
 - 判定の単体テストで、上の表のEngineeringの例が`engineering`に、Ambiguousの例が`ambiguous`になることを確かめる。
-- `ambiguous`の結果が`changeType = ambiguous`、`requiresSbi = true`のままで、`product`に変わらないことを確かめる。
+- `ambiguous`の結果が`changeType = ambiguous`、`requiresSbi = true`のままで、別の値に変わらないことを確かめる。
+- snapshotの無いEngineeringのdiffに`Harness-Run:`・`SBI-Issue:`のtrailerが残っていても、`engineering`のまま通ることを確かめる。
+- snapshotの無い`ambiguous`のdiffに、trailerだけがあってもFAILすることを確かめる。
 - EngineeringとAmbiguousのファイルが混じったPRが`ambiguous`になり、SBIが無ければFAILすることを確かめる。
 - `ambiguous`のPRに、`engineering`・`ready`のEngineering Issueとtrailerがあっても、SBIが無ければFAILすることを確かめる。
 - commit messageやPR本文に「refactor」「engineering」と書いても判定が変わらないことを確かめる。
-- ログに`Change type: ambiguous / SBI required (fail-closed)`と`Change type: product / SBI required`が区別して出ることを確かめる。
+- ログに`Change type: engineering / SBI not required`か`Change type: ambiguous / SBI required (fail-closed)`が出て、`Source: SBI #<番号>`はSBI sourceの検査に通ったときだけ出ることを確かめる。
 - #185（`apps/**`のREADMEだけの変更）が、Issue無しでCompletion Judgeを通ることを確かめる。
 
 ## 再検討条件 / 撤回条件
