@@ -40,17 +40,21 @@ PRで追加・変更された `.harness/state/sbi-*.json`（Harness Runのsnapsh
 
 ## Production変更の起点
 
-Production（`apps/`・`packages/`と`.harness/config/lanes.json`の`productionPaths`）を変更するPRは、承認済みの変更起点を必須とする。変更の種類で起点を分ける。
+Production（`apps/`・`packages/`と`.harness/config/lanes.json`の`productionPaths`）を変更するPRは、diffのchange-typeでSBIの要否を決める（[ADR-0006](../../docs/adr/0006-change-type-classification.md)、`tools/harness/change-type.mjs`）。
 
-| 種類 | 例 | 必須の起点 |
+| changeType | 条件 | requiresSbi |
 | --- | --- | --- |
-| Product implementation | 新機能、仕様変更、ユーザー挙動の変更 | 承認済みSBI Issueを起点にしたHarness Run + snapshot |
-| Engineering change | dependency、refactor、tooling、Storybook、build設定、Design System導入など、プロダクト仕様を直接変更しない技術変更 | `engineering`・`ready` labelのIssue + commit trailer |
-| trusted dependency botの更新 | Renovateのdependency更新PR | 不要。GitHub APIで確かめたbot例外（下記） |
+| `engineering` | Production配下の変更ファイルが、すべて`.harness/rules/change-types.json`のルールに当たる | false |
+| `ambiguous` | 1ファイルでもルールに当たらない。symlink・バイナリ・mode変更、内容ルールを証明できない`package.json`・`Gemfile`も含む | true |
 
-Engineering changeでもVerifier・Security・Risk・Human Reviewは通常どおり行う。免除されるのはSBI Run snapshotだけ。どちらか曖昧ならProduct implementationとしてSBIを使う。
+- 判定は変更ファイルのパスと内容だけで行う。commit message・PR本文・ブランチ名・trailer・Engineering Issueは使わない。
+- `ambiguous`は「Engineeringと証明できなかった」を表し、productに変換しない。
+- trusted dependency bot（Renovate）のPRは、`ambiguous`でも下記のbot例外でSBIを外せる。
+- change-typeが決めるのはSBIの要否だけ。Verifier・Security・Risk・Human Reviewは通常どおり行う。
 
-### Product implementation: SBI Run snapshot
+### SBI source: SBI Run snapshot
+
+SBI sourceはchange-typeとは別の軸で判定する。`requiresSbi = true`のPRと、Production diffで`.harness/state/sbi-*.json`を追加・変更・削除したPRに、次の検査を行う。`Harness-Run:` / `SBI-Issue:` trailerだけでは有効なSBI sourceにならない。
 
 Completion Judge（`harness` job）が次をすべて確かめ、1つでも欠ければFAILする。
 
@@ -68,20 +72,10 @@ snapshotをHarnessが書いたことの暗号学的な証明ではない。Issue
 trusted dependency botのPRは、作成者・全commitの作成者と署名・変更ファイル（`.harness/rules/dependency-bots.json`の許可パスだけ）・head SHA・head repositoryをGitHub APIで確かめられたときだけ、上の確認を外す（[dependency-updates.md](../../docs/workflows/dependency-updates.md)）。外すのはSBI Issueの要件だけで、Verifier・Security・Riskは通常どおり判定する。確かめられなければSBI必須のまま。ログの `SBI source` 行に結果が出る。
 source Issueを持たない手書きの `sbi-*.json`（`sbi-admin-env.json` など）はProduct implementationの根拠にならない。
 
-### Engineering change: Engineering Issue
+Engineering Issueは起点の判定に使わない（[docs/workflows/engineering-changes.md](../../docs/workflows/engineering-changes.md)）。
 
-人がIssueに `engineering` と `ready` のlabelを付けて承認する。PRのcommitのどれかに次のtrailerを入れる。PR本文・commit message・Issue本文での自己申告は根拠にならない。
-
-```text
-Engineering-Issue: https://github.com/<owner>/<repo>/issues/<number>
-```
-
-Completion Judgeはcommit trailerからIssueを1件だけ特定し、GitHub APIで現在のIssueを読む。Issueを読めない、別repository、複数のIssue、Pull Requestの番号、closed、`engineering`なし、`ready`なし、`needs-review`あり、`sbi`ありのどれかでFAILする。
-`.harness/state/sbi-*.json` の追加・変更・削除か、commit messageの `Harness-Run:` / `SBI-Issue:` があるPRは必ずSBI側で判定し、Engineering Issueへフォールバックしない。
-詳細は [docs/workflows/engineering-changes.md](../../docs/workflows/engineering-changes.md)。
-
-それ以外（`prototypes/`、docs、Harness本体など）だけを変更するPRはProduction sourceなしで通り、Verifierは差分だけで選ぶ。mainへのpushでもsource確認は行わない。
-判定理由はimpact jobとharness jobのログの `SBI required:` 行（意味は「Production source required」）と、harness jobの `SBI source check:` / `Engineering source check:` 行に出る。harness jobはIssueを読むため `issues: read` と `GH_TOKEN` を持つ。
+それ以外（`prototypes/`、docs、Harness本体など）だけを変更するPRはchange-typeを持たずSBIなしで通り、Verifierは差分だけで選ぶ。mainへのpushでもsource確認は行わない。
+判定理由はimpact jobとharness jobのログに出る。`Change type: engineering / SBI not required`か`Change type: ambiguous / SBI required (fail-closed)`の行に続けて、ファイルごとに当たったルール（`Change type rule <id>: <path>`）か、証明できなかった理由（`Change type ambiguous: <path> (<reason>)`）を出す。harness jobの `SBI source check:` 行にSBI sourceの結果が出て、検査に通ったときだけ`Source: SBI #<番号>`を出す。harness jobはIssueを読むため `issues: read` と `GH_TOKEN` を持つ。
 
 `impact.fullGate` のパス（`tools/harness/`、`.harness/config|verification|rules|skills/`、`.github/`、`.githooks/`、`AGENTS.md`、`.ai/`）が変わったときはFull Gateも実行する。
 `impact.toolchain` のパス（`.node-version`、`.tool-versions`、root の `package.json`、`pnpm-workspace.yaml`、`.npmrc`）が変わったときは、全Application VerifierとFull Gateを実行する。ログの理由は`toolchain:<path>`になる。workflowはこの判定の出力を使うだけで、pathを持たない。
