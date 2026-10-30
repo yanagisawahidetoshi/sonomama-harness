@@ -47,9 +47,17 @@ module ApiContract
   end
 
   # Fails the suite when a Rails business route has no request spec that checked it against the SSOT contract.
-  # Only a full run can tell, so a run limited to some files or examples reports that it did not check.
+  # Only a full run can tell. The rails Verifier sets API_CONTRACT_COVERAGE=required, so there a filter or pattern that
+  # drops specs fails; a developer running some files gets NOT CHECKED.
   def verify_suite_coverage(configuration = RSpec.configuration)
-    return ["API contract coverage: NOT CHECKED (only part of the suite ran)"] unless full_suite?(configuration)
+    unless full_suite?(configuration)
+      if ENV["API_CONTRACT_COVERAGE"] == "required"
+        raise CoverageError,
+              "API contract coverage: only part of the suite ran"
+      end
+
+      return ["API contract coverage: NOT CHECKED (only part of the suite ran)"]
+    end
 
     coverage = Coverage.new(contract: default_path && default, routes: RouteManifest.entries)
     coverage_records.each { |operation, locations| locations.each { |location| coverage.record(operation, location) } }

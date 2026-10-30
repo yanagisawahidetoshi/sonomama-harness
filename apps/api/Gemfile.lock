@@ -319,6 +319,8 @@ DEPENDENCIES
   bundler-audit
   debug
   factory_bot_rails
+  hana (~> 1.3)
+  json_schemer (~> 2.5)
   openapi_first (~> 4.2)
   pg (~> 1.1)
   puma (>= 5.0)

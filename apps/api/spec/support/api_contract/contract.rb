@@ -68,10 +68,18 @@ module ApiContract
       version = document["openapi"] if document.is_a?(Hash)
       raise ContractError, "#{path} is not OpenAPI 3.1 (#{version.inspect})" unless version.to_s.start_with?("3.1.")
 
-      unsupported = Unsupported.scan(document)
-      return if unsupported.empty?
+      reject!("uses features the contract check cannot validate", Unsupported.scan(document))
+      reject!("is not a valid OpenAPI 3.1 document", dialect_errors)
+    end
 
-      raise ContractError, "#{path} uses features the contract check cannot validate:\n#{unsupported.join("\n")}"
+    # A schema value the OpenAPI 3.1 dialect rejects (type: strng) would otherwise validate nothing.
+    # A misspelled keyword (requried) is an unknown keyword to JSON Schema and cannot be detected here.
+    def dialect_errors
+      JSONSchemer.openapi(document).validate.first(5).map { |error| "#{error['data_pointer']}: #{error['error']}" }
+    end
+
+    def reject!(reason, problems)
+      raise ContractError, "#{path} #{reason}:\n#{problems.join("\n")}" if problems.any?
     end
 
     def paths = document.fetch("paths", nil) || {}
@@ -95,8 +103,12 @@ module ApiContract
       /\A#{template.split(/(\{[^}]+\})/).map { |part| part.start_with?('{') ? '[^/]+' : Regexp.escape(part) }.join}\z/
     end
 
+    # Segments that may carry IDs or personal data are masked; resource names and versions such as v1 stay readable.
     def undefined(rack_request, response)
-      Result.new(operation: "#{rack_request.request_method} #{rack_request.path}", status: response.status,
+      path = rack_request.path.split("/", -1).map do |segment|
+        segment.match?(/\A(?:[A-Za-z_-]*|v\d+)\z/) ? segment : ":param"
+      end
+      Result.new(operation: "#{rack_request.request_method} #{path.join('/')}", status: response.status,
                  request_violations: [], response_violations: [], undefined: true)
     end
 

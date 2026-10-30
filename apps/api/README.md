@@ -82,24 +82,28 @@ RSpec.describe "Students", type: :request do
       it "rejects it with the declared 400 error body" do
         post "/api/v1/students", params: { grade: "third" }, as: :json
 
-        expect(response).to match_api_contract(request: :invalid)
+        expect(response).to have_http_status(:bad_request)
+        expect(response).to match_api_contract(request: { invalid: "/grade" })
       end
     end
   end
 end
 ```
 
-- `match_api_contract` はrequestとresponseの両方が契約どおりのときだけ通る。不正入力の負のテストは `request: :invalid` を付け、入力違反が検出されたことと、エラーresponseが契約どおりであることを確かめる。
+- `match_api_contract` はrequestとresponseの両方が契約どおりのときだけ通る。
+- 不正入力の負のテストは `request: { invalid: "<JSON pointer>" }` を付ける。そのpointerの入力違反が検出され、Railsが契約で宣言した4xxを返し、そのエラーresponseが契約どおりのときだけ通る。別の違反（`as: :json` の付け忘れでmedia typeが違う等）しか出ないとFAILし、検出された違反を出す。必須propertyの欠落は親のpointer（rootなら `/`）で指定する。
+- pointerを持たない違反（required bodyが無い、宣言していないmedia type）は `request: :invalid` で書く。4xxと契約どおりのエラーresponseは同じく必須。
 - 照合するもの: method / pathのoperation、path / query / header / cookie parameter、request bodyの有無・Content-Type・schema、response status・media type・body・宣言されたheader。bodyなしと宣言したstatus（204等）でbodyを返すとFAIL。
 - schemaは必須、型、enum、配列、入れ子、null許容（`type: [string, "null"]`）、`additionalProperties` を契約どおりに扱う。schemaの `default` は欠けたpropertyを補わない（必須なら欠落でFAIL）。
-- 失敗メッセージはoperation・status・違反箇所のJSON pointerだけを出し、tokenやbodyの値は出さない。
-- 契約の読込に失敗した、OpenAPI 3.1でない、validatorが扱えない機能（未知の `format`、外部ファイルへの `$ref`、JSON以外のmedia type）を使う場合は、照合せずに失敗する。
+- 失敗メッセージはoperation・status・違反箇所のJSON pointerだけを出し、tokenやbodyの値は出さない。契約に無いoperationでは、pathのうち英字だけのsegmentと `v1` 等以外を `:param` に伏せる。
+- 契約の読込に失敗した、OpenAPI 3.1でない、OpenAPI 3.1のschemaとして不正な値（`type: strng` 等）がある、validatorが扱えない機能（未知の `format`、外部ファイルへの `$ref`、JSON以外のmedia type）を使う場合は、照合せずに失敗する。`properties` 等の下では `default` や `example` という名前のpropertyも検査する。
+- 検出できないもの: keywordの綴り違い（`requried` 等）。JSON Schemaでは未知のkeywordとして無視される。
 - 照合しないもの: `security`（認証）。認証・認可の振る舞いは通常のrequest specで確かめる。
 
 full suite（`bundle exec rspec`）の最後に、Railsの業務route（`config/routes.manifest.json`）ごとに契約照合したrequest specを `COVERED` / `UNCOVERED` で出す。
 業務routeに、契約照合が通ったspecが1件も無い（skipを含む）、routeが契約に無い、`openapi.yaml` が無いのに業務routeがある場合はsuiteをFAILにする。
 Railsが未実装の契約operationは `UNIMPLEMENTED` と出すだけでFAILにしない。業務routeも `openapi.yaml` も無い間は `NOT CHECKED` と出し、照合済みとは扱わない。
-一部のファイル・exampleだけを実行したときはcoverageを判定しない。
+一部のファイル・exampleだけを実行したときはcoverageを判定せず `NOT CHECKED` と出す。rails Verifierは `API_CONTRACT_COVERAGE=required` を渡すので、そこで `.rspec` や `spec_helper` のfilter・patternによって一部しか実行されなければFAILする。
 coverageに数えるのは、通った `match_api_contract` だけ。`request: :invalid` の負のテストも、入力違反を検出し、operationを特定でき、エラーresponseが契約どおりで通ったときは数える。失敗した照合と `not_to match_api_contract` は数えない。
 
 照合の仕組みは `spec/support/api_contract_spec.rb` が、本番routeに追加しないfixture用のRails route（`spec/support/api_contract_fixture.rb`）と契約（`spec/fixtures/api_contract/`）で検証する。

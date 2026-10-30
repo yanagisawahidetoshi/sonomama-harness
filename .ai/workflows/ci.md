@@ -107,7 +107,7 @@ Railsのrouteも照合する。Railsを起動せず、`apps/api/config/routes.ma
 - `resources` が作るPUTも契約に無ければFAIL。契約にPUTを書くか、routeを `patch` で明示する。
 
 request / response bodyは、rails Verifierの `bundle exec rspec` がrequest specの実データで照合する（apps/api/README.md「request specの契約検証」）。
-契約と実データが合わないexampleはFAILし、full suiteの最後に業務routeごとの照合状況（`COVERED` / `UNCOVERED` / `UNIMPLEMENTED`）を出す。業務routeに照合したspecが無い、または `openapi.yaml` が無いのに業務routeがあればFAILする。
+rails Verifierは `API_CONTRACT_COVERAGE=required` でrspecを実行し、suiteの一部しか実行されなければFAILする。契約と実データが合わないexampleはFAILし、full suiteの最後に業務routeごとの照合状況（`COVERED` / `UNCOVERED` / `UNIMPLEMENTED`）を出す。業務routeに照合したspecが無い、または `openapi.yaml` が無いのに業務routeがあればFAILする。
 `packages/api-schema/` の変更でもrails Verifierが選ばれるので、契約変更は既存のrequest specで検証される。
 
 未実装: Admin / Mobileのrequest / response照合。

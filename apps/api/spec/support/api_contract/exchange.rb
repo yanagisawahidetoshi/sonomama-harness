@@ -27,7 +27,7 @@ module ApiContract
       return ["status #{response.status} is not declared (declared: #{declared_statuses})"] unless status
 
       content = @contract.deref(responses[status])&.fetch("content", nil)
-      return bodyless_violations(status, response.body) if content.blank?
+      return bodyless_violations(response, status) if content.blank?
 
       media_type = response.media_type
       return [undeclared_media_type("response media type", media_type, content)] unless content.key?(media_type)
@@ -45,8 +45,9 @@ module ApiContract
       [status.to_s, "#{status / 100}XX", "#{status / 100}xx", "default"].find { |key| responses.key?(key) }
     end
 
-    def bodyless_violations(status, body)
-      body.empty? ? [] : ["status #{status} declares no body, but the response has one"]
+    def bodyless_violations(response, status)
+      body = response.body.empty? ? [] : ["status #{status} declares no body, but the response has one"]
+      body + header_violations(response, response_definition(status, nil))
     end
 
     def request_body_violations(media_type, body)

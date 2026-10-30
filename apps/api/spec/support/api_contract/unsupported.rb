@@ -7,16 +7,19 @@ module ApiContract
     KNOWN_FORMATS = (JSONSchemer::Draft202012::FORMATS.keys + JSONSchemer::OpenAPI31::FORMATS.keys).freeze
     # Keys whose values are data, not OpenAPI objects or schema keywords.
     DATA_KEYS = %w[example examples default enum const].freeze
+    SCHEMA_MAPS = %w[properties patternProperties $defs definitions dependentSchemas schemas].freeze
     # Objects whose `content` maps media types to schemas: request bodies, responses, parameters and headers.
     CONTENT_OWNER = %r{/(?:requestBody|requestBodies/[^/]+|responses/[^/]+|parameters/[^/]+|headers/[^/]+)\z}
 
     module_function
 
-    def scan(node, pointer = "", found = [])
+    def scan(node, pointer = "", found = [], key = nil)
       case node
       when Hash
         found.concat(problems(node, pointer))
-        node.each { |key, child| scan(child, "#{pointer}/#{key}", found) unless skip?(key) }
+        node.each do |child_key, child|
+          scan(child, "#{pointer}/#{child_key}", found, child_key) unless skip?(child_key, key)
+        end
       when Array then node.each_with_index { |child, index| scan(child, "#{pointer}/#{index}", found) }
       end
       found
@@ -41,6 +44,11 @@ module ApiContract
       node["content"].keys.grep_v(JSON_MEDIA_TYPE).map { |media_type| "media type #{media_type} (only JSON bodies)" }
     end
 
-    def skip?(key) = DATA_KEYS.include?(key) || key.to_s.start_with?("x-")
+    # Under properties, $defs and the like every key names a schema, even one called default or example.
+    def skip?(key, parent)
+      return false if SCHEMA_MAPS.include?(parent)
+
+      DATA_KEYS.include?(key) || key.to_s.start_with?("x-")
+    end
   end
 end
