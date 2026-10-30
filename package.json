@@ -25,6 +25,7 @@
     "harness:spec-approve": "node tools/harness/cli.mjs spec-approve",
     "harness:resume": "node tools/harness/cli.mjs resume",
     "harness:pr": "node tools/harness/cli.mjs pr",
+    "harness:reverify": "node tools/harness/cli.mjs reverify",
     "harness:export": "node tools/harness/cli.mjs export",
     "hooks:install": "node tools/harness/install-hooks.mjs",
     "prepare": "node tools/harness/install-hooks.mjs",

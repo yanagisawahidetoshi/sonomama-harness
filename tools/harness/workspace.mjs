@@ -42,6 +42,19 @@ export async function prepareWorkspace(root, workspace) {
   await json(join(workspace, '..', 'workspace-exclusions.json'), []);
   return baseline;
 }
+// prepareWorkspace's checks on Git objects, for the files a PR head changes since its merge base with base, before any checkout.
+export async function assertSafeCommit(root, base, head) {
+  const paths = (await git(root, ['diff', '--no-renames', '--diff-filter=d', '--name-only', '-z', `${base}...${head}`])).stdout.split('\0').filter(Boolean);
+  for (const path of paths) {
+    if (/^\.harness\/(state\/human|state\/runs|runs|exports)\//.test(path) && !path.endsWith('/.gitkeep')) throw new Error(`tracked operational evidence is prohibited: ${path}`);
+    const [mode, , object] = (await git(root, ['ls-tree', head, '--', path])).stdout.split(/\s+/);
+    if (mode === '120000') throw new Error(`tracked symlink is not permitted in a worktree: ${path}`);
+    if (mode === '160000') throw new Error(`submodule is not permitted in a worktree: ${path}`);
+    const content = (await git(root, ['cat-file', 'blob', object])).stdout;
+    if (isSafeEnvTemplate(path, content)) continue;
+    if (isSecretPath(path) || hasTrackedCredential(path, content)) throw new Error(`tracked credential detected in ${path}; remove sensitive material before creating a worktree`);
+  }
+}
 export async function assertWorktreeOwner(root, workspace, baselineSha) {
   const source = (await git(root, ['rev-parse', '--path-format=absolute', '--git-common-dir'])).stdout.trim();
   const target = (await git(workspace, ['rev-parse', '--path-format=absolute', '--git-common-dir'])).stdout.trim();

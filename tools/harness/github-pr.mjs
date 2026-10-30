@@ -37,7 +37,7 @@ export function ciStatus({ checkRuns, required }) {
 
 const user = z.looseObject({ login: z.string(), type: z.string().optional() });
 const pullSchema = z.looseObject({ number: z.number().int(), html_url: z.url(), state: z.string(), merged: z.boolean().optional(), merged_at: z.string().nullable().optional(),
-  user, head: z.looseObject({ ref: z.string(), sha: z.string() }), base: z.looseObject({ ref: z.string(), sha: z.string() }) });
+  user, head: z.looseObject({ ref: z.string(), sha: z.string(), repo: z.looseObject({ full_name: z.string() }).nullable().optional() }), base: z.looseObject({ ref: z.string(), sha: z.string() }) });
 const reviewSchema = z.looseObject({ id: z.number(), user: user.nullable(), state: z.string(), commit_id: z.string().nullable() });
 const checkRunSchema = z.looseObject({ id: z.number(), name: z.string(), status: z.string(), conclusion: z.string().nullable(), app: z.looseObject({ id: z.number() }).nullable().optional() });
 const ruleSchema = z.looseObject({ type: z.string(), parameters: z.looseObject({}).optional() });
@@ -75,6 +75,8 @@ export const githubPrCli = {
   },
   async createPull({ owner, repo }, body) { return pullSchema.parse(await api('POST', `repos/${owner}/${repo}/pulls`, body)); },
   async pull({ owner, repo }, number) { return pullSchema.parse(await api('GET', `repos/${owner}/${repo}/pulls/${number}`)); },
+  // harness:reverify rewrites the body of the PR it updated; nothing else of the PR is changed.
+  async updatePull({ owner, repo }, number, { body }) { return pullSchema.parse(await api('PATCH', `repos/${owner}/${repo}/pulls/${number}`, { body })); },
   reviews: ({ owner, repo }, number) => pages(`repos/${owner}/${repo}/pulls/${number}/reviews`, {}, value => z.array(reviewSchema).parse(value)),
   // GitHub reports maintain as write and triage as read. A non-collaborator is none.
   async permission({ owner, repo }, login) {
@@ -138,6 +140,10 @@ export function pullRequestBody({ summary, sbi }) {
     ...apiSchemaSection(last?.verification?.checks ?? []),
     '## Harness',
     `- Run ID: ${summary.id}`, `- tested SHA: ${summary.headSha}`,
+    // A re-verification run keeps the SBI snapshot and Harness-Run trailer of the run that implemented the SBI (ADR-0003).
+    ...(summary.reverify ? [`- 再検証: ${summary.pullRequest.base}が進んだため、実装を保持したまま最新の${summary.pullRequest.base}と統合して検証し直した`,
+      `- 親run: ${summary.reverify.parentRunId}（SBIを実装したrun。SBI snapshotとHarness-Run trailerはこのrunのまま）`,
+      `- 旧tested SHA: ${summary.reverify.previousTestedSha}`, `- baseline: ${summary.baselineSha}`] : []),
     `- Verifier: ${last?.verification?.status ?? '-'}`, ...checks,
     `- Security: ${last?.security?.status ?? '-'}（Security Verifier: ${last?.securityVerification?.status ?? '-'}）`,
     `- Risk: LEVEL ${summary.risk?.level ?? '-'}（${(summary.risk?.reasons ?? []).join(', ') || '-'}）`,

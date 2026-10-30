@@ -40,8 +40,8 @@ export async function readSbiFiles(root, files) {
   return result;
 }
 
-export async function runLinks(root, base) {
-  const { stdout } = await git(root, ['log', '--format=%(trailers:only,unfold)%x00', `${base}..HEAD`]);
+export async function runLinks(root, base, head = 'HEAD') {
+  const { stdout } = await git(root, ['log', '--format=%(trailers:only,unfold)%x00', `${base}..${head}`]);
   const value = (block, key) => new RegExp(`^${key}: *(\\S+)$`, 'm').exec(block)?.[1];
   return stdout.split('\0').map(block => ({ runId: value(block, 'Harness-Run'), url: value(block, 'SBI-Issue') })).filter(link => link.runId && link.url);
 }
