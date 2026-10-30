@@ -72,6 +72,14 @@ describe('Maestro Evidence adapter', () => {
       await adapter.read({ sbi: sbi(), pull });
       assert.deepEqual(state.calls.at(-1), ['download', 2]);
     });
+    it('when artifact IDs do not follow creation order, as GitHub returned for a re-run, then the creation time decides', async () => {
+      const { state, adapter } = world({ artifacts: [
+        { id: 12925670351, name: 'maestro-results', expired: false, created_at: '2026-10-30T00:00:54Z' },
+        { id: 12924608890, name: 'maestro-results', expired: false, created_at: '2026-10-30T00:07:44Z' },
+      ] });
+      await adapter.read({ sbi: sbi(), pull });
+      assert.deepEqual(state.calls.at(-1), ['download', 12924608890]);
+    });
     it('when that artifact expired then reading fails closed instead of falling back to an older one', async () => {
       const { state, adapter } = world({ artifacts: artifacts.map(a => a.id === 2 ? { ...a, expired: true } : a) });
       await assert.rejects(adapter.read({ sbi: sbi(), pull }), /期限切れ/);
