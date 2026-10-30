@@ -11,6 +11,8 @@ import { relativePath } from './schemas.mjs';
 import { describeImpact, describeJudge, loadImpact, runCompletionJudge, runVerifier } from './impact.mjs';
 import { runPushGate } from './push-gate.mjs';
 import { describeSbiSource } from './sbi-source.mjs';
+import { postSpecApproval } from './spec-approval.mjs';
+import { githubCli } from './planner-github.mjs';
 import { appendFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 const root = fileURLToPath(new URL('../../', import.meta.url));
@@ -18,6 +20,8 @@ const root = fileURLToPath(new URL('../../', import.meta.url));
 const usage = `Usage:
 User-facing:
   pnpm planner:sbi PBI_URL [--provider codex]        PBIをSBI Issueへ分割する（既定はClaude）
+  pnpm harness:spec-approve SBI_URL [--decision approve|revoke]
+                                                     SBI Issueの仕様（受け入れ要件・Gherkin・範囲・Risk）を承認する（#147）
   pnpm harness:run SBI_URL [--provider codex] [--full]
                                                      readyのSBI Issueから実装・ローカル検証・PR作成まで進める（既定はClaude）
   pnpm harness:approve SBI_URL --phase gate [--decision approve|revoke|request-changes]
@@ -46,10 +50,10 @@ async function printVerifier({ root: workspace = root, base, all, id }) {
 await withEvidenceProtection(root, async () => {
 try {
   const [command, ...args] = process.argv.slice(2);
-  const allowed = { check: ['--sbi'], demo: ['--sbi', '--full'], run: ['--provider', '--sbi', '--full'], plan: ['--provider'], 'api-schema': ['--provider'], 'api-schema-approve': ['--decision'], 'api-schema-status': [], 'api-mock': ['--dynamic'], 'api-docs': ['--port'], cleanup:['--run'], impact: ['--base', '--all'], verify: ['--base', '--all', '--verifier'], judge: ['--base', '--all'], 'push-gate': [], resume: ['--run'], pr: ['--run'], approve: ['--run', '--phase', '--decision'], export: ['--run','--out'] };
+  const allowed = { check: ['--sbi'], demo: ['--sbi', '--full'], run: ['--provider', '--sbi', '--full'], plan: ['--provider'], 'spec-approve': ['--decision'], 'api-schema': ['--provider'], 'api-schema-approve': ['--decision'], 'api-schema-status': [], 'api-mock': ['--dynamic'], 'api-docs': ['--port'], cleanup:['--run'], impact: ['--base', '--all'], verify: ['--base', '--all', '--verifier'], judge: ['--base', '--all'], 'push-gate': [], resume: ['--run'], pr: ['--run'], approve: ['--run', '--phase', '--decision'], export: ['--run','--out'] };
   if (!allowed[command]) throw new Error(usage);
   const options = {};
-  const positional = ['plan', 'api-schema', 'api-schema-approve', 'api-schema-status', 'api-mock', 'run', 'approve'].includes(command) && args.length && !args[0].startsWith('--') ? args.shift() : null;
+  const positional = ['plan', 'spec-approve', 'api-schema', 'api-schema-approve', 'api-schema-status', 'api-mock', 'run', 'approve'].includes(command) && args.length && !args[0].startsWith('--') ? args.shift() : null;
   for (let i = 0; i < args.length; i += 2) {
     if (['--full', '--dynamic', '--all'].includes(args[i]) && allowed[command].includes(args[i]) && !options[args[i]]) { options[args[i]]=true; i--; continue; }
     if (!allowed[command].includes(args[i]) || !args[i + 1] || args[i + 1].startsWith('--') || options[args[i]]) throw new Error(`Invalid arguments for ${command}`);
@@ -63,6 +67,10 @@ try {
     if (!positional) throw new Error('plan requires a GitHub Issue URL: plan https://github.com/<owner>/<repo>/issues/<number>');
     const plan = await planIssue({ root, issueUrl: positional, provider: options['--provider'] });
     console.log(`Evidence: ${plan.planDir}/summary.json`);
+  } else if (command === 'spec-approve') {
+    if (!positional) throw new Error('spec-approve requires an SBI Issue URL: spec-approve https://github.com/<owner>/<repo>/issues/<number>');
+    const approval = await postSpecApproval({ issueUrl: positional, decision: options['--decision'] ?? 'approve', github: githubCli });
+    console.log(`Spec ${options['--decision'] === 'revoke' ? 'approval revoked' : 'approved'}: spec digest ${approval.digest} (${approval.comment})`);
   } else if (command === 'api-schema') {
     if (!positional) throw new Error('api-schema requires a GitHub Issue URL: api-schema https://github.com/<owner>/<repo>/issues/<number>');
     const proposal = await planApiSchema({ root, issueUrl: positional, provider: options['--provider'] });
