@@ -16,6 +16,7 @@ jobs:
       required_verifiers: ${{ steps.impact.outputs.required_verifiers }}
       full_gate: ${{ steps.impact.outputs.full_gate }}
       maestro: ${{ steps.impact.outputs.maestro }}
+      head_sha: ${{ steps.impact.outputs.head_sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -113,7 +114,8 @@ jobs:
   # verifiers (docs/security/threat-model.md). So it gets no secret, reads the repository only and never writes the shared cache from a PR.
   maestro:
     needs: impact
-    if: needs.impact.outputs.maestro != '[]' || github.event_name == 'push'
+    # An impact without the maestro output comes from a head older than this workflow; the harness job fails it below.
+    if: needs.impact.outputs.maestro != '' && (needs.impact.outputs.maestro != '[]' || github.event_name == 'push')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -227,4 +229,12 @@ jobs:
           HARNESS_MAESTRO_RESULTS: .maestro-ci/results
           HARNESS_ACCEPTANCE_RESULTS: ${{ runner.temp }}/acceptance-results
           HARNESS_PULL_REQUEST: ${{ github.event.pull_request.number }}
+          HARNESS_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           GH_TOKEN: ${{ github.token }}
+      # A pull_request run reads this workflow from the merge ref but the Harness from the PR head, so a head branched before a job was added
+      # judges without knowing it (#163: maestro failed and the Judge passed). Whatever the head's Judge says, a failed or cancelled job, or an
+      # impact without the maestro output, fails the required check.
+      - if: always() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || needs.impact.outputs.maestro == '')
+        run: |
+          echo "::error::A job failed or was cancelled, or the impact of this head reported no maestro output; merge main into the PR if its Harness is older than this workflow."
+          exit 1

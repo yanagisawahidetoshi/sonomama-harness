@@ -104,7 +104,11 @@ export function judgeCi({ impact, needs, acceptance, security, source, granulari
   expect('harness-test', impact.fullGate);
   expect('harness-demo', impact.fullGate);
   // The maestro job and its result files; judgeMaestro adds nothing when no lane is required.
-  reasons.push(...judgeMaestro({ lanes: impact.maestro ?? [], needs, results: maestro?.results, headSha: maestro?.headSha ?? '' }));
+  const lanes = impact.maestro ?? [];
+  reasons.push(...judgeMaestro({ lanes, needs, results: maestro?.results, headSha: maestro?.headSha ?? '' }));
+  // Any other job the workflow ran (maestro without a lane, a job this Judge does not know yet) may succeed or be skipped, never fail (#163).
+  const judged = new Set(['impact', 'verifiers', 'harness-test', 'harness-demo', ...lanes.length ? ['maestro'] : []]);
+  for (const [job, value] of Object.entries(needs)) if (!judged.has(job) && !['success', 'skipped'].includes(value?.result)) reasons.push(`${job}: ${value?.result ?? 'missing'}`);
   if (acceptance.status !== 'PASS') reasons.push(...(acceptance.missing.length ? [`acceptance missing: ${acceptance.missing.join(', ')}`] : ['acceptance: FAIL']));
   if (!security) reasons.push('security: not evaluated');
   else if (!securityPassed(security)) {
@@ -112,6 +116,17 @@ export function judgeCi({ impact, needs, acceptance, security, source, granulari
     reasons.push(...(failed.length ? failed.map(([id, status]) => `security: ${id} ${status}`) : ['security: FAIL']));
   }
   return { status: reasons.length ? 'FAIL' : 'PASS', reasons };
+}
+
+// The Judge, the impact job and the maestro results must all be about the head the workflow checked out; anything unknown fails closed.
+export function judgeTestedCommit({ headSha, expectedHeadSha, needs }) {
+  const short = sha => String(sha ?? 'missing').slice(0, 12);
+  if (!expectedHeadSha) return ['head sha: not provided'];
+  const reasons = [];
+  if (headSha !== expectedHeadSha) reasons.push(`head sha: checkout ${short(headSha)} is not the head ${short(expectedHeadSha)}`);
+  const analyzed = needs.impact?.outputs?.head_sha;
+  if (analyzed !== expectedHeadSha) reasons.push(`impact: analyzed ${short(analyzed)}, not ${short(expectedHeadSha)}`);
+  return reasons;
 }
 
 // The same diff the Harness run classifies (with added and deleted lines), taken from the merge base like base...HEAD.
@@ -176,7 +191,8 @@ async function changedContent(root, files) {
 
 // Completion Judge: trusted acceptance of every changed SBI and the Harness Security Policy run here. Production changes must be backed by either
 // a ready SBI Run snapshot or, for engineering/maintenance work, a ready Engineering Issue linked from a commit trailer.
-export async function runCompletionJudge({ root, base, all = false, needs, repository = process.env.GITHUB_REPOSITORY, pullNumber, github = githubCli, githubPr, maestroResults, acceptanceResults = join(root, acceptanceResultsDirectory) }) {
+// expectedHeadSha is the head the workflow checked out; the CLI always passes it, so a missing value fails there.
+export async function runCompletionJudge({ root, base, all = false, needs, repository = process.env.GITHUB_REPOSITORY, pullNumber, github = githubCli, githubPr, maestroResults, expectedHeadSha, acceptanceResults = join(root, acceptanceResultsDirectory) }) {
   const { config, files, sbis, snapshots, impact } = await loadImpact({ root, base, all });
   const headSha = (await git(root, ['rev-parse', 'HEAD'])).stdout.trim();
   // The Issue is read once for the generated acceptance and the SBI source check, so both judge the same Issue.
@@ -227,7 +243,10 @@ export async function runCompletionJudge({ root, base, all = false, needs, repos
     .map(s => ({ sbi: s.snapshot.source.url, ...judgeChangedFileCount({ estimatedFiles: s.snapshot.sbi.estimatedFiles, changedPaths }) }));
   // The maestro job uploads one result file per lane; the workflow downloads them into maestroResults before the Judge runs.
   const maestro = { headSha, results: maestroResults && impact.maestro.length ? await readMaestroResults(maestroResults, impact.maestro) : {} };
-  return { impact, acceptance, checks, security, source, granularity, migrationExceptions, maestro, ...judgeCi({ impact, needs, acceptance, security, source, granularity, migrationExceptions, maestro }) };
+  const judged = judgeCi({ impact, needs, acceptance, security, source, granularity, migrationExceptions, maestro });
+  const tested = expectedHeadSha === undefined ? [] : judgeTestedCommit({ headSha, expectedHeadSha, needs });
+  const reasons = [...tested, ...judged.reasons];
+  return { impact, acceptance, checks, security, source, granularity, migrationExceptions, maestro, status: reasons.length ? 'FAIL' : 'PASS', reasons };
 }
 
 export function describeJudge({ needs, acceptance, checks, security, granularity = [], migrationExceptions }) {
