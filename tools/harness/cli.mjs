@@ -20,13 +20,13 @@ User-facing:
   pnpm planner:sbi PBI_URL [--provider codex]        PBIをSBI Issueへ分割する（既定はClaude）
   pnpm harness:run SBI_URL [--provider codex] [--full]
                                                      readyのSBI Issueから実装・ローカル検証・PR作成まで進める（既定はClaude）
-  pnpm harness:approve SBI_URL --phase gate|design [--decision approve|revoke|request-changes]
+  pnpm harness:approve SBI_URL --phase gate [--decision approve|revoke|request-changes]
                                                      Human Gateを承認し、そのままrunを再開してPRを作成する
 API design (API契約を設計するときだけ):
   OpenAPI SchemaはPlannerが作るSchema SBI（packages/api-schemaだけを変える）として pnpm harness:run SBI_URL で作る
   pnpm api:mock ISSUE_URL [--dynamic] | pnpm api:docs [--port PORT]
 Internal/Maintenance (CI・障害復旧・Harness保守用):
-  pnpm harness:resume --run RUN_ID | pnpm harness:pr --run RUN_ID | pnpm harness:approve --run RUN_ID --phase gate|design|merge
+  pnpm harness:resume --run RUN_ID | pnpm harness:pr --run RUN_ID | pnpm harness:approve --run RUN_ID --phase gate|merge
   pnpm harness:run --sbi PATH [--provider fake|codex|claude]（Harness自己テスト・fixture用のSBI JSON）
   pnpm harness:impact --base REF|--all | pnpm harness:verify --verifier ID --base REF|--all | pnpm harness:judge --base REF|--all
   pnpm harness:check | pnpm harness:test | pnpm harness:demo [--full] | pnpm harness:push-gate
@@ -144,11 +144,11 @@ try {
     const output = await exportRun({root,runId:options['--run'],out:options['--out']});
     console.log(`Review ZIP: ${output.path} (${output.included} files; ${output.excluded} excluded)`);
   } else if (command === 'approve') {
-    if (Boolean(options['--run']) === Boolean(positional) || !['gate', 'design', 'merge'].includes(options['--phase'])) throw new Error('approve requires SBI_URL or --run ID, and --phase gate|design|merge');
+    if (Boolean(options['--run']) === Boolean(positional) || !['gate', 'merge'].includes(options['--phase'])) throw new Error('approve requires SBI_URL or --run ID, and --phase gate|merge');
     const decisions = { approve: 'APPROVE', revoke: 'REVOKE', 'request-changes': 'REQUEST_CHANGES' };
     const decision = decisions[options['--decision'] || 'approve'];
     if (!decision) throw new Error('Unknown approval decision');
-    const run = await approveRun({ root, runId: options['--run'], issueUrl: positional, purpose: options['--phase'] === 'design' ? 'design-approval' : options['--phase'] === 'gate' ? 'implementation-gate' : 'merge', decision });
+    const run = await approveRun({ root, runId: options['--run'], issueUrl: positional, purpose: options['--phase'] === 'gate' ? 'implementation-gate' : 'merge', decision });
     console.log(`Recorded ${decision}; run ${run.id}: ${run.status}`);
     printPullRequest(run);
     console.log(`Evidence: ${run.runDir}/summary.json`);
@@ -158,7 +158,7 @@ try {
     const run = command === 'resume' ? await resumeRun({ root, runId: options['--run'] })
       : await runHarness({ root, provider: command === 'demo' ? 'fake' : options['--provider'], sbiPath: options['--sbi'], issueUrl: positional, full:options['--full'] === true, publish: command === 'run' });
     printPullRequest(run);
-    if (run.gate?.state === 'WAITING_FOR_HUMAN_GATE' || run.designApproval?.state === 'WAITING_FOR_DESIGN_APPROVAL') console.log(`Human Gate: pnpm harness:approve ${run.sbiIssue?.url ?? `--run ${run.id}`} --phase ${run.designApproval?.state === 'WAITING_FOR_DESIGN_APPROVAL' ? 'design' : 'gate'}`);
+    if (run.gate?.state === 'WAITING_FOR_HUMAN_GATE') console.log(`Human Gate: pnpm harness:approve ${run.sbiIssue?.url ?? `--run ${run.id}`} --phase gate`);
     console.log(`Evidence: ${run.runDir}/summary.json`);
     process.exitCode = runExitCode(run);
   }

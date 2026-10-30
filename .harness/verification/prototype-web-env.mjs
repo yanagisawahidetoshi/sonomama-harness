@@ -83,7 +83,7 @@ try {
       const readme = read('prototypes/web/README.md');
       for (const term of ['本番コードではない', 'pnpm install', 'pnpm --filter prototype-web dev', 'pnpm --filter prototype-web storybook',
         'pnpm --filter prototype-web check', 'pnpm --filter prototype-web typecheck', '.stories.tsx', 'mock', 'secret',
-        'Design Approval', 'Production SBI', 'apps/admin']) assert.ok(readme.includes(term), term);
+        'Production SBI', 'SBI Issue', 'apps/admin']) assert.ok(readme.includes(term), term);
     }],
   ];
   const acceptance = [];

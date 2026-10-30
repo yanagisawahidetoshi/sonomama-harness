@@ -15,6 +15,6 @@ export function classifyLane(files, sbi, rawPolicy = defaults) {
   const promoted = Boolean(sbi.promotion);
   return { name: prototype && !sensitive && !promoted ? 'prototype' : 'production',
     qualityGates: prototype && !sensitive && !promoted ? policy.prototypeGates : policy.productionGates,
-    requiresSecurityGate:sensitive, requiresDesignApproval:promoted, designApproved:false,
+    requiresSecurityGate:sensitive,
     reasons:[prototype ? 'prototype-paths' : 'production-or-unknown-paths', ...(sensitive?['security-sensitive-scope']:[]),...(promoted?['prototype-promotion']:[])] };
 }

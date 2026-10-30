@@ -41,7 +41,6 @@ export function healthMetrics(summary) {
       verification: count(last?.securityVerification?.checks),
     },
     approvals: {
-      design: { required: summary.designApproval?.required === true, state: summary.designApproval?.state ?? 'NOT_REQUIRED' },
       implementationGate: { required: summary.gate?.required === true, state: summary.gate?.state ?? 'NOT_REQUIRED' },
       merge: { required: merge.requiredApprovals ?? null, valid: merge.validApprovals ?? null, requestedChanges: merge.reasons?.includes('human_requested_changes') === true },
     },

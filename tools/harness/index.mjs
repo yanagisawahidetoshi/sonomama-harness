@@ -34,7 +34,7 @@ function controller(root, summary, quiet) {
     await saveRun(root, summary);
   };
   const transition = async (status, detail = '', phase = 'execution') => {
-    assertState(phase === 'implementation-gate' ? 'gate' : phase === 'design-approval' ? 'design' : phase, status);
+    assertState(phase === 'implementation-gate' ? 'gate' : phase, status);
     if (phase === 'execution') summary.executionStatus = status;
     if (phase === 'merge') summary.merge = { ...summary.merge, state: status, decision: status, autoMergeEligible: status === 'MERGE_ALLOWED' && summary.merge.autoMergeEligible === true };
     await record(status, detail, phase);
@@ -62,24 +62,17 @@ function metadata(sbi) {
   return { id: sbi.id, title: sbi.title, description: sbi.description, risks: sbi.risks, acceptanceCriteria: sbi.acceptanceCriteria, securityImpact: sbi.securityImpact, requiredSecurityRules: sbi.requiredSecurityRules, requiredVerifiers: sbi.requiredVerifiers, minimumRiskLevel: sbi.minimumRiskLevel };
 }
 async function resolveGate(root, summary) {
-  if (!summary.gate.required && !summary.designApproval?.required) return true;
+  if (!summary.gate.required) return true;
   const records = await authenticatedRecords(root, summary.id);
-  if (summary.designApproval?.required) {
-    const design = validHumanApprovals(records, { purpose:'design-approval', headSha:summary.baselineSha, contextDigest:summary.designApproval.contextDigest });
-    summary.designApproval.state = design.rejected ? 'REJECTED' : design.approvals.length ? 'APPROVED' : 'WAITING_FOR_DESIGN_APPROVAL';
-    summary.lane.designApproved = summary.designApproval.state === 'APPROVED';
-  }
-  if (summary.gate.required) {
+  {
     const { approvals, rejected } = validHumanApprovals(records, { purpose: 'implementation-gate', headSha: summary.gate.headSha, contextDigest: summary.gate.contextDigest });
     summary.gate.state = rejected ? 'REJECTED' : approvals.length ? 'APPROVED' : 'WAITING_FOR_HUMAN_GATE';
     summary.gate.reviewers = approvals.map(a => a.reviewer);
     summary.gate.approvalState = summary.gate.state === 'WAITING_FOR_HUMAN_GATE' ? 'WAITING_FOR_HUMAN_APPROVAL' : summary.gate.state;
   }
   const { directory } = runPaths(root,summary.id);
-  await json(join(directory,'design-approval.json'),summary.designApproval);
   await json(join(directory,'human-gate.json'),summary.gate);
-  return (!summary.designApproval?.required || summary.designApproval.state === 'APPROVED')
-    && (!summary.gate.required || summary.gate.state === 'APPROVED');
+  return summary.gate.state === 'APPROVED';
 }
 // PR mode reads GitHub on every assessment. A read failure blocks; it never reuses an earlier GitHub state or escalates the run.
 async function readGitHub(root, summary, inputs, github) {
@@ -153,14 +146,11 @@ async function executeLoop({ root, summary, inputs, quiet, agent = runAgent, rev
   const { directory, workspace } = runPaths(root, summary.id);
   const { transition, escalate } = controller(root, summary, quiet);
   if (!await resolveGate(root, summary)) {
-    summary.reason = summary.gate.reason || 'Human Gate: Design Approval for prototype promotion';
-    await json(join(directory, 'design-approval.json'), summary.designApproval);
+    summary.reason = summary.gate.reason;
     await json(join(directory, 'human-gate.json'), summary.gate);
-    const designWaiting = summary.designApproval?.required && summary.designApproval.state !== 'APPROVED';
-    await transition(designWaiting ? summary.designApproval.state : summary.gate.state, summary.reason, designWaiting ? 'design-approval' : 'implementation-gate');
+    await transition(summary.gate.state, summary.reason, 'implementation-gate');
     return summary;
   }
-  await json(join(directory, 'design-approval.json'), summary.designApproval);
   await json(join(directory, 'human-gate.json'), summary.gate);
   let feedback = null;
   for (let iteration = 1; iteration <= config.maxIterations; iteration++) {
@@ -316,7 +306,6 @@ async function runProtected({ root, provider, sbiPath, issueUrl, quiet = false, 
     return {path,status:'M',binary:false,added,excludedSecret:excludedSources.some(f=>f.path===path)};
   })), ...sbi.allowedDirs.map(path => ({path,status:'M',binary:false,added:'',excludedSecret:false}))];
   summary.lane = classifyLane(preflightFiles,sbi,lanePolicy);
-  summary.designApproval = {required:summary.lane.requiresDesignApproval,state:summary.lane.requiresDesignApproval?'WAITING_FOR_DESIGN_APPROVAL':'NOT_REQUIRED',contextDigest:digest({inputsDigest:summary.inputsDigest,baselineSha,promotion:sbi.promotion || null})};
   await json(join(directory,'lane-assessment.json'),summary.lane);
   summary.securityAssessment = classifySecurity({files:preflightFiles,sbi},securityPolicy);
   await json(join(directory,'security-assessment.json'),{...summary.securityAssessment,phase:'preflight',headSha:baselineSha});
@@ -325,12 +314,11 @@ async function runProtected({ root, provider, sbiPath, issueUrl, quiet = false, 
   const preflight = assessRisk({ files: preflightFiles, metadata: metadata(sbi), humanGate: Boolean(gateReason), securityAssessment:summary.securityAssessment, lane:summary.lane }, riskPolicy);
   summary.riskPreflight = preflight;
   if (gateReason || preflight.level === 3) {
-    summary.gate = { required: true, state: 'WAITING_FOR_HUMAN_GATE', approvalState:'WAITING_FOR_HUMAN_APPROVAL', reason: gateReason || (summary.designApproval.required ? 'Human Gate: Design Approval for prototype promotion' : null) || `Human Gate: ${preflight.reasons.join(', ')}`,
+    summary.gate = { required: true, state: 'WAITING_FOR_HUMAN_GATE', approvalState:'WAITING_FOR_HUMAN_APPROVAL', reason: gateReason || `Human Gate: ${preflight.reasons.join(', ')}`,
       headSha: baselineSha, contextDigest: digest({ inputsDigest: summary.inputsDigest, baselineSha, allowedFiles: sbi.allowedFiles, allowedDirs: sbi.allowedDirs, reasons: preflight.reasons, securityAssessment:summary.securityAssessment }) };
-    summary.reason = summary.gate.reason || 'Human Gate: Design Approval for prototype promotion';
+    summary.reason = summary.gate.reason;
     await json(join(directory, 'risk-preflight.json'), preflight);
   }
-  await json(join(directory, 'design-approval.json'), summary.designApproval);
   await json(join(directory, 'risk-assessment.json'), { ...preflight, phase: 'preflight', headSha: baselineSha });
   await json(join(directory, 'approvals.json'), { headSha: baselineSha, approvals: [], source: 'authenticated local ledger' });
   await json(join(directory, 'merge-decision.json'), summary.merge);
@@ -401,7 +389,7 @@ export async function runHarness(options) {
 // A run that could not open its PR throws, and the CLI exits 1.
 export function runExitCode(run) {
   if (run.status === 'MERGE_ALLOWED') return 0;
-  if (run.executionStatus === 'PENDING') return run.gate?.state === 'WAITING_FOR_HUMAN_GATE' || run.designApproval?.state === 'WAITING_FOR_DESIGN_APPROVAL' ? 0 : 2;
+  if (run.executionStatus === 'PENDING') return run.gate?.state === 'WAITING_FOR_HUMAN_GATE' ? 0 : 2;
   if (run.executionStatus !== 'DONE' || (run.publish && !run.pullRequest)) return 2;
   const waitingForCi = Boolean(run.pullRequest) && run.status === 'BLOCKED' && run.merge?.reasons?.length > 0 && run.merge.reasons.every(r => r === 'required_ci_not_passed');
   return run.status === 'WAITING_FOR_HUMAN_REVIEW' || waitingForCi ? 0 : 2;
