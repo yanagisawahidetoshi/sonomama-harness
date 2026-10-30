@@ -239,6 +239,19 @@ export const pbiAcceptanceRecordSchema = z.strictObject({
   decision: z.enum(['APPROVE', 'REQUEST_CHANGES', 'REVOKE']), decidedAt: z.iso.datetime(),
   evidenceDigest: z.string().regex(/^[0-9a-f]{64}$/), signature: text,
 });
+// What harness:pbi-accept verified from the raw CI artifacts at APPROVE. It keeps the PBI DONE after the artifacts expire, and only while the
+// approved plan, the SBI composition and every PR, head and merge commit are still the same.
+const nullableSha = z.string().regex(/^[0-9a-f]{40,64}$/).nullable();
+export const pbiEvidenceManifestSchema = z.strictObject({
+  id: text, pbiUrl: z.url(), evidenceDigest: z.string().regex(/^[0-9a-f]{64}$/), recordedAt: z.iso.datetime(),
+  plan: z.strictObject({ digest: z.string().regex(/^[0-9a-f]{64}$/), revision: z.number().int().positive(), approvalKey: z.string().regex(/^[0-9a-f]{64}$/) }),
+  sbis: z.array(z.strictObject({
+    id: text, number: z.number().int().positive(), kind: z.enum(sbiKinds), pullRequest: z.number().int().positive().nullable(), headSha: nullableSha, mergeCommitSha: nullableSha,
+    requiredChecks: z.array(z.strictObject({ name: text, status: text })), e2e: z.strictObject({ status: text, api: z.enum(['mock', 'real']) }).nullable(),
+    lane: z.enum(['mock', 'real']).nullable(), resultDigest: z.string().regex(/^[0-9a-f]{64}$/).nullable(), workflowRunId: z.number().int().positive().nullable(), artifactId: z.number().int().positive().nullable(),
+  })).min(1),
+  signature: text,
+});
 export const apiSchemaGenerationRecordSchema = z.strictObject({
   purpose: z.literal('api-schema-generation'), issueUrl: z.url(), runId: text, required: z.union([z.literal(1), z.literal(2)]),
   files: z.strictObject({ 'openapi.yaml': z.string().regex(/^[0-9a-f]{64}$/), 'proposal.json': z.string().regex(/^[0-9a-f]{64}$/), 'summary.md': z.string().regex(/^[0-9a-f]{64}$/) }),

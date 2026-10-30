@@ -83,8 +83,11 @@ async function laneResult({ ref, lane, head, actions }) {
   const before = artifact => !check.started_at || (artifact.created_at && artifact.created_at <= check.started_at);
   const artifact = (await actions.artifacts(ref, runs[0].id)).filter(a => a.name === 'maestro-results' && before(a))
     .sort((a, b) => String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')) || b.id - a.id)[0];
-  if (!artifact || artifact.expired) throw new Error(`workflow run ${runs[0].id} のmaestro-results artifactが${artifact ? '期限切れ' : 'ありません'}`);
-  const files = await actions.download(ref, artifact.id);
+  // Only a gone artifact lets a signed Evidence manifest stand in (pbi-status.mjs); a result that was read and is wrong never does.
+  const gone = message => Object.assign(new Error(message), { artifactUnavailable: true });
+  if (!artifact || artifact.expired) throw gone(`workflow run ${runs[0].id} のmaestro-results artifactが${artifact ? '期限切れ' : 'ありません'}`);
+  let files;
+  try { files = await actions.download(ref, artifact.id); } catch (error) { throw gone(error.message); }
   const name = `${lane}.json`;
   if (typeof files[name] !== 'string') throw new Error(`maestro-results に ${name} がありません`);
   let parsed;
@@ -97,7 +100,8 @@ async function laneResult({ ref, lane, head, actions }) {
   if (!result.flows.length) throw new Error(`${name} で実行したflowがありません`);
   if (!result.artifacts.length) throw new Error(`${name} にログ・スクリーンショットのartifactがありません`);
   const passed = result.status === 'PASS' && result.flows.every(f => f.status === 'PASS');
-  return { e2e: { status: passed ? 'PASS' : 'FAIL', api: lane }, evidenceDigest: createHash('sha256').update(files[name]).digest('hex') };
+  const digest = createHash('sha256').update(files[name]).digest('hex');
+  return { e2e: { status: passed ? 'PASS' : 'FAIL', api: lane }, evidenceDigest: digest, source: { workflowRunId: runs[0].id, artifactId: artifact.id, lane, resultDigest: digest } };
 }
 
 export function maestroEvidence({ ref, github = githubCli, actions = githubActionsCli }) {

@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { json, exists, readJson } from './io.mjs';
 import { signingKey, sign, equal, localHumanIdentity } from './human-approvals.mjs';
-import { pbiAcceptanceRecordSchema } from './schemas.mjs';
+import { pbiAcceptanceRecordSchema, pbiEvidenceManifestSchema } from './schemas.mjs';
 import { parseIssueUrl } from './planner.mjs';
 
 // PBI Human Acceptance is a signed record outside Git and the agent workspace, bound to the PBI and the evidence digest the human confirmed.
@@ -38,5 +38,34 @@ export async function recordPbiAcceptance({ root, pbiUrl, evidenceDigest, decisi
   records.push(record);
   await mkdir(join(root, '.harness/state/human/pbi-acceptance'), { recursive: true, mode: 0o700 });
   await json(pbiAcceptanceLedgerPath(root, ref), { records, signature: sign(key, records) });
+  return record;
+}
+
+// The signed Evidence manifests of the PBI, written only by harness:pbi-accept after it verified the raw CI artifacts for an APPROVE.
+export const pbiEvidenceLedgerPath = (root, ref) => join(root, '.harness/state/human/pbi-evidence', `${ref.owner}__${ref.repo}__${ref.number}.json`);
+export async function evidenceManifests(root, pbiUrl) {
+  const ref = parseIssueUrl(pbiUrl), path = pbiEvidenceLedgerPath(root, ref);
+  if (!await exists(path)) return [];
+  const key = await signingKey(root);
+  const envelope = await readJson(path);
+  if (!equal(envelope.signature, sign(key, envelope.manifests))) throw new Error('PBI evidence manifest ledger signature invalid');
+  return envelope.manifests.map(raw => {
+    const manifest = pbiEvidenceManifestSchema.parse(raw);
+    const { signature, ...body } = raw;
+    if (manifest.pbiUrl !== ref.url || !equal(signature, sign(key, body))) throw new Error('PBI evidence manifest signature invalid');
+    return raw;
+  });
+}
+export async function recordEvidenceManifest({ root, pbiUrl, manifest }) {
+  const ref = parseIssueUrl(pbiUrl);
+  const key = await signingKey(root, true);
+  const manifests = await evidenceManifests(root, ref.url);
+  const body = { id: randomUUID(), pbiUrl: ref.url, recordedAt: new Date().toISOString(), ...manifest };
+  // The signature covers the body as written; the schema only validates it, so its key order never changes what was signed.
+  const record = { ...body, signature: sign(key, body) };
+  pbiEvidenceManifestSchema.parse(record);
+  manifests.push(record);
+  await mkdir(join(root, '.harness/state/human/pbi-evidence'), { recursive: true, mode: 0o700 });
+  await json(pbiEvidenceLedgerPath(root, ref), { manifests, signature: sign(key, manifests) });
   return record;
 }
