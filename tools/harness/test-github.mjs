@@ -23,7 +23,7 @@ export const githubMock = defaults => async (state, test) => {
         for (const [name, text] of Object.entries(files)) fs.writeFileSync(path.join(out, name), text);
         process.exit(0);
       }
-      if (args[0] === 'api' && args[1] === 'graphql') {
+      if (args[0] === 'api' && args.includes('graphql')) {
         const { variables } = JSON.parse(input), edits = (state.issueEdits || {})[variables.number] || [];
         const start = variables.after ? Number(variables.after) : 0, nodes = edits.slice(start, start + 100);
         fs.appendFileSync(path.join(dir, 'calls.jsonl'), '');

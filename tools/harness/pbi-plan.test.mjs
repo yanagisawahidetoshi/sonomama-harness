@@ -193,7 +193,7 @@ describe('GitHub adapter for the PBI body history', () => {
       { editedAt: '2026-10-30T02:00:00Z', deletedAt: null, diff: 'v3' }, { editedAt: '2026-10-30T01:00:00Z', deletedAt: '2026-10-30T03:00:00Z', diff: null }, { editedAt: '2026-10-30T00:00:00Z', deletedAt: null, diff: 'v1' },
     ] } }, async github => {
       assert.deepEqual(await githubCli.bodyVersions(pbi), [{ body: 'v1', deletedAt: null }, { body: null, deletedAt: '2026-10-30T03:00:00Z' }, { body: 'v3', deletedAt: null }]);
-      assert.ok((await github.calls()).some(c => c.args[1] === 'graphql' && JSON.parse(c.input).variables.number === 8));
+      assert.ok((await github.calls()).some(c => c.args.includes('graphql') && JSON.parse(c.input).variables.number === 8));
     }));
   });
 });
