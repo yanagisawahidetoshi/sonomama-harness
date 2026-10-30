@@ -136,7 +136,8 @@ async function planProtected({ root, issueUrl, provider, quiet, agent, github, s
     }
     // The complete SBI set goes into the PBI body as ## SBI構成; a human approves it once with harness:pbi-plan-approve.
     const plan = planOf(ref.number, summary.created.map(c => { const sbi = response.sbis.find(s => s.id === c.sbiId); return { id: c.sbiId, number: c.number, kind: sbi.kind, dependsOn: sbi.dependsOn }; }));
-    await writePlanSection({ ref, issue, plan, github });
+    // Re-read the PBI just before writing: a human may have edited it while the provider ran, and that edit must not be overwritten.
+    await writePlanSection({ ref, issue: await github.fetchIssue(ref), plan, github });
     summary.planDigest = planDigest(plan); await save();
     const comment = renderGeneratedComment(summary.created, pbi);
     if (hasSecret(comment)) throw new Error('Secret/Credential detected in PBI comment; rejected before any GitHub write');
