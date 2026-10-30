@@ -8,7 +8,7 @@ export const githubMock = defaults => async (state, test) => {
   const dir = await mkdtemp(join(tmpdir(), 'harness-gh-'));
   const previous = { PATH: process.env.PATH, GH_MOCK_DIR: process.env.GH_MOCK_DIR, GITHUB_STEP_SUMMARY: process.env.GITHUB_STEP_SUMMARY };
   try {
-    await writeFile(join(dir, 'state.json'), JSON.stringify({ labels: [], created: [], comments: [], failOnCreate: null, pulls: [], reviews: {}, checkRuns: {}, rules: [], permissions: {}, blockedBy: {}, viewer: 'harness-operator', bare: null, ...defaults, ...state }));
+    await writeFile(join(dir, 'state.json'), JSON.stringify({ labels: [], created: [], comments: [], failOnCreate: null, pulls: [], reviews: {}, checkRuns: {}, rules: [], permissions: {}, blockedBy: {}, contents: {}, workflowRuns: {}, runArtifacts: {}, artifactFiles: {}, viewer: 'harness-operator', bare: null, ...defaults, ...state }));
     await writeFile(join(dir, 'gh'), `#!${process.execPath}
       const fs = require('node:fs'), path = require('node:path');
       const dir = process.env.GH_MOCK_DIR, file = path.join(dir, 'state.json');
@@ -16,6 +16,13 @@ export const githubMock = defaults => async (state, test) => {
       const args = process.argv.slice(2);
       const input = args.includes('--input') ? fs.readFileSync(0, 'utf8') : '';
       fs.appendFileSync(path.join(dir, 'calls.jsonl'), JSON.stringify({ args, input }) + '\\n');
+      if (args[0] === 'run' && args[1] === 'download') {
+        const files = (state.artifactFiles[args[2]] || {})[args[args.indexOf('-n') + 1]];
+        if (!files || args[args.indexOf('-R') + 1] !== 'acme/app') { process.stderr.write('no artifact matches\n'); process.exit(1); }
+        const out = args[args.indexOf('-D') + 1]; fs.mkdirSync(out, { recursive: true });
+        for (const [name, text] of Object.entries(files)) fs.writeFileSync(path.join(out, name), text);
+        process.exit(0);
+      }
       const method = args.includes('-X') ? args[args.indexOf('-X') + 1] : 'GET';
       const [endpoint, query = ''] = args.find(a => a.startsWith('repos/')).split('?');
       const params = Object.fromEntries(new URLSearchParams(query));
@@ -43,6 +50,16 @@ export const githubMock = defaults => async (state, test) => {
         const issue = issueByNumber(Number(m[1])), name = decodeURIComponent(m[2]);
         if (!issue || !issue.labels.some(l => l.name === name)) fail('gh: Label does not exist (HTTP 404)');
         issue.labels = issue.labels.filter(l => l.name !== name); process.stdout.write(JSON.stringify(issue.labels));
+      } else if (method === 'GET' && (m = endpoint.match(/^repos\\/acme\\/app\\/contents\\/(.+)$/))) {
+        const text = (state.contents[params.ref] || {})[decodeURIComponent(m[1])];
+        if (text === undefined) fail('gh: Not Found (HTTP 404)');
+        process.stdout.write(JSON.stringify({ type: 'file', encoding: 'base64', content: Buffer.from(text).toString('base64') }));
+      } else if (method === 'GET' && endpoint === 'repos/acme/app/actions/runs') {
+        const runs = state.workflowRuns[params.check_suite_id] || [];
+        process.stdout.write(JSON.stringify({ total_count: runs.length, workflow_runs: page(runs) }));
+      } else if (method === 'GET' && (m = endpoint.match(/^repos\\/acme\\/app\\/actions\\/runs\\/(\\d+)\\/artifacts$/))) {
+        const artifacts = state.runArtifacts[m[1]] || [];
+        process.stdout.write(JSON.stringify({ total_count: artifacts.length, artifacts: page(artifacts) }));
       } else if (method === 'GET' && (m = endpoint.match(/^repos\\/acme\\/app\\/issues\\/(\\d+)\\/dependencies\\/blocked_by$/))) {
         process.stdout.write(JSON.stringify(page(state.blockedBy[m[1]] || [])));
       } else if (method === 'GET' && (m = endpoint.match(/^repos\\/acme\\/app\\/issues\\/(\\d+)$/))) {

@@ -8,7 +8,9 @@ import { renderSbiBody } from './planner.mjs';
 import { githubCli } from './planner-github.mjs';
 import { githubMock } from './test-github.mjs';
 import { execute } from './io.mjs';
-import { collectPbiStatus, renderPbiStatus, acceptPbi, maestroEvidenceNotConnected } from './pbi-status.mjs';
+import { collectPbiStatus, renderPbiStatus, acceptPbi } from './pbi-status.mjs';
+// An adapter that has no evidence to offer, e.g. for an SBI without a merged Harness PR.
+const notConnected = { async read() { return { connected: false, reason: 'Maestro E2E Evidenceを接続できません' }; } };
 import { pbiAcceptanceRecords } from './pbi-acceptance.mjs';
 
 const pbi = { owner: 'acme', repo: 'app', number: 8, url: 'https://github.com/acme/app/issues/8', title: '受講生ログイン' };
@@ -198,19 +200,23 @@ describe('PBI Status: Maestro E2E Evidence', () => {
     });
   });
 
-  describe('given the Maestro Evidence adapter of this repository before #142 is merged', () => {
+  describe('given an evidence adapter that has no evidence to offer', () => {
     it('when the status is collected then every SBI is NOT_DONE for missing evidence instead of treating it as no E2E target', async () => {
-      const result = await status({ evidence: maestroEvidenceNotConnected });
+      const result = await status({ evidence: notConnected });
       assert.equal(result.status, 'NOT_DONE');
-      assert.match(result.reasons.join('\n'), /Maestro E2E Evidence.*未接続/);
+      assert.match(result.reasons.join('\n'), /Maestro E2E Evidenceを接続できません/);
       for (const sbi of result.sbis) assert.equal(sbi.e2e, null);
       assert.equal(result.ready, false);
     });
-    it('when no evidence adapter is given then the not-connected adapter is used', async () => {
+    it('when no evidence adapter is given then the Maestro adapter reads the snapshot of each merged head from GitHub and fails closed when the CI run cannot be read', async () => {
       const { github, githubPr } = world();
-      const result = await collectPbiStatus({ root: '/nonexistent', pbiUrl: pbi.url, config, github, githubPr, acceptanceRecords: async () => [approval()] });
+      const read = [];
+      github.fileAt = async (_ref, path, at) => { read.push([path, at]); return null; };
+      const actions = { async checkRuns() { throw new Error('HTTP 502'); } };
+      const result = await collectPbiStatus({ root: '/nonexistent', pbiUrl: pbi.url, config, github, githubPr, actions, acceptanceRecords: async () => [approval()] });
       assert.equal(result.status, 'NOT_DONE');
-      assert.match(result.reasons.join('\n'), /未接続/);
+      assert.deepEqual(read, [['.harness/state/sbi-11.json', sha('1')], ['.harness/state/sbi-12.json', sha('2')]]);
+      assert.match(result.reasons.join('\n'), /SBI-001.*snapshot/);
     });
   });
   describe('given an evidence response that does not have the agreed shape', () => {
@@ -388,7 +394,7 @@ describe('PBI Status: display', () => {
       assert.match(text, /Reason:\n- PBI Human Acceptance Gate/);
     });
     it('when the Maestro E2E Evidence is not connected then each SBI line says so instead of showing no E2E target', async () => {
-      const text = renderPbiStatus(await status({ evidence: maestroEvidenceNotConnected })).join('\n');
+      const text = renderPbiStatus(await status({ evidence: notConnected })).join('\n');
       assert.match(text, /SBI-001 implementation .*E2E 未接続/);
       assert.match(text, /SBI-003 validation .*E2E 未接続/);
       assert.doesNotMatch(text, /E2E none/);
