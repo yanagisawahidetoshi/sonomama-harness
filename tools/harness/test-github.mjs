@@ -18,7 +18,7 @@ export const githubMock = defaults => async (state, test) => {
       fs.appendFileSync(path.join(dir, 'calls.jsonl'), JSON.stringify({ args, input }) + '\\n');
       if (args[0] === 'run' && args[1] === 'download') {
         const files = (state.artifactFiles[args[2]] || {})[args[args.indexOf('-n') + 1]];
-        if (!files || args[args.indexOf('-R') + 1] !== 'acme/app') { process.stderr.write('no artifact matches\n'); process.exit(1); }
+        if (!files || args[args.indexOf('-R') + 1] !== 'acme/app') { process.stderr.write('no artifact matches\\n'); process.exit(1); }
         const out = args[args.indexOf('-D') + 1]; fs.mkdirSync(out, { recursive: true });
         for (const [name, text] of Object.entries(files)) fs.writeFileSync(path.join(out, name), text);
         process.exit(0);
