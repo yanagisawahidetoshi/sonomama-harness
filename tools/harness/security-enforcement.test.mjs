@@ -10,6 +10,8 @@ import { resumeRun, judge } from './index.mjs';
 import { recordDecision } from './human-approvals.mjs';
 import { mergeDecision } from './merge-policy.mjs';
 import { execute, readJson } from './io.mjs';
+import { githubMock } from './test-github.mjs';
+import { renderSbiBody } from './planner.mjs';
 const policy = JSON.parse(await readFile(new URL('../../.harness/rules/security.json', import.meta.url), 'utf8'));
 const good = 'export function greet(name) { return `こんにちは、${name?.trim() || "ゲスト"}さん`; }';
 const basic = { risks: [], acceptanceCriteria: [], securityImpact: [], requiredSecurityRules: [], requiredVerifiers: [] };
@@ -136,6 +138,43 @@ describe('Security enforcement in the execution loop', () => {
       const evidence = await directoryRun(root, []);
       for (const id of ['secret-scan', 'forbidden-pattern-check']) assert.notEqual(evidence.checks.find(c => c.id === id).status, 'PASS', id);
       assert.equal(securityPassed(evidence), false);
+    }));
+  });
+  // A run from an SBI Issue also commits the Issue snapshot (.harness/state/sbi-<N>.json); the Issue text is not code the agent changed.
+  describe('given an approved SecurityConfig SBI Issue whose change area is a directory', () => {
+    const issueUrl = 'https://github.com/acme/app/issues/7';
+    const pbi = { number: 3, url: 'https://github.com/acme/app/issues/3', title: '通信設定' };
+    const planned = purpose => ({
+      id: 'SBI-001', kind: 'implementation', title: '通信設定を整える', purpose, scope: { included: ['lib'], excluded: [] },
+      acceptanceCriteria: [{ id: 'AC-1', description: '通信設定がある' }],
+      scenarios: [{ name: '通信設定', given: ['設定がない'], when: ['設定を読む'], then: ['設定がある'], acceptanceIds: ['AC-1'], test: 'node:test lib' }],
+      dependsOn: [], changeAreas: ['lib'], layers: ['設定'], estimatedFiles: 1, oversizeReason: null, riskCandidate: 'L3', securityImpact: ['SecurityConfig'],
+      verification: { applicationTest: 'node:test', acceptance: 'Trusted Acceptance', e2e: '不要' } });
+    const mockGitHub = githubMock({});
+    const issueRun = async (root, purpose, files) => { let evidence; await mockGitHub({ issue: { number: 7, title: 'SBI-001 通信設定を整える', body: renderSbiBody(planned(purpose), pbi), html_url: issueUrl, state: 'open', labels: [{ name: 'sbi' }, { name: 'ready' }] } }, async () => {
+      await writeFile(join(root, '.harness/verification/issue-7.mjs'), 'console.log(JSON.stringify({ acceptance: ["AC-1"] }));');
+      await mkdir(join(root, '.harness/acceptance'), { recursive: true });
+      await writeFile(join(root, '.harness/acceptance/sbi-7.json'), JSON.stringify({ version: 1, sbiIssue: 7, verifiers: [{ id: 'issue-7-acceptance', trustedScript: '.harness/verification/issue-7.mjs', planned: ['通信設定'], acceptanceIds: ['AC-1'] }] }));
+      const agent = async () => ({ files });
+      const run = await runHarness({ root, quiet: true, agent, issueUrl });
+      for (const id of ['A', 'B']) await recordDecision({ root, runId: run.id, purpose: 'implementation-gate', identityProvider: human(id) });
+      await resumeRun({ root, runId: run.id, quiet: true, agent });
+      evidence = await readJson(join(root, run.runDir, 'iteration-1/security-verification.json'));
+    }); return evidence; };
+    it('when the agent changes no file then the content checks skip instead of passing on the Issue snapshot alone', () => fixture(async root => {
+      const evidence = await issueRun(root, '通信設定を整える。', []);
+      for (const id of ['secret-scan', 'forbidden-pattern-check']) {
+        const check = evidence.checks.find(c => c.id === id);
+        assert.equal(check.status, 'SKIP', id);
+        assert.deepEqual(check.scanned, [], id);
+      }
+      assert.equal(securityPassed(evidence), false);
+    }));
+    it('when the Issue text names a forbidden pattern and the agent adds safe code then only the agent code is scanned and passes', () => fixture(async root => {
+      const evidence = await issueRun(root, `NODE_TLS_${'REJECT_UNAUTHORIZED'} = 0 を使わない。`, [{ path: 'lib/tls.mjs', content: 'export const verifyTls = true;\n' }]);
+      const check = evidence.checks.find(c => c.id === 'forbidden-pattern-check');
+      assert.equal(check.status, 'PASS');
+      assert.deepEqual(check.scanned, ['lib/tls.mjs']);
     }));
   });
   describe('given required content checks and no list of changed files', () => {
