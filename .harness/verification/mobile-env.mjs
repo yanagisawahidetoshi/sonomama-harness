@@ -154,8 +154,10 @@ try {
       assert.match(scripts.android, /\bexpo run:android\b/);
       assert.match(read('apps/mobile/README.md'), /development buildはMaestroのIntegration \/ E2Eと、Expo Goで扱えないnative機能/);
     }],
-    ['MOBILE-AC-28', 'Given the initial phase, When listing dependencies, Then expo-dev-client is not added because nothing needs it yet', () => {
-      forbids(/^expo-dev-client$/, 'expo-dev-client is not needed in the initial phase');
+    // #145: expo-dev-client builds the CI Development Build for Maestro; daily development still opens Expo Go.
+    ['MOBILE-AC-28', 'Given the package, When expo-dev-client is installed for the CI Development Build, Then daily development still starts in Expo Go', () => {
+      assert.ok(pkg().dependencies['expo-dev-client'], 'expo-dev-client builds the Development Build that Maestro runs on');
+      assert.match(pkg().scripts.start, /\bexpo start --go\b/, 'start opens Expo Go');
       assert.doesNotMatch(read('apps/mobile/README.md'), /expo-dev-client` を入れるとExpo Goで開けなくなる/);
     }],
   ];

@@ -51,7 +51,7 @@ pnpm --filter mobile doctor        # expo-doctor (Expo依存の整合確認)
 ## Expo Go と development build
 
 通常開発はExpo Goを主対象にする。`pnpm --filter mobile start` は `expo start --go` で起動し、`i` / `a` でSimulator / EmulatorのExpo Goを開く。
-`expo-dev-client` は初期フェーズでは不要なので依存に入れない。入れると `expo start` の既定がdevelopment buildになるが、`start` scriptは `--go` でExpo Goを明示している。
+`expo-dev-client` は、CIのMaestroで正式なDevelopment Buildを作るために入れている（#145）。入れると `expo start` の既定がdevelopment buildになるが、`start` scriptは `--go` でExpo Goを明示している。
 
 development buildはMaestroのIntegration / E2Eと、Expo Goで扱えないnative機能の確認に使う。
 native moduleが必要になった時点で、Expo Goを続けるかを判断し直す。
@@ -69,7 +69,7 @@ bundle identifier / application id は暫定で `com.sonomama.student.dev`。
 
 ## テストレイヤー
 
-MaestroはMobile Integration / E2Eの必須ツールとする。通常のmobile Verifier（`expo`）には入れず、Maestroが必要なSBIでだけ専用のrequired VerifierとしてCIで実行する。全Mobile PRで無条件には実行しない。専用Verifierは #68 で実装する（未実装）。
+MaestroはMobile Integration / E2Eの必須ツールとする。通常のmobile Verifier（`expo`）には入れず、Maestroが必要なSBIでだけ専用のrequired VerifierとしてCIで実行する。全Mobile PRで無条件には実行しない。CIの `maestro` jobで実行し、Completion Judgeが結果を必須にする（[.ai/workflows/ci.md](../../.ai/workflows/ci.md)）。
 
 - implementation SBI: Mock API + Maestro
 - validation SBI: 実API + Rails + DB + Maestro
@@ -83,6 +83,17 @@ MaestroはMobile Integration / E2Eの必須ツールとする。通常のmobile 
 | 日常の画面開発・動作確認 | Expo Go                                       | Expo Go                            |
 
 Rails側のRequest Specなど、backend内部のIntegration TestはMaestroへ置き換えない。Maestroは受講生アプリ側のユーザーフローを担当する。
+
+CIのflowは `.maestro/mock/`（implementation SBI）と `.maestro/real/`（validation SBI）に置き、どちらも最初に `.maestro/common/open-development-build.yaml` でDevelopment Buildを開く。
+このflowは、Development Buildのランチャーが表示されてから `sonomama://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8081` でEmulatorのホストのMetroを開き、初回に開く開発メニューを閉じて、`home-title` が出るまで待つ。
+
+ローカルで同じflowを流す場合（Android Emulator、Maestro 2.x）:
+
+```sh
+pnpm --filter mobile android                                  # Development Buildを作ってEmulatorへインストール
+pnpm --filter mobile exec expo start --dev-client --port 8081 # 別ターミナル。8081を空けておく
+maestro test apps/mobile/.maestro/mock                       # repo rootから
+```
 
 ## Maestro smoke test
 
@@ -103,7 +114,7 @@ maestro test apps/mobile/.maestro/smoke.yaml   # repo rootから
 
 ### Android Emulator
 
-`expo-dev-client` は入れていないため、Android Emulatorのdevelopment buildは既定で `10.0.2.2:8081`（ホストPCのMetro）からbundleを読む。
+Android EmulatorのDevelopment Buildは、ランチャーから接続するか上のURLで `10.0.2.2:8081`（ホストPCのMetro）からbundleを読む。
 `prototypes/mobile` など別のMetroが8081を使っていると、`expo start` は8083等へずれるが、アプリは8081の別アプリのbundleを読み込んでしまう（`Can't find ViewManager 'RNSVGPath'` などの赤画面になる）。
 8081を空けてから起動するか、debug buildの接続先を変える。
 
