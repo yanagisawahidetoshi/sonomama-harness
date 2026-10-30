@@ -79,11 +79,11 @@ function world(overrides = {}) {
     async fetchPull(_ref, number) { guard('pull'); return state.pulls[number]; },
     async pullCommitMessages(_ref, number) { guard('commits'); return state.commits[number] ?? []; },
     async blockedBy() { guard('blockedBy'); return state.blockedBy; },
+    async permission(_ref, login) { return state.permissions?.[login] ?? 'write'; },
   };
   const githubPr = {
     async checkRuns(_repo, head) { guard('checkRuns'); return state.checkRuns[head] ?? []; },
     async rulesetChecks() { guard('rules'); return state.rulesetChecks; },
-    async permission(_ref, login) { return state.permissions?.[login] ?? 'write'; },
   };
   return { state, github, githubPr };
 }

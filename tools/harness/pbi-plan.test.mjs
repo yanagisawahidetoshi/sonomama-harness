@@ -97,10 +97,10 @@ function world({ pbiBody = '## 背景\n\nログインしたい。', comments = [
     async listIssues(_ref, label) { return state.issues.filter(i => i.labels.some(l => l.name === label)); },
     async updateIssue(_ref, fields) { state.patched.push(fields); state.pbi.body = fields.body; return state.pbi; },
     async listComments() { return state.comments; },
+    async permission() { return permission; },
     async addComment(_ref, text) { state.posted.push(text); return { id: 9, body: text, html_url: `${pbi.url}#issuecomment-9` }; },
   };
-  const githubPr = { async permission() { return permission; } };
-  return { state, github, githubPr };
+  return { state, github };
 }
 const currentPlan = planOf(8, [{ id: 'SBI-001', number: 201, kind: 'implementation', dependsOn: [] }, { id: 'SBI-002', number: 202, kind: 'implementation', dependsOn: ['SBI-001'] }]);
 
@@ -122,14 +122,14 @@ describe('PBI plan commands', () => {
 
   describe('given a PBI whose ## SBI構成 matches the SBI Issues on GitHub', () => {
     it('when a human runs harness:pbi-plan-approve then the approval line of the plan digest is posted on the PBI', async () => {
-      const { state, github, githubPr } = world({ pbiBody: body(currentPlan) });
-      const result = await approvePbiPlan({ pbiUrl: pbi.url, github, githubPr });
+      const { state, github } = world({ pbiBody: body(currentPlan) });
+      const result = await approvePbiPlan({ pbiUrl: pbi.url, github });
       assert.deepEqual(state.posted, [`harness-pbi-plan: ${planDigest(currentPlan)}`]);
       assert.equal(result.digest, planDigest(currentPlan));
     });
     it('when the human revokes then the revoke line is posted', async () => {
-      const { state, github, githubPr } = world({ pbiBody: body(currentPlan) });
-      await approvePbiPlan({ pbiUrl: pbi.url, github, githubPr, decision: 'revoke' });
+      const { state, github } = world({ pbiBody: body(currentPlan) });
+      await approvePbiPlan({ pbiUrl: pbi.url, github, decision: 'revoke' });
       assert.deepEqual(state.posted, [`harness-pbi-plan-revoke: ${planDigest(currentPlan)}`]);
     });
   });
@@ -142,8 +142,8 @@ describe('PBI plan commands', () => {
       ['## SBI構成 says another kind than the SBI Issue', { pbiBody: body(planOf(8, currentPlan.sbis.map(s => s.id === 'SBI-002' ? { ...s, kind: 'validation' } : s))) }, /SBI #202/],
     ]) {
       it(`when ${name} then nothing is posted`, async () => {
-        const { state, github, githubPr } = world(options);
-        await assert.rejects(approvePbiPlan({ pbiUrl: pbi.url, github, githubPr }), pattern);
+        const { state, github } = world(options);
+        await assert.rejects(approvePbiPlan({ pbiUrl: pbi.url, github }), pattern);
         assert.deepEqual(state.posted, []);
       });
     }
