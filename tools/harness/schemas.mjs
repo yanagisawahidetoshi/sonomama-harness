@@ -24,7 +24,8 @@ export const sbiSchema = z.strictObject({
   ambiguous: z.boolean(), requiresDesignDecision: z.boolean(),
   securityImpact: z.array(text).default([]), requiredSecurityRules: z.array(text).default([]),
   requiredVerifiers: z.array(text).default([]), affectedAreas: z.array(text).default([]), preImplementationGate: z.boolean().default(false),
-  promotion: z.strictObject({ source: relativePath.refine(p => /^prototypes\/(web|mobile)(\/|$)/.test(p)), designApproval: z.null().optional() }).optional(),
+  // Records which prototype a production SBI adopts. The SBI Issue approval decides the implementation; there is no separate Design Approval (#155).
+  promotion: z.strictObject({ source: relativePath.refine(p => /^prototypes\/(web|mobile)(\/|$)/.test(p)) }).optional(),
   minimumRiskLevel: z.union([z.literal(2), z.literal(3)]).default(2),
   // The Planner's expected number of changed files, from the SBI Issue. Hand-written SBI JSON has none.
   estimatedFiles: z.number().int().min(0).nullable().optional(),
@@ -202,7 +203,8 @@ export const dependencyBotPolicySchema = z.strictObject({
   bots: z.array(z.strictObject({ login: text.regex(/\[bot\]$/), type: z.literal('Bot') })),
   paths: z.array(relativePath),
 });
-export const githubCommentSchema = z.object({ id: z.number().int().positive(), body: z.string().nullable().default(null), html_url: z.url() });
+export const githubCommentSchema = z.object({ id: z.number().int().positive(), body: z.string().nullable().default(null), html_url: z.url(),
+  user: z.object({ login: z.string(), type: z.string().optional() }).nullable().optional(), created_at: z.string().optional(), updated_at: z.string().optional() });
 export const githubCommentListSchema = z.array(githubCommentSchema);
 export const githubLabelListSchema = z.array(z.object({ name: z.string() }));
 
@@ -218,7 +220,7 @@ export const riskPolicySchema = z.strictObject({
   safeRules: z.array(z.strictObject({ id: text, pattern: text, candidateLevel: z.literal(1), requiredLane: z.enum(['prototype', 'production']).optional(), allowedStatuses: z.array(z.enum(['A', 'M'])), maxChangedBytes: z.number().int().positive() })),
 });
 export const approvalRecordSchema = z.strictObject({
-  id: text, runId: text, purpose: z.enum(['implementation-gate', 'design-approval', 'merge']),
+  id: text, runId: text, purpose: z.enum(['implementation-gate', 'merge']),
   reviewer: text, kind: z.literal('human'), identitySource: text,
   decision: z.enum(['APPROVE', 'REQUEST_CHANGES', 'REVOKE']), approvedAt: z.iso.datetime(),
   commitSha: z.string().regex(/^[0-9a-f]{40,64}$/), contextDigest: text, signature: text,
@@ -230,7 +232,7 @@ export const apiSchemaApprovalRecordSchema = z.strictObject({
   commitSha: z.string().regex(/^[0-9a-f]{40,64}$/), proposalDigest: z.string().regex(/^[0-9a-f]{64}$/), signature: text,
 });
 // The PBI Human Acceptance Gate is bound to the PBI and the evidence it confirms (validation evidence, or the merged implementation evidence).
-// It is separate from implementation-gate / design-approval / merge / api-schema records and never substitutes for them.
+// It is separate from implementation-gate / merge / api-schema records and never substitutes for them.
 export const pbiAcceptanceRecordSchema = z.strictObject({
   id: text, purpose: z.literal('pbi-acceptance'), pbiUrl: z.url(), reviewer: text, kind: z.literal('human'), identitySource: text,
   decision: z.enum(['APPROVE', 'REQUEST_CHANGES', 'REVOKE']), decidedAt: z.iso.datetime(),
@@ -280,10 +282,9 @@ export const runStateSchema = z.strictObject({
   snapshotVerification: z.looseObject({ verified: z.boolean(), reasons: z.array(z.string()) }).optional(),
   status: z.enum([...new Set(Object.values(states).flat())]), executionStatus: z.enum(states.execution), reason: z.string().nullable(),
   consecutiveFailures: z.number().int().min(0), iterations: z.array(runIterationSchema),
-  events: z.array(z.strictObject({ status: text, phase: z.enum(['execution', 'implementation-gate', 'design-approval', 'merge', 'pull-request']), detail: z.string(), at: text })),
+  events: z.array(z.strictObject({ status: text, phase: z.enum(['execution', 'implementation-gate', 'merge', 'pull-request']), detail: z.string(), at: text })),
   baselineSha: gitSha, headSha: gitSha, workspaceDigest: sha256, inputsDigest: sha256,
   gate: z.looseObject({ required: z.boolean(), state: z.enum(states.gate) }),
-  designApproval: z.looseObject({ required: z.boolean(), state: z.enum(states.design), contextDigest: sha256 }).optional(),
   merge: z.looseObject({ state: z.enum(states.merge), autoMergeEligible: z.boolean(),
     failure: z.strictObject({ code: z.enum(escalationCodes), retryable: z.boolean(), detail: z.string() }).optional() }),
   lane: z.looseObject({ name: z.enum(['prototype', 'production']) }).optional(),

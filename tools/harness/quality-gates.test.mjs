@@ -273,7 +273,7 @@ describe('Prototype and production lanes',()=>{
         const lane=classifyLane([{path}],{});
         assert.equal(lane.name,'prototype');
         assert.deepEqual(lane.qualityGates,['typecheck','lint','format','build','secret-scan']);
-        assert.equal(lane.requiresDesignApproval,false);
+        assert.equal('requiresDesignApproval' in lane,false);
       });
     }
     for (const path of ['apps/admin/View.tsx','apps/mobile/View.tsx','apps/api/file.rb','packages/ui/View.tsx','packages/api-schema/schema.yml']) {
@@ -285,10 +285,11 @@ describe('Prototype and production lanes',()=>{
         assert.equal(lane.name,'production'); assert.equal(lane.requiresSecurityGate,true);
       });
     }
-    it('when promoting a prototype then requires separate production SBI and Design Approval',()=>{
-      const lane=classifyLane([{path:'apps/admin/View.tsx'}],{promotion:{source:'prototypes/web',designApproval:null}});
-      assert.equal(lane.requiresDesignApproval,true);
-      assert.equal(lane.designApproved,false);
+    it('when promoting a prototype then the production lane needs no Design Approval',()=>{
+      const lane=classifyLane([{path:'apps/admin/View.tsx'}],{promotion:{source:'prototypes/web'}});
+      assert.equal(lane.name,'production');
+      assert.equal('requiresDesignApproval' in lane,false);
+      assert.ok(lane.reasons.includes('prototype-promotion'));
     });
   });
 });
