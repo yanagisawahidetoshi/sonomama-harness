@@ -1,0 +1,7 @@
+# implementation SBI: the app talks to Prism serving the approved OpenAPI
+appId: com.sonomama.student.dev
+---
+- runFlow: ../common/open-development-build.yaml
+- assertVisible:
+    id: home-title
+- assertVisible: SONOMAMA

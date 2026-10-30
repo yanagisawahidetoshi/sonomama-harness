@@ -74,6 +74,8 @@ export function sbiFromIssue({ ref, issue, config }) {
   const kind = section('種類').map(l => /（(implementation|validation)）\s*$/.exec(l.trim())?.[1]).find(Boolean) ?? 'implementation';
   const estimate = section('想定変更ファイル数').find(l => l.trim())?.trim();
   const estimatedFiles = /^\d+$/.test(estimate ?? '') ? Number(estimate) : null;
+  // The E2E line decides whether a mobile SBI needs the maestro CI job; without it the lane stays required (fail closed).
+  const e2e = (block('検証方法') ?? []).map(l => /^E2E: (.*)$/.exec(l.trim())?.[1]).find(v => v !== undefined)?.trim() ?? null;
 
   // Trusted Acceptance is written, reviewed and registered by a human before ready. Every criterion needs exactly one registration.
   const registered = config.verifiers.filter(v => v.trust === 'acceptance' && v.sbiIssue === ref.number);
@@ -90,7 +92,7 @@ export function sbiFromIssue({ ref, issue, config }) {
     gherkin: [`Feature: ${issue.title}`, ...gherkin.map(line => line.trim() ? `  ${line}` : '')].join('\n'),
     acceptanceCriteria, allowedFiles: [], allowedDirs, risks: securityImpact, ambiguous: false, requiresDesignDecision: false,
     securityImpact, requiredSecurityRules: [], requiredVerifiers: [], affectedAreas: [], preImplementationGate: false,
-    minimumRiskLevel: candidate === 'L3' || securityImpact.length ? 3 : 2, estimatedFiles, issueUrl: ref.url, pbiUrl: markerPattern.exec(issue.body ?? '')?.[1],
+    minimumRiskLevel: candidate === 'L3' || securityImpact.length ? 3 : 2, estimatedFiles, e2e, issueUrl: ref.url, pbiUrl: markerPattern.exec(issue.body ?? '')?.[1],
   };
 }
 

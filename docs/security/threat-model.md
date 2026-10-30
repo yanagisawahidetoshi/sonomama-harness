@@ -44,6 +44,17 @@ untrusted applicationのコンテナは次の条件で起動する。ローカ�
 
 Rails・migration-safety・rails-authz-test（Docker Compose）はコンテナの中から入れ子で起動できない。trusted HarnessがComposeを起動し、その前にworkspaceのCompose fileを検査する。workspace外やHarness状態のbind mount、`privileged`等の特権設定、`env_file`、environment以外での環境変数展開は拒否する。Composeの環境変数はDocker CLIに必要なものと、CIが指定するBuildKit cacheの場所（`HARNESS_BUILD_CACHE_FROM`・`HARNESS_BUILD_CACHE_TO`）だけにする。Compose fileのcache設定はこの変数の参照だけを許し、ホストのパスをAgentに選ばせない。同じverifierに並ぶ`tools/harness/*.mjs`のスクリプトは、`isolation: harness`と同じ条件でホストで動かす。Composeの各コマンドには、workspaceのCompose fileの後にHarnessが作るoverrideを重ねる。workspaceから`build`するサービス（`api`）は、Compose fileに`user: root`と書いてあってもホストのuid:gid（rootではない）で動き、HOMEはコンテナの`/tmp`になる。`/rails/tmp`と`/rails/log`はimageの側で誰でも書けるようにしてある（sticky bit付き）。書けなければVerifierは失敗する。imageをpullするだけのサービス（`db`のpostgres）は、image自身が決めた実行ユーザー（起動処理の後に`postgres`ユーザーへ切り替わる）のまま動かす。
 
+Mobile E2E の `maestro` CI job（#145）は、この隔離の例外として人が認めた（#68）。`expo prebuild`・Gradle の build・Metro・Android Emulator・Maestro を、GitHub-hosted runner のホストで直接動かす。そのため、Agent が変えられる設定（`app.json` の plugin、babel・metro の設定、native の依存）が runner の上で実行される。残るリスクを次の条件で抑える。
+
+- GitHub-hosted runner だけで動かす（使い捨てで、ほかの run と共有しない）
+- job の権限は `contents: read` だけで、secret を渡さない。checkout は認証情報を残さない（`persist-credentials: false`）
+- `pull_request_target` を使わない。fork からの PR も、fork の権限のまま動く
+- APK の共有 cache は main への push だけが保存する。PR は読むだけで書き換えない
+- Maestro CLI は version を固定し、配布物の sha256 を照合してから使う
+- Rails と DB を起動する前に、Compose file を Harness の検査に通す
+
+KVM を渡したコンテナの中で動かし、この例外をなくす作業は #146 で行う。
+
 `api-contract`のようにHarnessのスクリプトがworkspaceのファイルを読むだけのverifierは、`isolation: harness`としてホストで動かす。対象は`tools/harness/*.mjs`だけで、環境変数は`PATH`と`HARNESS_BASE_REF`に限る。
 
 対象外: Agent CLI自体の実行環境、OS全体を悪意あるローカルユーザーから守ること、GitHub Actions Runnerの設計。
