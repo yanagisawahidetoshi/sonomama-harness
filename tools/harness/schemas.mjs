@@ -249,6 +249,7 @@ export const securityPolicySchema = z.strictObject({
   rules: z.array(z.strictObject({
     id: text.regex(/^SEC-[A-Z]+-\d+$/), description: text, categories: z.array(text).min(1),
     pathPatterns: z.array(text), contentPatterns: z.array(text), metadataPatterns: z.array(text),
+    contentExceptions: z.array(z.strictObject({ pathPatterns: z.array(text).min(1), ignoredPatterns: z.array(text).min(1) })).optional(),
     preImplementationGate: z.literal(true), minimumRiskLevel: z.literal(3),
     requiredHumanApprovals: z.number().int().min(2), requiredVerifiers: z.array(text).min(1), policyDocument: relativePath,
   })).min(1),
