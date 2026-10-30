@@ -23,6 +23,7 @@ User-facing:
   pnpm harness:approve SBI_URL --phase gate|design [--decision approve|revoke|request-changes]
                                                      Human Gateを承認し、そのままrunを再開してPRを作成する
   pnpm harness:reverify PR_URL                       mainが進んだPRを、実装を保持したまま最新mainと統合して再検証し、同じPRを更新する
+                                                     （PR HEADと最新mainが前回PASSしたrunのままなら何もせずAlready verifiedを表示）
 API design (API契約を設計するときだけ):
   OpenAPI SchemaはPlannerが作るSchema SBI（packages/api-schemaだけを変える）として pnpm harness:run SBI_URL で作る
   pnpm api:mock ISSUE_URL [--dynamic] | pnpm api:docs [--port PORT]
@@ -139,6 +140,11 @@ try {
   } else if (command === 'reverify') {
     if (!positional) throw new Error('reverify requires a pull request URL: reverify https://github.com/<owner>/<repo>/pull/<number>');
     const run = await reverifyPullRequest({ root, pullUrl: positional });
+    if (run.alreadyVerified) {
+      console.log(`Already verified: ${run.pullRequest.url} HEAD ${run.headSha} on ${run.pullRequest.base} ${run.baselineSha} is bound to run ${run.id}. Nothing was run, committed, pushed or updated.`);
+      console.log(`Evidence: ${run.runDir}/summary.json`);
+      return;
+    }
     if (run.reverify?.publish === 'PR_UPDATED') printPullRequest(run); else console.log(`Pull request: ${run.pullRequest.url} (not updated; run ${run.id}: ${run.status})`);
     if (run.reverify?.conflicts?.length) console.log(`Conflicts: ${run.reverify.conflicts.join(', ')}`);
     if (run.gate?.state === 'WAITING_FOR_HUMAN_GATE' || run.designApproval?.state === 'WAITING_FOR_DESIGN_APPROVAL') console.log(`Human Gate: pnpm harness:approve ${run.sbiIssue.url} --phase ${run.designApproval?.state === 'WAITING_FOR_DESIGN_APPROVAL' ? 'design' : 'gate'}`);

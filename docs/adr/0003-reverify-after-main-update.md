@@ -37,6 +37,9 @@ ADR-0001は、PRのbaseをrunのbaselineに固定し、mainが進んだら`base_
 ## 決定
 
 - mainが進んだPRは、`pnpm harness:reverify <PR URL>`で再検証する。入口の正本はPR。旧runのローカル証跡は任意の参照で、あれば署名済みstateとtested SHAの一致を記録する。
+- 前回PASSしたrunが、同じPR番号・同じPR HEAD SHA・同じbase branch・同じbase SHAに束縛されていて、`git merge-tree --write-tree <base> <PR HEAD>`のtreeがそのPR HEADのtreeと一致するときは、再検証しない（`Already verified`）。
+  新しいrun・空commit・push・PR更新のどれも行わない。束縛は、署名済みrun state（DONEでESCALATEDでない）、`refs/harness/runs/<run-id>`がPR HEADを指すこと、再検証runなら`verifyReverifyLink`のPASSで確かめる。
+  GitHubのApproveの状態は判定に使わない。base SHAかPR HEADが変わった場合、前回がFAILED・ESCALATEDの場合、束縛を確かめられない場合やrun stateを読めない場合は、新しいrunで再検証する。
 - 新しいrun（`kind: reverify`）を作り、最新のmain（新baseline）からdetached worktreeを作って、PR HEADを取り込んだmerge commitを候補にする。候補は`git merge-tree --write-tree`と`git commit-tree`でGitのobjectから作る。操作者のGit設定（`merge.log`など）でcommit messageやtreeが変わらず、`verifyReverifyLink`が照合するtreeと同じ方法で作るため。
   候補はPR HEADの子孫なので、PRブランチへは通常のpush（fast-forward）で更新できる。rebaseとforce pushは使わない。
 - PR HEADがすでに新baselineを含む場合（人がPRブランチで競合を解消した場合）は、PR HEADのtreeをそのまま使い、関連付けのための空commitだけを上に足す。

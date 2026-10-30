@@ -607,6 +607,28 @@ async function existingReverify(root, { parentRunId, baselineSha, pullHead }) {
   if (found.length > 1) throw new Error(`同じPR HEADとbaselineの再検証runが${found.length}件あります（${found.join(', ')}）`);
   return found[0] ?? null;
 }
+// The PASS run the PR head is already bound to on this base SHA, if any. The signed run state, the run ref and the commit are the only
+// sources; GitHub Reviews are not read. Only a run whose tested SHA is the PR head itself and whose baseline is the current base tip
+// qualifies, and the merge of the base into the head must be exactly the tested tree. Anything else is verified again in a new run.
+async function verifiedRun(root, { pullRequest, parentRunId, baselineSha, pullHead }) {
+  const merged = await git(root, ['merge-tree', '--write-tree', '--no-messages', baselineSha, pullHead], true);
+  const head = await git(root, ['rev-parse', `${pullHead}^{tree}`]);
+  if (!merged.ok || merged.stdout.trim() !== head.stdout.trim()) return null;
+  const found = [];
+  for (const name of await readdir(join(root, '.harness/runs'))) {
+    if (!runIdSchema.safeParse(name).success || !await exists(runPaths(root, name).summary)) continue;
+    let summary;
+    try { summary = await readRunState(root, name); } catch { continue; }
+    const pr = summary.pullRequest;
+    if (summary.headSha !== pullHead || summary.baselineSha !== baselineSha || summary.executionStatus !== 'DONE' || summary.status === 'ESCALATED' || summary.cleanedAt) continue;
+    if (!pr || ['number', 'branch', 'base', 'repository'].some(key => pr[key] !== pullRequest[key])) continue;
+    if (summary.kind === 'reverify' ? summary.reverify.parentRunId !== parentRunId || summary.reverify.publish !== 'PR_UPDATED' : summary.id !== parentRunId) continue;
+    if ((await git(root, ['rev-parse', '--verify', '--quiet', `refs/harness/runs/${name}`], true)).stdout.trim() !== pullHead) continue;
+    if (summary.kind === 'reverify' && (await reverifyLinkCheck(root, summary)).status !== 'PASS') continue;
+    found.push(summary);
+  }
+  return found.length === 1 ? found[0] : null;
+}
 async function parentEvidence(root, parentRunId, previousTestedSha) {
   if (!await exists(runPaths(root, parentRunId).summary)) return { found: false };
   try {
@@ -646,6 +668,8 @@ async function reverifyProtected({ root, pullUrl, quiet = false, reviewer = revi
     throw new Error([`${path} のSBI snapshotが、現在のSBI Issueと${base}のTrusted Acceptance登録から組み立てたSBIと一致しません。SBIが変わったため再検証せず、新しいrunで実装してください`, ...reasons.map(r => `- ${r}`)].join('\n'));
   }
   await assertSafeCommit(root, baselineSha, pullHead);
+  const verified = await verifiedRun(root, { pullRequest: { number: ref.number, branch, base, repository: repository.name }, parentRunId, baselineSha, pullHead });
+  if (verified) return { ...verified, alreadyVerified: true };
   const existing = await existingReverify(root, { parentRunId, baselineSha, pullHead });
   if (existing) {
     // A waiting gate is re-checked and an updated PR is re-assessed; a verified candidate continues to publish; a stopped run stays stopped.

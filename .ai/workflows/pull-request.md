@@ -63,12 +63,13 @@ pnpm harness:reverify <PR URL>
   → GitHubから取り直してmerge判定 → PR本文を新run・新tested SHAへ更新
 ```
 
+- PR HEADと最新mainが、前回PASSしたrunに束縛されたままなら（同じPR・PR HEAD SHA・base SHA、run stateの署名とrun refが一致）、`Already verified`を表示して何もしない。GitHubのApproveは判定に使わない。
 - 競合したら`REVERIFY_CONFLICT`で止まり、競合パスを表示する。PR branchで競合を解消してpushし、同じコマンドを再実行する。解消後のHEADは新しいrunで検証し直す。
 - 検証に失敗したら`FAILED`で止まる。実装には戻らず、PRも更新しない。
 - 候補commitは`Harness-Reverify-Run`と`Harness-Parent-Run`のtrailerを持つ。`verifyReverifyLink`がGitのobjectだけで、PR HEADと再検証runの関連を確かめる（#148の`merge-approval`が読む）。再検証runのmerge判定でもこの確認を必須にする。
 - SBI snapshotとHarness-Run trailerは、SBIを実装したrun（親run）のまま。CIの`harness`の判定は変わらない。
 - 旧runとその証跡・承認は変更しない。旧HEADへのApproveは数えないので、更新後のHEADでReviewを取り直す。
-- 同じPR HEADと同じbaselineで再実行すると、同じrunを続ける。push後にPR本文の更新だけ失敗した場合も、再実行でpushを飛ばして本文の更新から続ける。
+- 同じPR HEADと同じbaselineで再実行すると、同じrunを続ける（FAILED・ESCALATEDのrunは続けず、新しいrunを作る）。push後にPR本文の更新だけ失敗した場合も、再実行でpushを飛ばして本文の更新から続ける。
 
 ## PR本文
 
