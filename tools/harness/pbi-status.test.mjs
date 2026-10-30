@@ -12,15 +12,23 @@ import { collectPbiStatus, renderPbiStatus, acceptPbi } from './pbi-status.mjs';
 // An adapter that has no evidence to offer, e.g. for an SBI without a merged Harness PR.
 const notConnected = { async read() { return { connected: false, reason: 'Maestro E2E Evidenceを接続できません' }; } };
 import { pbiAcceptanceRecords } from './pbi-acceptance.mjs';
+import { planOf, planDigest, renderPlanSection } from './pbi-plan.mjs';
 
 const pbi = { owner: 'acme', repo: 'app', number: 8, url: 'https://github.com/acme/app/issues/8', title: '受講生ログイン' };
 const issueUrl = number => `https://github.com/acme/app/issues/${number}`;
 const sha = char => char.repeat(40);
 const validationDigest = 'b'.repeat(64);
 const mockDigest = id => createHash('sha256').update(`mock ${id}`).digest('hex');
-// The digest a human approves binds the SBI composition of the PBI (ID, Issue number, kind) to the evidence, so changing the SBIs voids it.
+// The approved PBI plan: the complete SBI set the Planner wrote into ## SBI構成 and a human approved once.
+const fullPlan = planOf(8, [
+  { id: 'SBI-001', number: 11, kind: 'implementation', dependsOn: [] }, { id: 'SBI-002', number: 12, kind: 'implementation', dependsOn: ['SBI-001'] },
+  { id: 'SBI-003', number: 13, kind: 'validation', dependsOn: ['SBI-001', 'SBI-002'] },
+]);
+const implementationOnlyPlan = planOf(8, fullPlan.sbis.slice(0, 2));
+const planComment = (digest, overrides = {}) => ({ id: 1, body: `harness-pbi-plan: ${digest}`, html_url: `${pbi.url}#issuecomment-1`, user: { login: 'alice', type: 'User' }, created_at: '2026-10-29T00:00:00Z', updated_at: '2026-10-29T00:00:00Z', ...overrides });
+// The digest a human accepts binds the approved plan and the SBI composition (ID, Issue number, kind) to the evidence, so changing the SBIs voids it.
 const composition = [{ id: 'SBI-001', number: 11, kind: 'implementation' }, { id: 'SBI-002', number: 12, kind: 'implementation' }, { id: 'SBI-003', number: 13, kind: 'validation' }];
-const pbiDigest = (sbis, evidence) => createHash('sha256').update(JSON.stringify({ sbis, evidence })).digest('hex');
+const pbiDigest = (sbis, evidence, plan = fullPlan) => createHash('sha256').update(JSON.stringify({ plan: planDigest(plan), sbis, evidence })).digest('hex');
 const acceptedDigest = pbiDigest(composition, validationDigest);
 const planned = (overrides = {}) => ({
   id: 'SBI-001', kind: 'implementation', title: 'ログイン画面', purpose: '受講生がログインできる。',
@@ -58,12 +66,14 @@ function world(overrides = {}) {
     checkRuns: { [sha('1')]: passing, [sha('2')]: passing },
     rulesetChecks: [],
     blockedBy: [],
+    plan: fullPlan,
     fail: {},
     ...overrides,
   };
   const guard = name => { if (state.fail[name]) throw new Error(`gh api GET ${name}: HTTP 502`); };
   const github = {
-    async fetchIssue(ref) { guard('issue'); if (ref.number !== 8) throw new Error('HTTP 404'); return state.pbi; },
+    async fetchIssue(ref) { guard('issue'); if (ref.number !== 8) throw new Error('HTTP 404'); return { ...state.pbi, body: state.pbiBody ?? `PBI\n\n${renderPlanSection(pbi.url, state.plan)}` }; },
+    async listComments() { guard('comments'); return state.comments ?? [planComment(planDigest(state.plan))]; },
     async listIssues(_ref, label) { guard('list'); return state.issues.filter(i => i.labels.some(l => l.name === label)); },
     async issueTimeline(ref) { guard('timeline'); return (state.timeline[ref.number] ?? []).map(n => ({ event: 'cross-referenced', source: { issue: { number: n, html_url: `https://github.com/acme/app/pull/${n}`, pull_request: {} } } })); },
     async fetchPull(_ref, number) { guard('pull'); return state.pulls[number]; },
@@ -73,6 +83,7 @@ function world(overrides = {}) {
   const githubPr = {
     async checkRuns(_repo, head) { guard('checkRuns'); return state.checkRuns[head] ?? []; },
     async rulesetChecks() { guard('rules'); return state.rulesetChecks; },
+    async permission(_ref, login) { return state.permissions?.[login] ?? 'write'; },
   };
   return { state, github, githubPr };
 }
@@ -285,25 +296,25 @@ describe('PBI Status: Human Acceptance and the evidence digest', () => {
       { sbi: 'SBI-001', issueUrl: issueUrl(11), pullRequest: 21, headSha: sha('1'), mergeCommitSha: sha('1'), e2e: { status: 'PASS', api: 'mock' }, e2eDigest: mockDigest('SBI-001') },
       { sbi: 'SBI-002', issueUrl: issueUrl(12), pullRequest: 22, headSha: sha('2'), mergeCommitSha: sha('2'), e2e: { status: 'PASS', api: 'mock' }, e2eDigest: mockDigest('SBI-002') },
     ];
-    const expected = pbiDigest(composition.slice(0, 2), merged);
+    const expected = pbiDigest(composition.slice(0, 2), merged, implementationOnlyPlan);
     it('when every implementation SBI merged then the digest covers each SBI, its PR, the tested head, the merge commit, the E2E result and the digest of its Maestro result file', async () => {
-      const result = await status({ state: { issues: implementationOnlyIssues }, records: [] });
+      const result = await status({ state: { issues: implementationOnlyIssues, plan: implementationOnlyPlan }, records: [] });
       assert.equal(result.evidenceDigest, expected);
       assert.equal(result.ready, true);
     });
     it('when the human approved that digest then the PBI is DONE', async () => {
-      const result = await status({ state: { issues: implementationOnlyIssues }, records: [approval({ evidenceDigest: expected })] });
+      const result = await status({ state: { issues: implementationOnlyIssues, plan: implementationOnlyPlan }, records: [approval({ evidenceDigest: expected })] });
       assert.equal(result.status, 'DONE', result.reasons.join('\n'));
     });
     it('when a merge commit differs from the approved evidence then the digest changes and the PBI is NOT_DONE', async () => {
-      const { state } = world({ issues: implementationOnlyIssues });
+      const { state } = world({ issues: implementationOnlyIssues, plan: implementationOnlyPlan });
       state.pulls[22].merge_commit_sha = sha('9');
       const result = await status({ state, records: [approval({ evidenceDigest: expected })] });
       assert.notEqual(result.evidenceDigest, expected);
       assert.equal(result.status, 'NOT_DONE');
     });
     it('when an implementation SBI is not merged then no digest is offered for approval', async () => {
-      const { state } = world({ issues: implementationOnlyIssues });
+      const { state } = world({ issues: implementationOnlyIssues, plan: implementationOnlyPlan });
       state.pulls[22].merged_at = null;
       const result = await status({ state, records: [] });
       assert.equal(result.evidenceDigest, null);
@@ -338,6 +349,57 @@ describe('PBI Status: the SBI composition of the PBI', () => {
       assert.notEqual(result.evidenceDigest, acceptedDigest);
       assert.equal(result.status, 'NOT_DONE');
       assert.equal(result.acceptance, 'PENDING');
+    });
+  });
+});
+
+describe('PBI Status: the approved PBI plan', () => {
+  describe('given the PBI plan in ## SBI構成 and its approval on the PBI', () => {
+    it('when the status is collected then the plan digest and its approvers are reported', async () => {
+      const result = await status();
+      assert.deepEqual(result.plan, { digest: planDigest(fullPlan), approved: true, approvers: ['alice'] });
+    });
+    for (const [name, state, pattern] of [
+      ['the PBI body has no ## SBI構成', { pbiBody: 'PBI' }, /SBI構成/],
+      ['nobody approved the plan', { comments: [] }, /PBI plan.*承認されていません/],
+      ['the approval comment was edited', { comments: [planComment(planDigest(fullPlan), { updated_at: '2026-10-29T01:00:00Z' })] }, /PBI plan.*承認されていません/],
+      ['the approver has read access only', { permissions: { alice: 'read' } }, /PBI plan.*承認されていません/],
+      ['the approval is for the plan before ## SBI構成 was rewritten', { comments: [planComment(planDigest(implementationOnlyPlan))] }, /PBI plan.*承認されていません/],
+      ['the approvals cannot be read', { fail: { comments: true } }, /HTTP 502/],
+    ]) {
+      it(`when ${name} then the PBI is NOT_DONE`, async () => {
+        const result = await status({ state });
+        assert.equal(result.status, 'NOT_DONE');
+        assert.match(result.reasons.join('\n'), pattern);
+        assert.equal(result.ready, false);
+      });
+    }
+  });
+  describe('given the SBI Issues found on GitHub and the approved plan', () => {
+    it('when an SBI of the approved plan cannot be found because its label was removed then the PBI is NOT_DONE even if no SBI depends on it', async () => {
+      const plan = planOf(8, [...fullPlan.sbis, { id: 'SBI-004', number: 14, kind: 'implementation', dependsOn: [] }]);
+      const result = await status({ state: { plan } });
+      assert.equal(result.status, 'NOT_DONE');
+      assert.match(result.reasons.join('\n'), /SBI #14 が見つかりません/);
+    });
+    it('when an SBI Issue of the PBI is not in the approved plan then the PBI is NOT_DONE', async () => {
+      const extra = sbiIssue(planned({ id: 'SBI-004' }), { number: 14, html_url: issueUrl(14) });
+      const result = await status({ state: { issues: [...plannedSbis.map(s => sbiIssue(s)), extra] } });
+      assert.equal(result.status, 'NOT_DONE');
+      assert.match(result.reasons.join('\n'), /SBI #14 が承認済みPBI planに登録されていません/);
+    });
+    it('when an SBI Issue now says another kind than the approved plan then the PBI is NOT_DONE', async () => {
+      const { state } = world();
+      state.issues[1] = sbiIssue(planned({ id: 'SBI-002', kind: 'validation', dependsOn: ['SBI-001'] }));
+      const result = await status({ state });
+      assert.equal(result.status, 'NOT_DONE');
+      assert.match(result.reasons.join('\n'), /SBI #12.*承認済みPBI plan.*一致しません/);
+    });
+  });
+  describe('given an APPROVE of the PBI Human Acceptance', () => {
+    it('when the plan is not approved then APPROVE is not ready', async () => {
+      const result = await status({ state: { comments: [] }, records: [] });
+      assert.equal(result.ready, false);
     });
   });
 });
@@ -495,11 +557,13 @@ describe('PBI Status CLI', () => {
       const { scripts } = JSON.parse(await (await import('node:fs/promises')).readFile(new URL('../../package.json', import.meta.url), 'utf8'));
       assert.equal(scripts['harness:pbi-status'], 'node tools/harness/cli.mjs pbi-status');
       assert.equal(scripts['harness:pbi-accept'], 'node tools/harness/cli.mjs pbi-accept');
+      assert.equal(scripts['harness:pbi-plan'], 'node tools/harness/cli.mjs pbi-plan');
+      assert.equal(scripts['harness:pbi-plan-approve'], 'node tools/harness/cli.mjs pbi-plan-approve');
     });
     it('when the usage is printed then both are user-facing commands', async () => {
       const { stderr } = await execute(process.execPath, [cli, 'unknown']);
       const userFacing = stderr.indexOf('User-facing'), internal = stderr.indexOf('Internal/Maintenance');
-      for (const command of ['harness:pbi-status PBI_URL', 'harness:pbi-accept PBI_URL']) {
+      for (const command of ['harness:pbi-status PBI_URL', 'harness:pbi-accept PBI_URL', 'harness:pbi-plan-approve PBI_URL']) {
         const at = stderr.indexOf(`pnpm ${command}`);
         assert.ok(at > userFacing && at < internal, `${command} is user-facing`);
       }
@@ -508,6 +572,11 @@ describe('PBI Status CLI', () => {
       const result = await execute(process.execPath, [cli, 'pbi-accept', pbi.url, '--decision', 'approve']);
       assert.equal(result.code, 1);
       assert.match(result.stderr, /--evidence/);
+    });
+    it('when pbi-plan-approve has no PBI URL then it exits 1 without posting', async () => {
+      const result = await execute(process.execPath, [cli, 'pbi-plan-approve']);
+      assert.equal(result.code, 1);
+      assert.match(result.stderr, /PBI URL/);
     });
     it('when pbi-status has no PBI URL then it exits 1', async () => {
       const result = await execute(process.execPath, [cli, 'pbi-status', '--json']);

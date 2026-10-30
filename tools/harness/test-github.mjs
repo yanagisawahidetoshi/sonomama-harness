@@ -62,6 +62,9 @@ export const githubMock = defaults => async (state, test) => {
         process.stdout.write(JSON.stringify({ total_count: artifacts.length, artifacts: page(artifacts) }));
       } else if (method === 'GET' && (m = endpoint.match(/^repos\\/acme\\/app\\/issues\\/(\\d+)\\/dependencies\\/blocked_by$/))) {
         process.stdout.write(JSON.stringify(page(state.blockedBy[m[1]] || [])));
+      } else if (method === 'PATCH' && (m = endpoint.match(/^repos\\/acme\\/app\\/issues\\/(\\d+)$/))) {
+        const issue = issueByNumber(Number(m[1])); if (!issue) fail('gh: Not Found (HTTP 404)');
+        Object.assign(issue, JSON.parse(input)); process.stdout.write(JSON.stringify(issue));
       } else if (method === 'GET' && (m = endpoint.match(/^repos\\/acme\\/app\\/issues\\/(\\d+)$/))) {
         if (Number(m[1]) !== state.issue.number) fail('gh: Not Found (HTTP 404)');
         process.stdout.write(JSON.stringify(state.issue));

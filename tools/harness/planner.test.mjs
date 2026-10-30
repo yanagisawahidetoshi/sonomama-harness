@@ -8,6 +8,7 @@ import { exists, readJson } from './io.mjs';
 import { parseIssueUrl, planIssue, renderCreatedList, sbiMarker, sbiDigest } from './planner.mjs';
 import { judgePlan, creationOrder, judgeChangedFileCount } from './planner-judge.mjs';
 import { plannedSbiSchema, planJsonSchema } from './schemas.mjs';
+import { parsePlan, planOf, planDigest } from './pbi-plan.mjs';
 
 const pbiUrl = 'https://github.com/acme/app/issues/8';
 const pbi = { number: 8, title: '受講生プロフィールを表示する', body: '## 背景\nプロフィールを取得・更新・表示する。', html_url: pbiUrl, state: 'open', labels: [] };
@@ -110,6 +111,23 @@ describe('PBI → SBI Planner', () => {
       assert.match(text, /Created SBI Issues/);
       for (const created of result.created) assert.ok(text.includes(created.url));
     })));
+    it('when planning succeeds then the PBI body gets ## SBI構成 with every created SBI Issue, its kind and its dependencies, and keeps the rest of the body', () => fixture(root => mockGitHub({}, async github => {
+      const result = await plan(root);
+      const body = (await github.state()).issue.body;
+      assert.match(body, /^## 背景\nプロフィールを取得・更新・表示する。/);
+      assert.deepEqual(parsePlan(body, pbiUrl), { plan: planOf(8, [
+        { id: 'SBI-001', number: 101, kind: 'implementation', dependsOn: [] }, { id: 'SBI-002', number: 102, kind: 'implementation', dependsOn: ['SBI-001'] },
+        { id: 'SBI-003', number: 103, kind: 'validation', dependsOn: ['SBI-001', 'SBI-002'] },
+      ]), errors: [] });
+      assert.equal(result.planDigest, planDigest(parsePlan(body, pbiUrl).plan));
+      assert.match(body, /pnpm harness:pbi-plan-approve https:\/\/github\.com\/acme\/app\/issues\/8/);
+    })));
+    it('when the planner is re-run with the same SBIs then the PBI body is not written again', () => fixture(root => mockGitHub({}, async github => {
+      await plan(root);
+      const before = (await github.calls()).length;
+      await plan(root);
+      assert.ok(!(await github.calls()).slice(before).some(call => call.args.includes('PATCH') && call.args.some(a => /^repos\/acme\/app\/issues\/8$/.test(a))));
+    })));
     it('when GITHUB_STEP_SUMMARY is unset then writes no summary file', () => fixture(root => mockGitHub({}, async github => {
       await plan(root);
       assert.equal(await exists(join(github.dir, 'summary.md')), false);
@@ -186,6 +204,7 @@ describe('PBI → SBI Planner', () => {
     })));
     it('when an existing SBI Issue was generated from different content then fails before any GitHub write and names the Issue', () => fixture(root => mockGitHub({}, async github => {
       await plan(root);
+      const afterFirst = (await github.calls()).length;
       const changed = validPlan();
       changed[0].acceptanceCriteria.push({ id: 'AC-3', description: '氏名の変更が即時に反映される' });
       changed[0].scenarios[0].acceptanceIds.push('AC-3');
@@ -193,7 +212,7 @@ describe('PBI → SBI Planner', () => {
       const state = await github.state();
       assert.equal(state.created.length, 3);
       assert.equal(state.comments[0].updated, undefined);
-      assert.ok(!(await github.calls()).some(call => call.args.includes('PATCH')));
+      assert.ok(!(await github.calls()).slice(afterFirst).some(call => call.args.includes('-X')), 'second run must not write');
       assert.equal((await github.calls()).filter(call => call.args.includes('POST')).length, 6, 'first run: 2 labels + 3 issues + 1 comment; second run: no POST');
     })));
     const tampered = [
