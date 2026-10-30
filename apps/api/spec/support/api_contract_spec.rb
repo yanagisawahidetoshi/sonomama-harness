@@ -324,6 +324,73 @@ RSpec.describe "API contract for request specs", type: :request do
     end
   end
 
+  describe "the suite coverage of the SSOT contract" do
+    let(:show_route) do
+      { "verb" => "GET", "path" => "/students/:id(.:format)", "controller" => "students", "action" => "show" }
+    end
+    let(:create_route) do
+      { "verb" => "POST", "path" => "/students(.:format)", "controller" => "students", "action" => "create" }
+    end
+
+    # The fixture contract stands in for packages/api-schema/openapi.yaml; the records of this example are discarded.
+    around do |example|
+      Dir.mktmpdir do |dir|
+        FileUtils.cp(ApiContractFixture.contract_path, File.join(dir, "openapi.yaml"))
+        previous_dir = ENV.fetch("API_SCHEMA_DIR", nil)
+        previous_records = ApiContract.instance_variable_get(:@coverage_records)
+        ENV["API_SCHEMA_DIR"] = dir
+        ApiContract.instance_variable_set(:@coverage_records, nil)
+        example.run
+      ensure
+        ENV["API_SCHEMA_DIR"] = previous_dir
+        ApiContract.instance_variable_set(:@coverage_records, previous_records)
+      end
+    end
+
+    # What the full suite reports for these Rails routes after this example's matcher runs.
+    def suite_coverage(*routes)
+      coverage = ApiContract::Coverage.new(contract: ApiContract.default, routes:)
+      ApiContract.coverage_records.each do |operation, locations|
+        locations.each { |location| coverage.record(operation, location) }
+      end
+      coverage
+    end
+
+    context "when a request spec checks a conforming exchange" do
+      it "reports the route as COVERED", :aggregate_failures do
+        get "/students/s-1"
+        expect(response).to match_api_contract
+
+        expect(suite_coverage(show_route).verify!)
+          .to include(a_string_starting_with("COVERED GET /students/{studentId}"))
+      end
+    end
+
+    context "when the only spec for a route asserts that the exchange does not match the contract" do
+      let(:fixture_app) { ApiContractFixture.app(show: :numeric_student_id) }
+
+      it "keeps the route UNCOVERED, because a failed check is not a contract check of the route",
+         :aggregate_failures do
+        get "/students/s-1"
+        expect(response).not_to match_api_contract
+
+        expect { suite_coverage(show_route).verify! }
+          .to raise_error(ApiContract::CoverageError, %r{UNCOVERED GET /students/\{studentId\}})
+      end
+    end
+
+    context "when the only spec for a route is a negative spec with request: :invalid" do
+      it "keeps the route UNCOVERED, because no conforming request and success response were checked",
+         :aggregate_failures do
+        post "/students", params: { name: "Taro", grade: "third" }, as: :json
+        expect(response).to match_api_contract(request: :invalid)
+
+        expect { suite_coverage(create_route).verify! }
+          .to raise_error(ApiContract::CoverageError, %r{UNCOVERED POST /students})
+      end
+    end
+  end
+
   describe "loading a contract" do
     context "when the file does not exist" do
       it "fails with the path, so a missing OpenAPI never counts as a passing check" do
