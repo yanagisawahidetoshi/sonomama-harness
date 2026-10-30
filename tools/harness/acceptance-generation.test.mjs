@@ -1,12 +1,13 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { renderSbiBody } from './planner.mjs';
 import { assertWritablePath } from './workspace.mjs';
-import { generatedRegistrationSchema } from './schemas.mjs';
+import { configSchema, generatedRegistrationSchema } from './schemas.mjs';
+import { readAcceptance, withAcceptance } from './acceptance-registry.mjs';
 import { specDigest } from './spec-approval.mjs';
 import { approvedSpec, generateAcceptance, verifyGeneratedRegistration } from './acceptance-generation.mjs';
 
@@ -97,12 +98,102 @@ describe('Generating Trusted Acceptance from an approved spec', () => {
     assert.equal(result.status, 'REJECTED');
     await assert.rejects(readFile(join(root, 'apps/api/app/controllers/courses_controller.rb'), 'utf8'));
   }));
-  it('when the agent is asked to generate then it receives the approved spec and the acceptance directory, and no tool to write files', () => workspace(async root => {
+  it('when the agent is asked to generate then it receives only the approved spec and the answer schema, nothing that writes files', () => workspace(async root => {
     let seen;
     await generate(root, answer(), { agent: async request => { seen = request; return answer(); } });
     assert.match(seen.prompt, /AC-2: 担当外の講師は403になる/);
     assert.match(seen.prompt, /apps\/api\/spec\/acceptance\/sbi_7\//);
-    assert.equal(seen.writes, undefined);
+    assert.deepEqual(Object.keys(seen).sort(), ['prompt', 'schema']);
+  }));
+});
+
+describe('Generating Trusted Acceptance safely', () => {
+  const nothingWritten = async root => {
+    await assert.rejects(readFile(join(root, '.harness/acceptance/sbi-7.json'), 'utf8'));
+    await assert.rejects(readFile(join(root, path), 'utf8'));
+  };
+  for (const [name, escape] of [
+    ['climbs out of the acceptance directory with ..', 'apps/api/spec/acceptance/sbi_7/../../../app/models/course_spec.rb'],
+    ['climbs out of the workspace', 'apps/api/spec/acceptance/sbi_7/../../../../../../escape_spec.rb'],
+    ['uses a different letter case for the directory', 'apps/api/spec/Acceptance/sbi_7/courses_spec.rb'],
+  ]) {
+    it(`when a generated path ${name} then nothing is written`, () => workspace(async root => {
+      const result = await generate(root, answer({ files: [{ path: escape, content }], mapping: answer().mapping.map(m => ({ ...m, examples: m.examples.map(e => ({ ...e, path: escape })) })) }));
+      assert.equal(result.status, 'REJECTED');
+      await assert.rejects(readFile(join(root, escape), 'utf8'));
+      await nothingWritten(root);
+    }));
+  }
+  it('when the same path is returned twice then nothing is written', () => workspace(async root => {
+    const result = await generate(root, answer({ files: [{ path, content }, { path, content: `${content}\n` }] }));
+    assert.equal(result.status, 'REJECTED');
+    await nothingWritten(root);
+  }));
+  it('when a generated test carries a credential then nothing is written', () => workspace(async root => {
+    const leaked = content.replace('headers: auth(owner)', `headers: { "Authorization" => "token ghp_${'x'.repeat(36)}" }`);
+    const result = await generate(root, answer({ files: [{ path, content: leaked }] }));
+    assert.equal(result.status, 'REJECTED');
+    await nothingWritten(root);
+  }));
+  it('when a generated test is larger than the file size limit then nothing is written', () => workspace(async root => {
+    const huge = content.replace('end\n', `${'# padding\n'.repeat(8000)}end\n`);
+    const result = await generate(root, answer({ files: [{ path, content: huge }] }));
+    assert.equal(result.status, 'REJECTED');
+    await nothingWritten(root);
+  }));
+  it('when the acceptance directory is a symlink then nothing is written through it', () => workspace(async root => {
+    const outside = await mkdtemp(join(tmpdir(), 'harness-outside-'));
+    try {
+      await mkdir(join(root, 'apps/api/spec/acceptance'), { recursive: true });
+      await symlink(outside, join(root, 'apps/api/spec/acceptance/sbi_7'));
+      assert.equal((await generate(root, answer())).status, 'REJECTED');
+      await assert.rejects(readFile(join(outside, 'courses_spec.rb'), 'utf8'));
+    } finally { await rm(outside, { recursive: true, force: true }); }
+  }));
+  for (const [name, reply] of [
+    ['omits the files', { mapping: answer().mapping, escalation: null }],
+    ['returns a path that is not a string', { ...answer(), files: [{ path: 42, content }] }],
+  ]) {
+    it(`when the agent answer ${name} then it is rejected instead of crashing`, () => workspace(async root => {
+      assert.equal((await generate(root, reply)).status, 'REJECTED');
+      await nothingWritten(root);
+    }));
+  }
+  it('when the Issue spec has no acceptance criteria or Scenario the Harness can read then generation stops instead of trivially passing', () => workspace(async root => {
+    const unreadable = { ...issue, body: issue.body.replace(/- \[ \] AC-(\d): /g, '- [ ] AC-$1 ').replace(/Scenario: /g, 'シナリオ: ') };
+    const result = await generateAcceptance({ workspace: root, issue: unreadable, provider: 'claude', runId: 'run-1', agent: async () => answer() });
+    assert.equal(result.status, 'REJECTED');
+    assert.match(result.findings.map(f => f.message).join('\n'), /acceptance criteria|Scenario/);
+    await nothingWritten(root);
+  }));
+  it('when a hand-written version 1 registration already exists then generation does not overwrite it', () => workspace(async root => {
+    const v1 = JSON.stringify({ version: 1, sbiIssue: 7, verifiers: [{ id: 'issue-7', trustedScript: '.harness/verification/issue-7.mjs', planned: ['x'], acceptanceIds: ['AC-1', 'AC-2'] }] });
+    await mkdir(join(root, '.harness/acceptance'), { recursive: true });
+    await writeFile(join(root, '.harness/acceptance/sbi-7.json'), v1);
+    assert.equal((await generate(root, answer())).status, 'REJECTED');
+    assert.equal(await readFile(join(root, '.harness/acceptance/sbi-7.json'), 'utf8'), v1);
+  }));
+  it('when the tests are generated again under another name then the old generated files are removed', () => workspace(async root => {
+    await generate(root, answer());
+    const renamed = 'apps/api/spec/acceptance/sbi_7/courses_show_spec.rb';
+    const again = answer({ files: [{ path: renamed, content }], mapping: answer().mapping.map(m => ({ ...m, examples: m.examples.map(e => ({ ...e, path: renamed })) })) });
+    assert.equal((await generate(root, again)).status, 'REGISTERED');
+    await assert.rejects(readFile(join(root, path), 'utf8'));
+    const registration = JSON.parse(await readFile(join(root, '.harness/acceptance/sbi-7.json'), 'utf8'));
+    assert.deepEqual(await verifyGeneratedRegistration({ root, registration, issue }), []);
+  }));
+});
+
+describe('Reading a generated registration with the existing loader', () => {
+  it('when the registration of an SBI is version 2 then readAcceptance returns it instead of failing the run', () => workspace(async root => {
+    await generate(root, answer());
+    const read = await readAcceptance(root, 7);
+    assert.equal(read.version, 2);
+  }));
+  it('when withAcceptance builds the verifiers then a version 2 registration adds no hand-written verifier', () => workspace(async root => {
+    await generate(root, answer());
+    const config = await withAcceptance(root, configSchema.parse(JSON.parse(await readFile(new URL('../../.harness/config/harness.json', import.meta.url), 'utf8'))), [7]);
+    assert.equal(config.verifiers.some(v => v.sbiIssue === 7), false);
   }));
 });
 
@@ -125,6 +216,29 @@ describe('Re-verifying a generated registration', () => {
     const registration = await registered(root);
     await rm(join(root, path));
     assert.match((await verifyGeneratedRegistration({ root, registration, issue })).join('\n'), /courses_spec\.rb/);
+  }));
+  it('when a support file the generated tests rely on was changed by the implementation then it fails', () => workspace(async root => {
+    await mkdir(join(root, 'apps/api/spec/support'), { recursive: true });
+    await writeFile(join(root, 'apps/api/spec/support/auth.rb'), 'def auth(user) = { "X-User" => user.id.to_s }\n');
+    await writeFile(join(root, 'apps/api/spec/rails_helper.rb'), 'require "spec_helper"\n');
+    const registration = await registered(root);
+    await writeFile(join(root, 'apps/api/spec/support/auth.rb'), 'RSpec.configure { |c| c.before { allow(CoursePolicy).to receive(:new) } }\n');
+    assert.match((await verifyGeneratedRegistration({ root, registration, issue })).join('\n'), /spec\/support\/auth\.rb/);
+  }));
+  it('when a support file the generated tests rely on was added by the implementation then it fails', () => workspace(async root => {
+    const registration = await registered(root);
+    await mkdir(join(root, 'apps/api/spec/support'), { recursive: true });
+    await writeFile(join(root, 'apps/api/spec/support/override.rb'), 'RSpec.configure { }\n');
+    assert.match((await verifyGeneratedRegistration({ root, registration, issue })).join('\n'), /override\.rb/);
+  }));
+  it('when the registration of another SBI is given then it is not reused even if the spec is the same', () => workspace(async root => {
+    const registration = await registered(root);
+    assert.match((await verifyGeneratedRegistration({ root, registration, issue: { ...issue, number: 8 } })).join('\n'), /#7/);
+  }));
+  it('when the registration is not a valid version 2 registration then it is not reused', () => workspace(async root => {
+    const registration = await registered(root);
+    const broken = { ...registration, tests: [{ path: '../../etc/passwd', sha256: 'a'.repeat(64) }] };
+    assert.ok((await verifyGeneratedRegistration({ root, registration: broken, issue })).length > 0);
   }));
   it('when a file was added to the acceptance directory after registration then it fails', () => workspace(async root => {
     const registration = await registered(root);
