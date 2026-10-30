@@ -97,9 +97,10 @@ end
 - 照合しないもの: `security`（認証）。認証・認可の振る舞いは通常のrequest specで確かめる。
 
 full suite（`bundle exec rspec`）の最後に、Railsの業務route（`config/routes.manifest.json`）ごとに契約照合したrequest specを `COVERED` / `UNCOVERED` で出す。
-業務routeに契約照合したspecが1件も無い（skipを含む）、routeが契約に無い、`openapi.yaml` が無いのに業務routeがある場合はsuiteをFAILにする。
+業務routeに、契約に適合したrequestとresponseを確かめたspecが1件も無い（skipを含む）、routeが契約に無い、`openapi.yaml` が無いのに業務routeがある場合はsuiteをFAILにする。
 Railsが未実装の契約operationは `UNIMPLEMENTED` と出すだけでFAILにしない。業務routeも `openapi.yaml` も無い間は `NOT CHECKED` と出し、照合済みとは扱わない。
 一部のファイル・exampleだけを実行したときはcoverageを判定しない。
+coverageに数えるのは、`request: :invalid` を付けずに通った `match_api_contract` だけ。失敗した照合、`not_to match_api_contract`、負のテストは数えない。成功時のrequest / responseを確かめていないため。
 
 照合の仕組みは `spec/support/api_contract_spec.rb` が、本番routeに追加しないfixture用のRails route（`spec/support/api_contract_fixture.rb`）と契約（`spec/fixtures/api_contract/`）で検証する。
 

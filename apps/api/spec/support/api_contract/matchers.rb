@@ -11,8 +11,11 @@ module ApiContract
       match do |response|
         subject_contract = contract || ApiContract.default
         @result = subject_contract.check(response.request, response)
-        ApiContract.record(subject_contract, @result.operation) unless @result.undefined
-        problems.empty?
+        matched = problems.empty?
+        # Coverage counts only a conforming request whose response followed the contract. A failed check or a negative
+        # spec (request: :invalid) does not show that the route serves the contract.
+        ApiContract.record(subject_contract, @result.operation) if matched && request == :valid
+        matched
       end
 
       define_method(:problems) do
