@@ -18,6 +18,18 @@ export const planOf = (pbiNumber, sbis) => ({
   version: 1, pbi: pbiNumber,
   sbis: sbis.map(({ id, number, kind, dependsOn = [] }) => ({ id, number, kind, dependsOn: [...new Set(dependsOn)].sort() })).sort((a, b) => a.id.localeCompare(b.id)),
 });
+// The revision counts how often ## SBI構成 changed over the PBI body versions GitHub keeps (edit history, then the current body).
+// Nobody writes it: A -> B -> A ends at revision 3, so an approval of the first A (revision 1) does not come back. Edits outside the section
+// leave it unchanged. A version deleted from the history cannot be read, so it counts as a change: rewriting history only invalidates.
+export function planRevision({ versions, currentBody, pbiUrl }) {
+  const keys = [...versions, { body: currentBody, deletedAt: null }].map((v, i) => {
+    if (v.deletedAt || v.body == null) return `deleted:${i}`;
+    const { plan } = parsePlan(v.body, pbiUrl);
+    return plan ? planDigest(plan) : 'none';
+  });
+  return 1 + keys.filter((key, i) => i > 0 && key !== keys[i - 1]).length;
+}
+export const approvalKey = (digest, revision) => createHash('sha256').update(`${digest}:${revision}`).digest('hex');
 export const planDigest = plan => createHash('sha256').update(JSON.stringify(planOf(plan.pbi, plan.sbis))).digest('hex');
 
 export function renderPlanSection(pbiUrl, plan) {
@@ -115,14 +127,15 @@ export async function writePlanSection({ ref, issue, plan, github }) {
 export async function approvePbiPlan({ pbiUrl, decision = 'approve', github = githubCli }) {
   const ref = parseIssueUrl(pbiUrl);
   if (!['approve', 'revoke'].includes(decision)) throw new Error('Unknown PBI plan decision');
-  const { plan, errors } = await readPlan(ref, github);
+  const { issue, plan, errors } = await readPlan(ref, github);
   if (!plan) throw new Error(['PBI planを読めません。承認していません。', ...errors.map(e => `- ${e}`), `- pnpm harness:pbi-plan ${ref.url} で ## SBI構成 を書けます`].join('\n'));
-  const digest = planDigest(plan);
+  const digest = planDigest(plan), revision = planRevision({ versions: await github.bodyVersions(ref), currentBody: issue.body, pbiUrl: ref.url });
+  const key = approvalKey(digest, revision);
   if (decision === 'approve') {
     const problems = [];
     problems.push(...comparePlan(plan, await pbiSbis(ref, github, problems), 'PBI plan'));
     if (problems.length) throw new Error(['## SBI構成 がGitHubのSBI Issueと一致しません。承認していません。', ...problems.map(p => `- ${p}`)].join('\n'));
   }
-  const comment = await github.addComment(ref, approvalLine(planPrefix, digest, decision));
-  return { plan, digest, comment: comment.html_url, ...await readCommentApprovals({ ref, prefix: planPrefix, digest, github }) };
+  const comment = await github.addComment(ref, approvalLine(planPrefix, key, decision));
+  return { plan, digest, revision, approvalKey: key, comment: comment.html_url, ...await readCommentApprovals({ ref, prefix: planPrefix, digest: key, github }) };
 }

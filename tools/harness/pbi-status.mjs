@@ -5,7 +5,7 @@ import { parseIssueUrl } from './planner.mjs';
 import { githubCli } from './planner-github.mjs';
 import { githubPrCli, ciStatus } from './github-pr.mjs';
 import { mergedHarnessPull } from './sbi-issue.mjs';
-import { parsePlan, planDigest, pbiSbis, comparePlan, planPrefix } from './pbi-plan.mjs';
+import { parsePlan, planDigest, pbiSbis, comparePlan, planPrefix, planRevision, approvalKey } from './pbi-plan.mjs';
 import { readCommentApprovals } from './github-approval-records.mjs';
 import { judgePbi } from './pbi-judge.mjs';
 import { pbiAcceptanceRecords, recordPbiAcceptance } from './pbi-acceptance.mjs';
@@ -39,7 +39,7 @@ export async function collectPbiStatus({ root, pbiUrl, config, github = githubCl
   const ref = parseIssueUrl(pbiUrl);
   evidence ??= maestroEvidence({ ref, github, ...(actions ? { actions } : {}) });
   config ??= (await check(root)).config;
-  const problems = [], output = { pbi: { url: ref.url, number: ref.number, title: null }, plan: { digest: null, approved: false, approvers: [] }, sbis: [], blockers: [] };
+  const problems = [], output = { pbi: { url: ref.url, number: ref.number, title: null }, plan: { digest: null, revision: null, approvalKey: null, approved: false, approvers: [] }, sbis: [], blockers: [] };
   const attempt = async (what, fn, fallback) => { try { return await fn(); } catch (error) { problems.push(`${what}をGitHubから読めません（${error.message}）`); return fallback; } };
 
   const issue = await attempt(`PBI ${ref.url}`, () => github.fetchIssue(ref), null);
@@ -51,7 +51,12 @@ export async function collectPbiStatus({ root, pbiUrl, config, github = githubCl
   problems.push(...planErrors.map(e => `PBI plan: ${e}（pnpm harness:pbi-plan ${ref.url} で生成し、pnpm harness:pbi-plan-approve ${ref.url} で承認する）`));
   if (plan) {
     output.plan.digest = planDigest(plan);
-    Object.assign(output.plan, await attempt('PBI planの承認', () => readCommentApprovals({ ref, prefix: planPrefix, digest: output.plan.digest, github }), {}));
+    const versions = await attempt('PBI本文の編集履歴', () => github.bodyVersions(ref), null);
+    if (versions) {
+      output.plan.revision = planRevision({ versions, currentBody: issue.body, pbiUrl: ref.url });
+      output.plan.approvalKey = approvalKey(output.plan.digest, output.plan.revision);
+      Object.assign(output.plan, await attempt('PBI planの承認', () => readCommentApprovals({ ref, prefix: planPrefix, digest: output.plan.approvalKey, github }), {}));
+    }
     if (!output.plan.approved) problems.push(`PBI plan（digest ${output.plan.digest.slice(0, 12)}）が承認されていません。## SBI構成 を確認して pnpm harness:pbi-plan-approve ${ref.url}`);
     problems.push(...comparePlan(plan, sbis));
   }
@@ -77,7 +82,7 @@ export async function collectPbiStatus({ root, pbiUrl, config, github = githubCl
     if (read) row.evidence = read.connected ? 'CONNECTED' : 'NOT_CONNECTED';
     if (sbi.kind === 'validation') {
       // The digest the human approves also binds the SBI composition, so adding, dropping or swapping an SBI voids an earlier APPROVE.
-      if (read?.connected) results[sbi.id] = { e2e, evidenceDigest: digestOf({ plan: output.plan.digest, sbis: composition, evidence: read.evidenceDigest }) };
+      if (read?.connected) results[sbi.id] = { e2e, evidenceDigest: digestOf({ plan: output.plan.approvalKey, sbis: composition, evidence: read.evidenceDigest }) };
       continue;
     }
     if (pull === null) problems.push(`${where} にmainへmergeされたHarness PR（Closes #${sbi.number} と SBI-Issue trailer）がありません`);
@@ -94,7 +99,7 @@ export async function collectPbiStatus({ root, pbiUrl, config, github = githubCl
   const implementations = sbis.filter(s => s.kind === 'implementation'), validations = sbis.filter(s => s.kind === 'validation');
   // Without a validation SBI the human confirms the merged implementation evidence; the digest changes whenever any part of it does.
   const evidenceDigest = validations.length ? (sha256.test(results[validations[0].id]?.evidenceDigest ?? '') ? results[validations[0].id].evidenceDigest : null)
-    : implementations.length && merged.length === implementations.length ? digestOf({ plan: output.plan.digest, sbis: composition, evidence: merged }) : null;
+    : implementations.length && merged.length === implementations.length ? digestOf({ plan: output.plan.approvalKey, sbis: composition, evidence: merged }) : null;
   output.blockers = issue && !issue.pull_request ? (await attempt('PBIをブロックしているIssue（blocked by）', () => github.blockedBy(ref), [])).map(i => ({ url: i.html_url, title: i.title, state: i.state ?? null })) : [];
   let records = [];
   try { records = await acceptanceRecords(ref.url); } catch (error) { problems.push(`PBI Human Acceptanceの台帳を読めません（${error.message}）`); }

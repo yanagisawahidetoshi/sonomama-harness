@@ -81,6 +81,20 @@ export const githubCli = {
     if (file?.type !== 'file' || file.encoding !== 'base64') throw new Error(`${path} at ${ref} is not a file`);
     return Buffer.from(file.content, 'base64').toString('utf8');
   },
+  // Every version of an Issue body that GitHub keeps in its edit history, oldest first. A version deleted from the history has no body.
+  async bodyVersions({ owner, repo, number }) {
+    const query = 'query($owner:String!,$repo:String!,$number:Int!,$after:String){repository(owner:$owner,name:$repo){issue(number:$number){userContentEdits(first:100,after:$after){nodes{editedAt deletedAt diff} pageInfo{hasNextPage endCursor}}}}}';
+    const versions = [];
+    let after = null;
+    for (let page = 0; page < 50; page++) {
+      const edits = (await api('POST', 'graphql', { query, variables: { owner, repo, number, after } }))?.data?.repository?.issue?.userContentEdits;
+      if (!edits) throw new Error(`GraphQL: edit history of ${owner}/${repo}#${number} is unavailable`);
+      versions.push(...edits.nodes);
+      if (!edits.pageInfo.hasNextPage) return versions.sort((a, b) => a.editedAt.localeCompare(b.editedAt)).map(v => ({ body: v.deletedAt ? null : v.diff, deletedAt: v.deletedAt ?? null }));
+      after = edits.pageInfo.endCursor;
+    }
+    throw new Error(`GraphQL: edit history of ${owner}/${repo}#${number} has too many pages`);
+  },
   // GitHub issue dependencies: the Issues registered as blocking this one (blocked by).
   async blockedBy({ owner, repo, number }) {
     return listAll(`repos/${owner}/${repo}/issues/${number}/dependencies/blocked_by`, {}, githubIssueListSchema);
