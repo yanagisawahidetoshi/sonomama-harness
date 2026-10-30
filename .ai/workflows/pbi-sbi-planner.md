@@ -30,9 +30,10 @@ Maestroのlane（実装SBIはモックAPI、最終確認SBIは実API）とComple
 ### PBI plan（PBIのSBI集合）
 
 PBIのSBI集合の正本は、Plannerが書いた`## SBI構成`と、それに対する人間の承認コメントの組。
-`pnpm harness:pbi-plan-approve <PBI URL>`は、`## SBI構成`がGitHub上のSBI Issue（`sbi`ラベルとPlannerのmarker）と一致するときだけ、人の`gh`でPBIに`harness-pbi-plan: <digest>`をコメントする。撤回は`--decision revoke`（`harness-pbi-plan-revoke: <digest>`）。
+`pnpm harness:pbi-plan-approve <PBI URL>`は、`## SBI構成`がGitHub上のSBI Issue（`sbi`ラベルとPlannerのmarker）と一致するときだけ、人の`gh`でPBIに`harness-pbi-plan: <approval key>`をコメントする。撤回は`--decision revoke`（`harness-pbi-plan-revoke: <approval key>`）。
 
 - digestは、PBI番号と、SBIごとのSBI ID・Issue番号・kind・依存（ID順に並べ、依存も並べる）のsha256。`## SBI構成`を書き換える、SBIを足す・外すとdigestが変わり、承認は無効になる。
+- revisionは、GitHubが保持するPBI本文の編集履歴（GraphQL `userContentEdits`）と現在の本文を古い順に並べ、`## SBI構成`の内容が変わった回数＋1。人は書かない。節の外の編集では変わらない。履歴から削除された版は中身を読めないので「変わった」と数える。approval key = sha256(`<digest>:<revision>`)。A → B → Aと戻すとrevisionは3になり、最初のA（revision 1）への承認は戻らない。
 - 承認として数えるのは、write以上の権限を持つ人の、本文全体（前後の空白を除く）が承認の1行と一致するコメントだけ。説明文付き・引用・HTMLコメント・コードブロックの中の行は数えない（`harness-spec`も同じ）。botは数えない。権限を読めない人、編集されたコメントも数えない。人ごとに最新の判断を使い、1人で足りる。検証は`github-approval-records.mjs`（#147の`harness-spec`と共有）。
 - `## SBI構成`が無い既存のPBIは、`pnpm harness:pbi-plan <PBI URL>`でGitHub上のSBI IssueからPBI本文に書いてから承認する。Plannerは再実行しない。
 
@@ -57,11 +58,11 @@ pnpm harness:pbi-accept <PBI URL> --evidence <digest> [--decision approve|revoke
 | Human Acceptance | `.harness/state/human/pbi-acceptance/`の署名付き台帳 |
 
 GitHub・Evidence・台帳のどれかを読めなければ、理由を出してNOT_DONEにする。
-Evidenceを読むのはmainへmergeされたHarness PRのCI runだけなので、最終確認SBIもHarness PRをmergeする必要がある。artifactは保存期限（90日）を過ぎると読めなくなり、そのPBIはNOT_DONEに戻る。
+Evidenceを読むのはmainへmergeされたHarness PRのCI runだけなので、最終確認SBIもHarness PRをmergeする必要がある。artifactの保存期限（90日）を過ぎても、APPROVE時のmanifestが有効な間はDONEのまま。
 
 Evidence digestは、承認済みPBI planのdigest、SBIの構成（ID・Issue番号・kind）と、最終確認SBIがあればその`real.json`のsha256、なければ実装SBIごとのIssue・PR・head SHA・merge commit・E2E結果と`mock.json`のsha256をまとめたsha256。SBIを足す・外す・入れ替えると過去のAPPROVEは無効になる。
 すべてのSBIが完了すると`harness:pbi-status`がdigestと`harness:pbi-accept`のコマンドを表示する。人間はEvidenceを確認してから記録する。
-APPROVEはPBIの最終Gateなので、PBI planが承認済みで、すべてのSBIが完了し（最終確認SBIがあればPASS）、Evidenceを読めて`--evidence`が現在のdigestと一致し、openのblockerが無いときだけ記録する。blockerを読めないときも記録しない。REQUEST_CHANGES / REVOKEはいつでも記録できる。
+APPROVEはPBIの最終Gateなので、CIのraw artifactからEvidenceを検証できたときだけ記録し、同時に署名付きEvidence manifest（`.harness/state/human/pbi-evidence/`。plan digest / revision / approval key、SBIごとのID・Issue番号・kind・PR番号・head SHA・merge commit SHA・required checks・Maestro lane・結果ファイルのsha256・workflow run ID・artifact ID）を保存する。APPROVE後にartifactが期限切れ・欠落・取得失敗になったSBIは、approval key・SBI構成・全SBIのPR / head / merge commitがmanifestと一致する間だけmanifestで判定する（表示は`(manifest)`）。どれかが変わればmanifestは使わずNOT_DONE。承認前にartifactが無いときもNOT_DONE。PBI planが承認済みで、すべてのSBIが完了し（最終確認SBIがあればPASS）、Evidenceを読めて`--evidence`が現在のdigestと一致し、openのblockerが無いときだけ記録する。blockerを読めないときも記録しない。REQUEST_CHANGES / REVOKEはいつでも記録できる。
 人ごとに最新の判断を使い、現在のdigestに対するAPPROVEが1件あればGateを通る。`--reviewer`は無く、OSのユーザーが記録者になる。
 
 ## SBI Issueの項目
