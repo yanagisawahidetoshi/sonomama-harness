@@ -7,7 +7,7 @@ import { fixture, update, human, commitFixture } from './test-fixture.mjs';
 import { githubMock } from './test-github.mjs';
 import { runHarness, resumeRun, approveRun, openPullRequest, reverifyPullRequest } from './index.mjs';
 import { githubPrCli } from './github-pr.mjs';
-import { readRunState } from './run-store.mjs';
+import { readRunState, saveRun } from './run-store.mjs';
 import { review } from './reviewer.mjs';
 import { verifyReverifyLink } from './reverify.mjs';
 import { git } from './workspace.mjs';
@@ -85,7 +85,7 @@ async function resolveOnBranch(bare, branch, files) {
     await git(clone, ['merge', '--no-edit', 'origin/main'], true);
     for (const [path, content] of Object.entries(files)) { await mkdir(join(clone, path, '..'), { recursive: true }); await writeFile(join(clone, path), content); }
     await git(clone, ['add', '--all']);
-    await git(clone, ['commit', '--no-edit']);
+    await git(clone, ['commit', '-m', 'Resolve with main']);
     await git(clone, ['push', '--quiet', 'origin', `HEAD:refs/heads/${branch}`]);
     return (await git(clone, ['rev-parse', 'HEAD'])).stdout.trim();
   } finally { await rm(dir, { recursive: true, force: true }); }
@@ -328,6 +328,18 @@ describe('Re-verification of an existing PR after main moved', () => {
   });
 
   describe('given the Git configuration and the content of the operator and the PR', () => {
+    it('when the operator lets Git follow directory renames then the merge is still judged with fixed settings and stops on the conflict a default Git reports', () => withGlobalGitConfig('[merge]\n\tdirectoryRenames = true\n', () => fixture(root => withPullRequestB(root, async ({ bare, b, pullUrl }) => {
+      // main adds a directory, B takes it in and adds a file there, then main renames the directory.
+      await mergeA(root, { 'apps/admin/src/old/a.txt': 'a' });
+      const head = await resolveOnBranch(bare, `harness/${b.id}`, { 'apps/admin/src/old/b.txt': 'b' });
+      await git(root, ['mv', 'apps/admin/src/old', 'apps/admin/src/new']);
+      await git(root, ['commit', '-m', 'rename the directory']);
+      await git(root, ['push', '--quiet', 'origin', 'HEAD:refs/heads/main']);
+      const run = await reverifyPullRequest({ root, pullUrl, quiet: true });
+      assert.equal(run.escalation?.code, 'REVERIFY_CONFLICT', run.reason ?? '');
+      assert.match(run.reverify.gitVersion, /^git version /);
+      assert.equal(await remoteSha(bare, `harness/${b.id}`), head);
+    }))));
     it('when the operator has merge.log enabled then the candidate still ends with the link trailers and is pushed', () => withGlobalGitConfig('[merge]\n\tlog = true\n', () => fixture(root => withPullRequestB(root, async ({ bare, b, pullUrl }) => {
       const mainAfterA = await mergeA(root);
       const run = await reverifyPullRequest({ root, pullUrl, quiet: true });
@@ -402,7 +414,50 @@ describe('Re-verification of an existing PR after main moved', () => {
     })));
   });
 
+  describe('given the PR is not the one the run belongs to', () => {
+    it('when the PR head comes from a fork then refuses before any run is created', () => fixture(root => withPullRequestB(root, async ({ github, pullUrl }) => {
+      await mergeA(root);
+      await github.update(s => { s.pulls[0].head.repo = { full_name: 'someone/app' }; });
+      const before = await runs(root);
+      await assert.rejects(reverifyPullRequest({ root, pullUrl, quiet: true }), /someone\/app/);
+      assert.deepEqual(await runs(root), before);
+    })));
+    it('when the PR head repository was deleted then refuses before any run is created', () => fixture(root => withPullRequestB(root, async ({ github, pullUrl }) => {
+      await mergeA(root);
+      await github.update(s => { s.pulls[0].head.repo = null; });
+      await assert.rejects(reverifyPullRequest({ root, pullUrl, quiet: true }), /fork/);
+    })));
+    it('when the PR was closed and the branch reopened as another PR then the run of the closed PR is not reused and its body is left alone', () => fixture(root => withPullRequestB(root, async ({ github, b, pullUrl }) => {
+      await mergeA(root);
+      const failing = { ...githubPrCli, updatePull: async () => { throw new Error('gh api PATCH repos/acme/app/pulls: HTTP 502'); } };
+      await assert.rejects(reverifyPullRequest({ root, pullUrl, quiet: true, github: failing }), /502/);
+      const [stopped] = (await runs(root)).filter(id => id !== b.id);
+      const closedBody = (await github.state()).pulls[0].body;
+      await github.update(s => { s.pulls[0].state = 'closed'; s.pulls.push({ ...s.pulls[0], number: 202, state: 'open', html_url: 'https://github.com/acme/app/pull/202', body: '' }); });
+      const run = await reverifyPullRequest({ root, pullUrl: 'https://github.com/acme/app/pull/202', quiet: true });
+      assert.notEqual(run.id, stopped);
+      assert.equal(run.pullRequest.number, 202);
+      const pulls = (await github.state()).pulls;
+      assert.equal(pulls[0].body, closedBody);
+      assert.ok(pulls[1].body.includes(`run=${run.id}`));
+    })));
+  });
+
   describe('given the same re-verification is repeated', () => {
+    it('when an earlier run stopped while preparing its candidate then it is not reused and a new run starts', () => fixture(root => withPullRequestB(root, async ({ b, pullUrl }) => {
+      await mergeA(root);
+      const waiting = await reverifyPullRequest({ root, pullUrl, quiet: true });
+      // The state a run is left in when it stops between creating its candidate and the preflight: no lane yet.
+      const state = await readRunState(root, waiting.id);
+      delete state.lane;
+      state.status = 'PENDING'; state.executionStatus = 'PENDING'; state.iterations = []; state.reverify.publish = 'PREPARED';
+      state.headSha = state.baselineSha;
+      await saveRun(root, state);
+      const run = await reverifyPullRequest({ root, pullUrl, quiet: true });
+      assert.equal(waiting.status, 'WAITING_FOR_HUMAN_GATE');
+      assert.notEqual(run.id, waiting.id);
+      assert.equal(run.status, 'WAITING_FOR_HUMAN_GATE');
+    }, { issue: sbiIssue(planned({ riskCandidate: 'L3' })) })));
     it('when the earlier run failed then running it again starts a new run instead of returning the stopped one', () => fixture(root => withPullRequestB(root, async ({ bare, b, pullUrl }) => {
       await mergeA(root, { '.harness/verification/issue-7.mjs': acceptance('ホーム（新しい見出し）') });
       const failed = await reverifyPullRequest({ root, pullUrl, quiet: true });
