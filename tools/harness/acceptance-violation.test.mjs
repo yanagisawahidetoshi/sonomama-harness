@@ -54,7 +54,7 @@ describe('Static checks of a controlled violation proposal', () => {
     assert.ok(result.findings.some(f => /changes nothing/.test(f.message)));
   }));
   it('when the proposal changes more lines than the limit then it is rejected as not minimal', () => workspace(async root => {
-    const big = `${original}${Array.from({ length: violationLimits.changedLines }, (_, i) => `# ${i}`).join('\n')}\n`;
+    const big = `${original}${Array.from({ length: violationLimits.changedLines + 1 }, (_, i) => `# ${i}`).join('\n')}\n`;
     const result = await inspectViolation({ workspace: root, proposal: proposal([{ path: controller, content: big }]) });
     assert.ok(result.findings.some(f => /lines/.test(f.message)));
   }));

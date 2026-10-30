@@ -38,7 +38,7 @@ const generation = (overrides = {}) => async () => ({ files: [{ path: testPath, 
 ], ...overrides });
 const notMet = 'RSpec::Expectations::ExpectationNotMetError';
 const example = (description, status) => ({ description, status, ...(status === 'failed' ? { exception: { class: notMet, message: 'expected 200' } } : {}) });
-const reportOf = statuses => ({ examples: Object.entries(statuses).map(([d, s]) => ({ description: d, status: s, exceptionClass: s === 'failed' ? notMet : null })), errorsOutsideOfExamples: 0 });
+const reportOf = statuses => ({ examples: Object.entries(statuses).map(([d, s]) => ({ description: d, status: s, exceptionClass: s === 'failed' ? notMet : null, message: s === 'failed' ? 'expected 200' : null })), errorsOutsideOfExamples: 0 });
 // Before the implementation commit the specs fail on their expectations (G detects); after it they pass (I).
 // A controlled violation run gets the examples of its Scenario and a disposable copy; the copy fails them when it carries the violation marker.
 const marker = '# controlled violation';
