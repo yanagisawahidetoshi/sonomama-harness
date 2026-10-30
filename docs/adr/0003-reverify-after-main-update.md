@@ -1,8 +1,8 @@
 # ADR-0003: main更新後は再実装せず、再検証runで既存PRを更新する
 
-- 状態: Proposed
+- 状態: Accepted（2026-10-30、柳沢英俊がPR #153の再レビュー後に承認）
 - 日付: 2026-10-30
-- 判断者: 未定（設計案はIssue #144で柳沢英俊が承認済み。Acceptedへの変更は人が行う）
+- 判断者: 柳沢英俊（設計案はIssue #144で承認）
 - 関連Issue: #144、#148
 - 関連SBI: なし
 - 関連Design Docs: [.ai/workflows/pull-request.md](../../.ai/workflows/pull-request.md)
@@ -59,7 +59,7 @@ ADR-0001は、PRのbaseをrunのbaselineに固定し、mainが進んだら`base_
 - PR HEADが変えたファイルは、worktreeへ取り出す前にGitのobject上で、baselineと同じ検査（symlink・submodule・運用証跡のパス・秘密値を含むファイル全体）にかける。
 - 差分の判定対象は`baseline..候補`。上流mainの変更は含まない。人が競合解消で触れたファイルも含めて、SBIのscope外や予約パスがあれば検証前に停止する。
 - 入力（config・rules・policy・Trusted Acceptance・Harnessのコード）は新baselineの元checkoutから取る。lane・Security・Risk・Gate要否も新baselineのルールで計算し直す。
-- 実装前GateとDesign Approvalは、既存の束縛（`baselineSha`と新runの`inputsDigest`を含むcontext）どおり**毎回取り直す**。SBI・scope・Securityが変わらなくても引き継がない。
+- 実装前Gateは、既存の束縛（`baselineSha`と新runの`inputsDigest`を含むcontext）どおり**毎回取り直す**。SBI・scope・Securityが変わらなくても引き継がない。
 - 検証は実装Agentを呼ばずに1回だけ行う（Verifier → Security → Policy Reviewer → Completion Judge）。失敗したら`FAILED`で止め、実装に戻らず、PRも更新しない。
 - 公開は、新baselineが`origin/main`の先頭のまま、かつPRブランチの先頭が取り込んだPR HEAD（または候補）のときだけ行う。
   push前に`PUSHING`を署名付きstateへ保存し、push後に`PUSHED`、merge判定とPR本文の更新後に`PR_UPDATED`とする。再実行は記録した段階から続ける。
