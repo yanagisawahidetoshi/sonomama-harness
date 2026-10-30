@@ -237,13 +237,13 @@ RSpec.describe "API contract for request specs", type: :request do
       end
     end
 
-    context "when a negative spec declares the invalid request and Rails answers with the declared 400" do
-      it "passes, because the violation was detected and the error response follows the contract",
-         :aggregate_failures do
+    context "when a negative spec says request: :invalid without naming the violation" do
+      it "raises a usage error, because any violation would make it pass" do
         post "/students", params: { name: "Taro", grade: "third" }, as: :json
 
-        expect(response).to have_http_status(:bad_request)
-        expect(response).to match_api_contract(contract, request: :invalid)
+        matcher = match_api_contract(contract, request: :invalid)
+
+        expect { matcher.matches?(response) }.to raise_error(ArgumentError, /missing_required_body/)
       end
     end
 
@@ -263,6 +263,14 @@ RSpec.describe "API contract for request specs", type: :request do
       end
     end
 
+    context "when as: :json is forgotten and the spec names the media type violation" do
+      it "passes, because the unsupported media type was detected and Rails answered with the declared 400" do
+        post "/students", params: { name: "Taro", grade: "third" }
+
+        expect(response).to match_api_contract(contract, request: { invalid: :unsupported_media_type })
+      end
+    end
+
     context "when a negative spec sends an invalid request and Rails accepts it with 201" do
       let(:fixture_app) { ApiContractFixture.app(create: :create_accepting_invalid_input) }
 
@@ -277,7 +285,7 @@ RSpec.describe "API contract for request specs", type: :request do
       it "fails, because the spec did not send the violation it describes" do
         post "/students", params: { name: "Taro", grade: 3 }, as: :json
 
-        expect(contract_failure(request: :invalid)).to include("POST /students", "request")
+        expect(contract_failure(request: { invalid: "/grade" })).to include("POST /students", "request")
       end
     end
 
@@ -287,16 +295,22 @@ RSpec.describe "API contract for request specs", type: :request do
       it "fails on the error response" do
         post "/students", params: { name: "Taro", grade: "third" }, as: :json
 
-        expect(contract_failure(request: :invalid)).to include("POST /students", "400")
+        expect(contract_failure(request: { invalid: "/grade" })).to include("POST /students", "400")
       end
     end
 
     context "when the required request body is missing" do
-      it "detects the request violation", :aggregate_failures do
+      it "detects the request violation as missing_required_body", :aggregate_failures do
         post "/students"
 
         expect(contract_failure).to include("POST /students", "request")
-        expect(response).to match_api_contract(contract, request: :invalid)
+        expect(response).to match_api_contract(contract, request: { invalid: :missing_required_body })
+      end
+
+      it "fails a negative spec that names another kind of violation" do
+        post "/students"
+
+        expect(contract_failure(request: { invalid: :unsupported_media_type })).to include("unsupported_media_type")
       end
     end
 
@@ -339,7 +353,7 @@ RSpec.describe "API contract for request specs", type: :request do
         get "/teachers/t-1"
 
         expect(contract_failure).to include("GET /teachers/", "not defined")
-        expect(contract_failure(request: :invalid)).to include("GET /teachers/", "not defined")
+        expect(contract_failure(request: { invalid: "/grade" })).to include("GET /teachers/", "not defined")
       end
 
       it "does not print the path parameter values of the request" do
@@ -439,32 +453,32 @@ RSpec.describe "API contract for request specs", type: :request do
       end
     end
 
-    context "when a negative spec with request: :invalid detects the violation and Rails returns the declared error" do
+    context "when a negative spec detects the named violation and Rails returns the declared error" do
       it "reports the route as COVERED, because the operation was resolved and its error response follows the contract",
          :aggregate_failures do
         post "/students", params: { name: "Taro", grade: "third" }, as: :json
-        expect(response).to match_api_contract(request: :invalid)
+        expect(response).to match_api_contract(request: { invalid: "/grade" })
 
         expect(suite_coverage(create_route).verify!).to include(a_string_starting_with("COVERED POST /students"))
       end
     end
 
-    context "when a negative spec with request: :invalid gets an error response the contract does not describe" do
+    context "when a negative spec gets an error response the contract does not describe" do
       let(:fixture_app) { ApiContractFixture.app(create: :create_with_malformed_error) }
 
       it "fails the matcher and keeps the route UNCOVERED", :aggregate_failures do
         post "/students", params: { name: "Taro", grade: "third" }, as: :json
-        expect(response).not_to match_api_contract(request: :invalid)
+        expect(response).not_to match_api_contract(request: { invalid: "/grade" })
 
         expect { suite_coverage(create_route).verify! }
           .to raise_error(ApiContract::CoverageError, %r{UNCOVERED POST /students})
       end
     end
 
-    context "when a spec declares request: :invalid but sends a conforming request" do
+    context "when a negative spec names a violation but sends a conforming request" do
       it "fails the matcher and keeps the route UNCOVERED", :aggregate_failures do
         post "/students", params: { name: "Taro", grade: 3 }, as: :json
-        expect(response).not_to match_api_contract(request: :invalid)
+        expect(response).not_to match_api_contract(request: { invalid: "/grade" })
 
         expect { suite_coverage(create_route).verify! }
           .to raise_error(ApiContract::CoverageError, %r{UNCOVERED POST /students})
