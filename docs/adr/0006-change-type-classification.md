@@ -20,7 +20,7 @@
 - trusted dependency bot（Renovate）の例外
 
 この結果、`apps/admin/README.md`の1行を直すPRでも、Issueを作り、人がlabelを付けるまでCompletion Judgeが通らない（#185）。
-Engineering Issueのlabelは人がPRのレビューと別に付ける承認で、中身もレビューと重なる。Harnessはlabelの有無を見るだけで、Issueの内容とdiffを照合しない。Product変更をEngineeringと偽っても、見抜くのはどのみちPRのレビューになる。
+Engineering Issueのlabelは人がPRのレビューと別に付ける承認で、中身もレビューと重なる。Harnessはlabelの有無を見るだけで、Issueの内容とdiffを照合しない。labelはPRのHEADや変更内容に結びついていないので、Issueを承認した後にPRへ本番コードを足しても通る。
 一方、L1の変更はSBIの承認後、できるだけ人の手を介さずに進める方針にしている（#182）。Engineering Issueを毎回求める運用はこれと合わない。
 
 ## 判断ドライバー
@@ -34,10 +34,11 @@ Engineering Issueのlabelは人がPRのレビューと別に付ける承認で�
 
 | 案 | 却下理由 |
 | --- | --- |
-| 現状維持（Production変更にSBIかEngineering Issueを必須） | PRのレビューと承認が二重になる。Issueの内容は照合しないので、偽装の防止にもならない |
+| 現状維持（Production変更にSBIかEngineering Issueを必須） | PRのレビューと承認が二重になる。Issueの承認はdiffやHEADに結びつかず、偽装の防止にもならない |
 | 人がPRに`engineering` labelを付けたらEngineeringとする | L1の技術変更でも毎回人の操作が要る。#182の方針と合わない |
 | LLMがdiffを読んでProduct / Engineeringを判定する | AIの自己申告でGateを外すことになる |
-| Ambiguousのたびに人へ質問する | 人のタッチポイントが増える。答えがない間の扱いも決める必要がある |
+| ambiguousのたびに人へ質問する | 人のタッチポイントが増える。答えがない間の扱いも決める必要がある |
+| ambiguousを、今のEngineering Issueで例外的にSBI無しにする | Issueの承認はdiffやHEADに結びつかない。承認後に足した本番コードも通ってしまう |
 | `apps/`・`packages/`のMarkdownだけをProductionから外す | 依存更新・Storybook・テスト基盤などの技術変更が残り、Engineering Issueの問題は解消しない |
 
 ## 決定
@@ -46,12 +47,19 @@ Engineering Issueのlabelは人がPRのレビューと別に付ける承認で�
 
 ### 判定のしくみ
 
-- Production変更を含むPRに、Harnessがchange-typeを`product`・`engineering`・`ambiguous`のどれかで付ける。
+- Production変更を含むPRに、Harnessが`changeType`と`requiresSbi`を付ける。
+
+| changeType | 条件 | requiresSbi | ログ |
+| --- | --- | --- | --- |
+| `product` | PRがSBIのsnapshot（`.harness/state/sbi-*.json`）か、`Harness-Run:`・`SBI-Issue:`のtrailerを持つ | true | `Change type: product / SBI required` |
+| `engineering` | Production配下の変更ファイルが、すべてEngineeringのルールに当たる | false | `Change type: engineering / SBI not required` |
+| `ambiguous` | 上のどちらでもない。1ファイルでもEngineeringのルールに当たらない | true | `Change type: ambiguous / SBI required (fail-closed)` |
+
+- `ambiguous`は`product`に変換しない。`changeType = ambiguous`のまま保持し、`requiresSbi = true`にする。ログでも、Productと判定したものと、判定できなかったものを区別する。
+- `ambiguous`で人には質問しない。SBIが無ければCompletion JudgeはFAILする。
 - 判定に使うのは、パス、ファイルの種類、diffの内容に対する決定的なルールだけとする。LLMの判定、PR本文、commit message、ブランチ名、「refactor」などの自己申告は使わない。
-- ルールはファイルごとに当てる。Production配下の変更ファイルがすべてEngineeringのルールに当たるときだけ、PRを`engineering`にする。1ファイルでも当たらなければ`ambiguous`にする。
-- `ambiguous`は人に質問せず、`product`として扱う（fail-closed）。SBIが無ければCompletion JudgeはFAILする。
+- ログには、どのファイルがどのルールに当たったか、どのファイルで`ambiguous`になったかも書く。
 - ルールは`.harness/rules/`に置く。Agentは書き込めず、変更は既存のHuman Gateの対象になる。
-- 判定の結果と根拠は、harness jobのログに`Change type:`の行で出す。どのファイルがどのルールに当たったか、どのファイルで`ambiguous`になったかを書く。
 
 ### Engineeringと判定する変更（例）
 
@@ -71,7 +79,7 @@ Engineering Issueのlabelは人がPRのレビューと別に付ける承認で�
 
 ### Ambiguousとする変更（例）
 
-次のものはProductとして扱い、SBIを必須にする。
+次のものは`ambiguous`のまま、SBIを必須にする。
 
 - `apps/**/src/**`（上の表のStorybookとテストを除く）
 - `apps/api/app/**`、`apps/api/config/**`、`apps/api/db/**`、`apps/api/lib/**`
@@ -83,21 +91,29 @@ Engineering Issueのlabelは人がPRのレビューと別に付ける承認で�
 
 ### Engineering Issueの位置づけ
 
-- Engineering Issueは必須にしない。複数のPRにまたがる作業や、後から追いたい基盤作業を管理するときに任意で使う。
-- `ambiguous`の変更を、SBIを作らずEngineeringとして扱いたいときだけ、人の明示的な判断を例外として受け付ける。手段は今のEngineering Issue（`engineering`と`ready`のlabel、`Engineering-Issue:` trailer）をそのまま使う。
+- Engineering Issueは起点の判定に使わない。`engineering`の変更には要らず、`ambiguous`の変更はEngineering Issueがあっても`requiresSbi = true`のままにする。
+- Engineering Issueは、複数のPRにまたがる作業や、後から追いたい基盤作業を管理するときに任意で使う。
 - 人に毎回`engineering` labelを付けさせる工程は作らない。
+- 初期の実装では、`ambiguous`をSBI無しで通す例外を設けない。純粋なrefactorなどでSBI必須が実運用上の問題になったら、そのPRのHEAD SHAか変更内容のdigestに結びついた人の判断として、別のADRで設計する。
+
+### テストの変更とRisk
+
+- テストの変更は`engineering`になるが、これはSBIが要らないという意味だけを持つ。L1のAuto Mergeを安全にできるという意味は持たない。
+- テストの削除、skip・pending・focus化（`.only`、`xit`、`fdescribe`、`:focus`など）、明白なassertionの弱体化は、Risk / Policy側でL1のAuto Mergeの対象から外す必要がある。
+- 現状、`pr-risk.json`でL1の候補になるのは`safeRules`の`explicit_safe_docs_only`（`docs/`）と`explicit_safe_prototype_only`（`prototypes/`）だけで、`apps/**`・`packages/**`のテストはDefaultのLEVEL 2になる。そのため今はL1にならない。
+- ただし、テストの削除や弱体化を見つけてL1から外すRisk / Policyの保護はまだ無い。follow-upとして作り、テストをL1の候補にするsafe ruleを足す前に入れる。
 
 ### 変えないこと
 
-- change-typeが決めるのは、Production変更の起点としてSBIが要るかどうかだけ。Verifier、Security Verifier、Risk Level、Human Gate、PRのHuman Reviewの判定は変えない。
-- PRがSBIのsnapshotや`Harness-Run:`・`SBI-Issue:`のtrailerを持つ場合は、change-typeにかかわらず今と同じSBIの検査を行う。
+- change-typeが決めるのは`requiresSbi`だけ。Verifier、Security Verifier、Risk Level、Human Gate、PRのHuman Reviewの判定は変えない。
+- PRがSBIのsnapshotやtrailerを持つ場合は、今と同じSBIの検査を行う。
 - trusted dependency botの例外は残す。
 
 ## 理由
 
 - SBIが守っているのは「正解の定義」で、Product変更にしか意味がない。技術変更にSBIやIssueを求めても、守るものが増えない。
-- 偽装を防ぐのはIssueの有無ではなく、diffがProductの領域に触れていないかの判定である。この判定をルールで機械的に行えば、Issueより強く、人の手間も減る。
-- ルールで言い切れないものを`product`に倒すので、判定の漏れはSBIを余計に求める方向にしか出ない。
+- 偽装を防ぐのはIssueの有無ではなく、diffがProductの領域に触れていないかの判定である。この判定をルールで機械的に、PRのdiffそのものに対して行う。
+- ルールで言い切れないものは`requiresSbi = true`になるので、判定の漏れはSBIを余計に求める方向にしか出ない。
 
 ## 影響
 
@@ -105,34 +121,39 @@ Engineering Issueのlabelは人がPRのレビューと別に付ける承認で�
 
 - README・依存更新・Storybook・テストだけのPRが、Issueもlabelも無しでCompletion Judgeを通る。
 - 判定の根拠がログに出るので、なぜSBIが要るのかをPRの作者がその場で分かる。
-- Engineering Issueの偽装でSBIを避ける経路がなくなる。
+- diffやHEADに結びつかないEngineering Issueの承認で、本番コードの変更がSBIを避ける経路がなくなる。
 
 ### Negative / Trade-offs
 
-- 本番コードのrefactorは、挙動が変わらなくてもSBIかEngineering Issueが要る。
-- 依存のバージョン更新は、実行時の挙動を変えうるのにEngineeringになる。守りはVerifierとPRのレビューに頼る。
-- テストの削除・弱体化もEngineeringになる。ACの判定はTrusted Acceptanceが別に持つので影響しないが、Application Testの網羅はPRのレビューに頼る。
-- `apps/**`のREADMEには、AIが実装時に守る制約が書かれている。これを変えるPRもEngineeringになり、確認はPRのレビューに頼る。
+- 本番コードのrefactorは、挙動が変わらなくてもSBIが要る。例外の手段は初期の実装では用意しない。
+- 依存のバージョン更新は、実行時の挙動を変えうるのに`engineering`になる。守りはVerifierとPRのレビューに頼る。
+- テストの削除・弱体化も`engineering`になる。ACの判定はTrusted Acceptanceが別に持つので影響しない。L1から外す保護はfollow-upで作る。
+- `apps/**`のREADMEには、AIが実装時に守る制約が書かれている。これを変えるPRも`engineering`になり、確認はPRのレビューに頼る。
 - ルールの保守が要る。新しい種類のファイルは、ルールに足すまで`ambiguous`になる。
 
 ## 実装・運用への影響
 
-- Completion Judgeの起点の判定（`tools/harness/impact.mjs`、`tools/harness/sbi-source.mjs`、`tools/harness/engineering-source.mjs`）に、change-typeの判定を入れる。テストを先に書く。
+- Completion Judgeの起点の判定（`tools/harness/impact.mjs`、`tools/harness/sbi-source.mjs`）に、`changeType`と`requiresSbi`の判定を入れる。テストを先に書く。
+- `tools/harness/engineering-source.mjs`によるEngineering Issueの検査を、起点の判定から外す。
 - `.harness/rules/`に判定ルールを追加する。`policy.json`の保護パスとHuman Gateの対象になる。
 - `docs/workflows/engineering-changes.md`と`.ai/workflows/ci.md`の「Production変更の起点」を書き換える。
+- follow-up: テストの削除・skip・pending・focus化・assertionの弱体化をL1から外すRisk / Policyの保護。
 - Security rule（SEC-*）の対象範囲は変えない。
 
 ## 検証方法
 
 - 判定の単体テストで、上の表のEngineeringの例が`engineering`に、Ambiguousの例が`ambiguous`になることを確かめる。
+- `ambiguous`の結果が`changeType = ambiguous`、`requiresSbi = true`のままで、`product`に変わらないことを確かめる。
 - EngineeringとAmbiguousのファイルが混じったPRが`ambiguous`になり、SBIが無ければFAILすることを確かめる。
+- `ambiguous`のPRに、`engineering`・`ready`のEngineering Issueとtrailerがあっても、SBIが無ければFAILすることを確かめる。
 - commit messageやPR本文に「refactor」「engineering」と書いても判定が変わらないことを確かめる。
+- ログに`Change type: ambiguous / SBI required (fail-closed)`と`Change type: product / SBI required`が区別して出ることを確かめる。
 - #185（`apps/**`のREADMEだけの変更）が、Issue無しでCompletion Judgeを通ることを確かめる。
 
 ## 再検討条件 / 撤回条件
 
-- Engineeringと判定されたPRで、本番の挙動が変わる事故が起きたとき
-- `ambiguous`からEngineering Issueでの例外が頻発し、人のタッチポイントが減らないとき
+- `engineering`と判定されたPRで、本番の挙動が変わる事故が起きたとき
+- 純粋なrefactorなどで`ambiguous`のSBI必須が実運用上の問題になったとき（HEAD SHAか変更内容のdigestに結びついた人の判断を、別のADRで設計する）
 
 ## 関連資料
 
