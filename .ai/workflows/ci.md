@@ -7,7 +7,21 @@
 | `impact` | `pnpm harness:impact` でrequired verifierとFull Gateの要否を決め、理由をログに出す |
 | `verifiers` | required verifierごとのmatrix。`pnpm harness:verify --verifier <id>` を並列に実行する（`fail-fast: false`） |
 | `harness-test` / `harness-demo` | Full Gateのときだけ、`harness:test` と `harness:demo --full` を並列に実行する |
+| `maestro` | `impact` の `maestro` が空でないときだけ、Android EmulatorでMaestroを実行する（job本体は未実装。下記） |
 | `harness` | Completion Judge。変更されたSBIのTrusted AcceptanceとSecurity Verifierを実行し、各jobの結果を集約する。必須チェック名なのでjob idを変えない |
+
+## Maestro（mobile E2E）
+
+Maestroは通常の`expo` Verifierに入れない。Impact Analysisの`maestro`（lane）は、PRのSBIから決める（`tools/harness/maestro.mjs`）。
+
+| SBI | 条件 | lane |
+| --- | --- | --- |
+| implementation | `apps/mobile`が範囲にあり、Issueの`## 検証方法`の`E2E:`が「不要」でない（`E2E:`の行が無い場合も必要とみなす） | `mock`（承認済みOpenAPIのPrism） |
+| validation | `apps/mobile`が範囲にある | `real`（Rails + DB） |
+
+SBIの無いmobileの変更ではMaestroを実行しない。laneがあるとき、Completion Judgeは`maestro` jobの成功と、laneごとの結果ファイル（`HARNESS_MAESTRO_RESULTS/<lane>.json`、`node tools/harness/maestro.mjs`がMaestroのJUnit reportから作る）を求める。
+jobが無い・失敗・skip、結果ファイルが無い・読めない・別のlaneや別のcommitのもの、flowが0件、失敗したflowがある、ログやスクリーンショットのartifactが無い、のどれかでFAILする。
+`maestro` jobはまだworkflowに無い。そのため現時点では、Maestroが必要なSBIのPRはCIで必ずFAILする（fail-closed）。
 
 ## Verifierの選び方
 

@@ -96,6 +96,7 @@ try {
       const expo = JSON.parse(read('.harness/config/harness.json')).verifiers.find(v => v.id === 'expo');
       for (const c of expo.commands) assert.doesNotMatch(c.join(' '), /maestro/i, 'expo');
       forbids(/maestro/i, 'Maestro is an external CLI');
+      assert.match(read('tools/harness/impact.mjs'), /maestro: maestroLanes\(runSbis\)/, 'Impact Analysis selects the Maestro lanes from the SBIs');
       const readme = read('apps/mobile/README.md');
       assert.match(readme, /通常のmobile Verifier（`expo`）には入れず/);
       assert.match(readme, /implementation SBI: Mock API \+ Maestro/);

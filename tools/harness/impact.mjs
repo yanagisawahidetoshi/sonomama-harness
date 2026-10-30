@@ -9,6 +9,7 @@ import { judgeChangedFileCount } from './planner-judge.mjs';
 import { dependencyBotExemption } from './dependency-bot.mjs';
 import { githubCli } from './planner-github.mjs';
 import { verifyMigrationExceptions } from './migration-exception-approval.mjs';
+import { judgeMaestro, maestroLanes, readMaestroResults } from './maestro.mjs';
 import { configSchema, dependencyBotPolicySchema, securityPolicySchema } from './schemas.mjs';
 import { classifySecurity, combineSecurity, securityPassed, verifySecurity } from './security-enforcement.mjs';
 import { checksPassed, verify } from './verifier.mjs';
@@ -19,7 +20,7 @@ const sorted = values => [...new Set(values)].sort();
 const applicationVerifiers = config => config.verifiers.filter(v => (v.trust || 'application') === 'application');
 const firstMatch = (patterns = [], files) => files.find(f => patterns.some(p => new RegExp(p).test(f.path)))?.path;
 
-export function analyzeImpact({ config, sbis = [], files = [], all = false }) {
+export function analyzeImpact({ config, sbis = [], runSbis = [], files = [], all = false }) {
   const verifiers = new Map();
   const select = (id, reason, mandatory) => {
     const entry = verifiers.get(id) ?? { id, mandatory: false, reasons: [] };
@@ -72,13 +73,16 @@ export function analyzeImpact({ config, sbis = [], files = [], all = false }) {
     acceptanceVerifiers: sorted(sbis.flatMap(s => s.acceptanceCriteria.map(a => a.verifier))),
     fullGate: fullGateReasons.length > 0,
     fullGateReasons,
+    // Maestro runs only for mobile SBIs that ask for E2E (#68), never for every mobile PR. Only a Run snapshot (from an approved SBI Issue)
+    // picks a lane; hand-written SBI JSON has no provenance and must not add a required job.
+    maestro: maestroLanes(runSbis),
     sbiRequired: sbiRequiredReasons.length > 0,
     sbiRequiredReasons,
   };
 }
 
 // Required jobs must succeed; a job may be skipped only when the impact did not ask for it. Security that was not evaluated fails.
-export function judgeCi({ impact, needs, acceptance, security, source, granularity, migrationExceptions }) {
+export function judgeCi({ impact, needs, acceptance, security, source, granularity, migrationExceptions, maestro }) {
   const reasons = [];
   const expect = (job, wanted) => {
     const result = needs[job]?.result ?? 'missing';
@@ -91,6 +95,8 @@ export function judgeCi({ impact, needs, acceptance, security, source, granulari
   expect('verifiers', impact.requiredVerifiers.length > 0);
   expect('harness-test', impact.fullGate);
   expect('harness-demo', impact.fullGate);
+  // The maestro job and its result files; judgeMaestro adds nothing when no lane is required.
+  reasons.push(...judgeMaestro({ lanes: impact.maestro ?? [], needs, results: maestro?.results, headSha: maestro?.headSha ?? '' }));
   if (acceptance.status !== 'PASS') reasons.push(...(acceptance.missing.length ? [`acceptance missing: ${acceptance.missing.join(', ')}`] : ['acceptance: FAIL']));
   if (!security) reasons.push('security: not evaluated');
   else if (!securityPassed(security)) {
@@ -116,7 +122,7 @@ export async function loadImpact({ root, base, all = false }) {
   const { sbis, snapshots } = await readSbiFiles(root, files);
   // Each Run snapshot brings the Trusted Acceptance of its own SBI Issue only (.harness/acceptance/sbi-<N>.json).
   const config = await withAcceptance(root, configSchema.parse(await readJson(join(root, '.harness/config/harness.json'))), snapshots.map(s => s.snapshot.source.number));
-  return { config, files, sbis, snapshots, impact: analyzeImpact({ config, sbis, files, all }) };
+  return { config, files, sbis, snapshots, impact: analyzeImpact({ config, sbis, runSbis: snapshots.map(s => s.snapshot.sbi), files, all }) };
 }
 
 // The matrix job: one verifier, mandatory only when an SBI asked for it, so a cross-layer contract without a document stays a placeholder SKIP.
@@ -150,7 +156,7 @@ async function changedContent(root, files) {
 
 // Completion Judge: trusted acceptance of every changed SBI and the Harness Security Policy run here. Production changes must be backed by either
 // a ready SBI Run snapshot or, for engineering/maintenance work, a ready Engineering Issue linked from a commit trailer.
-export async function runCompletionJudge({ root, base, all = false, needs, repository = process.env.GITHUB_REPOSITORY, pullNumber, github = githubCli, githubPr }) {
+export async function runCompletionJudge({ root, base, all = false, needs, repository = process.env.GITHUB_REPOSITORY, pullNumber, github = githubCli, githubPr, maestroResults }) {
   const { config, files, sbis, snapshots, impact } = await loadImpact({ root, base, all });
   const missing = [], checks = [];
   for (const sbi of sbis) {
@@ -183,7 +189,9 @@ export async function runCompletionJudge({ root, base, all = false, needs, repos
   const changedPaths = files.map(f => f.path).filter(path => !snapshotFilePattern.test(path));
   const granularity = snapshots.filter(s => s.snapshot.sbi.kind === 'implementation')
     .map(s => ({ sbi: s.snapshot.source.url, ...judgeChangedFileCount({ estimatedFiles: s.snapshot.sbi.estimatedFiles, changedPaths }) }));
-  return { impact, acceptance, checks, security, source, granularity, migrationExceptions, ...judgeCi({ impact, needs, acceptance, security, source, granularity, migrationExceptions }) };
+  // The maestro job uploads one result file per lane; the workflow downloads them into maestroResults before the Judge runs.
+  const maestro = { headSha, results: maestroResults && impact.maestro.length ? await readMaestroResults(maestroResults, impact.maestro) : {} };
+  return { impact, acceptance, checks, security, source, granularity, migrationExceptions, maestro, ...judgeCi({ impact, needs, acceptance, security, source, granularity, migrationExceptions, maestro }) };
 }
 
 export function describeJudge({ needs, acceptance, checks, security, granularity = [], migrationExceptions }) {
@@ -205,5 +213,6 @@ export function describeImpact(impact) {
     ...impact.verifiers.map(v => `Verifier ${v.id}${v.mandatory ? ' [mandatory]' : ''}: ${v.reasons.join(', ')}`),
     `Acceptance (Completion Judge): ${impact.acceptanceVerifiers.join(', ') || '(none)'}`,
     `Full Gate: ${impact.fullGate ? `yes (${impact.fullGateReasons.join(', ')})` : 'no'}`,
+    `Maestro: ${impact.maestro?.length ? impact.maestro.join(', ') : 'not required'}`,
   ];
 }
