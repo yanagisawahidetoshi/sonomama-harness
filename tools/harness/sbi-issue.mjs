@@ -2,7 +2,7 @@ import { parseIssueUrl, markerPattern } from './planner.mjs';
 import { githubCli } from './planner-github.mjs';
 import { relativePath } from './schemas.mjs';
 import { assertWritablePath } from './workspace.mjs';
-import { acceptancePath } from './acceptance-registry.mjs';
+import { acceptancePath, generatedVerifierId } from './acceptance-registry.mjs';
 import { readSpecApproval, specApprovalLine } from './spec-approval.mjs';
 // harness:run SBI_URL reads the SBI from the GitHub Issue a human marked ready. Nothing here is written back to GitHub,
 // and nobody transcribes the Issue into SBI JSON: the Harness builds the execution SBI and records it as the Run snapshot.
@@ -47,7 +47,7 @@ function directoryScope(area) {
   return `${path}/`;
 }
 
-export function sbiFromIssue({ ref, issue, config }) {
+export function sbiFromIssue({ ref, issue, config, generate = false }) {
   const parts = sections(issue.body), problems = [];
   for (const name of ['目的', '受け入れ要件', 'Gherkin', '想定変更範囲', 'Risk / Security Impact']) if (!parts.has(name)) problems.push(`## ${name} がありません`);
   const section = name => parts.get(name) ?? [];
@@ -79,7 +79,10 @@ export function sbiFromIssue({ ref, issue, config }) {
   const e2e = (block('検証方法') ?? []).map(l => /^E2E: (.*)$/.exec(l.trim())?.[1]).find(v => v !== undefined)?.trim() ?? null;
 
   // Trusted Acceptance is written, reviewed and registered by a human before ready. Every criterion needs exactly one registration.
+  // A spec-approved SBI starts without a registration (generate); its Trusted Acceptance is generated in the run under the same verifier ID
+  // a version 2 registration yields, so the Run snapshot equals the CI rebuild of the PR.
   const registered = config.verifiers.filter(v => v.trust === 'acceptance' && v.sbiIssue === ref.number);
+  if (!registered.length && generate) registered.push({ id: generatedVerifierId(ref.number), acceptanceIds: criteria.map(c => c.id) });
   if (!registered.length) problems.push(`Trusted Acceptance が登録されていません（${acceptancePath(ref.number)} がありません）`);
   const acceptanceCriteria = criteria.map(criterion => {
     const owners = registered.filter(v => v.acceptanceIds.includes(criterion.id));
@@ -138,13 +141,17 @@ export async function loadSbiIssue({ issueUrl, config, github = githubCli }) {
   // #147: without ready, a writer's harness-spec approval of the current spec digest is the other way to start (generated Trusted Acceptance).
   if (reasons.length && reasons.every(r => r.endsWith('has no ready label'))) {
     const spec = await readSpecApproval({ ref, issue, github });
-    if (spec.approved) throw new Error([`SBI Issue ${ref.url} の仕様は承認済みです（spec digest ${spec.digest.slice(0, 12)}、${spec.approvers.join(', ')}）。`,
-      'ただし、Trusted Acceptanceの生成はまだ実装されていません（#147）。Runは開始していません。手書きのTrusted Acceptanceを登録してreadyを付けてください。'].join('\n'));
+    if (spec.approved) {
+      const sbi = sbiFromIssue({ ref, issue, config, generate: true });
+      const waiting = await unfinishedDependencies({ ref, issue, config, github });
+      if (waiting.length) throw new Error([`SBI Issue ${ref.url} の依存SBIが完了していません。Runは開始していません。`, ...waiting.map(p => `- ${p}`)].join('\n'));
+      return { ref, issue, sbi, mode: 'generate', spec };
+    }
     reasons.push(`仕様の承認もありません。write権限のある人が \`${specApprovalLine(spec.digest ?? '<spec digest>')}\` をIssueにコメントすると承認になります（pnpm harness:spec-approve ${ref.url}）`);
   }
   if (reasons.length) throw new Error([`SBI Issue ${ref.url} はreadyではありません。Runは開始していません。`, ...reasons.map(r => `- ${r}`)].join('\n'));
   const sbi = sbiFromIssue({ ref, issue, config });
   const waiting = await unfinishedDependencies({ ref, issue, config, github });
   if (waiting.length) throw new Error([`SBI Issue ${ref.url} の依存SBIが完了していません。Runは開始していません。`, ...waiting.map(p => `- ${p}`)].join('\n'));
-  return { ref, issue, sbi };
+  return { ref, issue, sbi, mode: 'registered' };
 }
