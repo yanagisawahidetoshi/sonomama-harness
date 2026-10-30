@@ -2,6 +2,9 @@ import { join } from 'node:path';
 import { exists, execute } from './io.mjs';
 import { classifyLane } from './lanes.mjs';
 import { runIsolated } from './isolation.mjs';
+import { generatedVerifierId, readAcceptance } from './acceptance-registry.mjs';
+import { verifyGeneratedRegistration } from './acceptance-generation.mjs';
+import { judgeAcceptance, runGeneratedAcceptance } from './acceptance-run.mjs';
 export function checksPassed(checks) {
   return Array.isArray(checks) && checks.length > 0 && checks.every(c => c.status === 'PASS'
     || (c.status === 'SKIP' && c.required === false && ['missing app (placeholder)', 'not applicable to this change'].includes(c.reason)));
@@ -13,8 +16,16 @@ export function verifierRegistry(config) {
   ]);
 }
 // only limits the run to the named verifiers; selected maps an Impact Analysis selection to whether it is mandatory.
-export async function verify({ root, workspace, config, sbi, files = sbi.allowedFiles?.map(path=>({path})) ?? [], requiredVerifiers = [], full = false, lane = classifyLane(files,sbi), only = null, selected = new Map() }) {
+export async function verify({ root, workspace, config, sbi, files = sbi.allowedFiles?.map(path=>({path})) ?? [], requiredVerifiers = [], full = false, lane = classifyLane(files,sbi), only = null, selected = new Map(), acceptanceRunner = runGeneratedAcceptance, generatedSpecDigest = null }) {
   const registry = new Map([...verifierRegistry(config)].filter(([id]) => !only || only.has(id)));
+  // A run generates its Trusted Acceptance in the workspace (#147), so the root config does not know it yet; the workspace registration does.
+  for (const id of new Set(sbi.acceptanceCriteria.map(a => a.verifier))) {
+    const number = Number(/^generated-acceptance-sbi-(\d+)$/.exec(id)?.[1]);
+    if (!number || registry.has(id) || (only && !only.has(id))) continue;
+    const registration = await readAcceptance(workspace, number).catch(() => null);
+    if (registration?.version === 2) registry.set(id, { id: generatedVerifierId(number), kind: 'command', trust: 'acceptance', generated: true, sbiIssue: number,
+      acceptanceIds: [...new Set(registration.mapping.flatMap(m => m.acceptanceIds))].sort() });
+  }
   const needed = new Set(sbi.acceptanceCriteria.map(a => a.verifier));
   const explicit = new Set(sbi.requiredVerifiers || []);
   const security = new Set(requiredVerifiers);
@@ -37,6 +48,18 @@ export async function verify({ root, workspace, config, sbi, files = sbi.allowed
     const base = { id:adapter.id, required:mandatory || pathMatch, trust:adapter.trust, selectionReasons:reasons };
     if (!reasons.length) {
       checks.push({...base,required:false,status:'SKIP',reason:'not applicable to this change'}); continue;
+    }
+    // Generated Trusted Acceptance: re-verify the registration (spec, tests, spec support), then run the generated specs isolated (I).
+    if (adapter.generated) {
+      const registration = await readAcceptance(workspace, adapter.sbiIssue).catch(error => ({ error: error.message }));
+      const reasons = registration?.version === 2
+        ? await verifyGeneratedRegistration({ root: workspace, registration, ...(generatedSpecDigest ? { specDigest: generatedSpecDigest, sbiIssue: adapter.sbiIssue } : {}) })
+        : [registration?.error ?? `generated registration of SBI #${adapter.sbiIssue} is missing`];
+      if (reasons.length) { checks.push({ ...base, required: true, status: 'FAIL', reason: reasons.join('; ') }); continue; }
+      const judged = judgeAcceptance({ registration, report: await acceptanceRunner({ workspace, sbiIssue: adapter.sbiIssue, config }) });
+      acceptance.push(...judged.acceptance);
+      checks.push({ ...base, required: true, status: judged.status, ...(judged.reasons.length ? { reason: judged.reasons.join('; ') } : {}), acceptance: judged.acceptance });
+      continue;
     }
     if (adapter.kind === 'sample-bdd' || adapter.trust === 'acceptance') {
       const script = join(root, adapter.kind === 'sample-bdd' ? 'tools/harness/sample-bdd.mjs' : adapter.trustedScript || '.harness/verification/NOT_CONFIGURED');

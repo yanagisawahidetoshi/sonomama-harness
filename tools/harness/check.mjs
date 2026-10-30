@@ -4,7 +4,7 @@ import { exists, readJson } from './io.mjs';
 import { classifySecurity } from './security-enforcement.mjs';
 import { verifierRegistry } from './verifier.mjs';
 import { assertWritablePath } from './workspace.mjs';
-import { acceptancePath, withAcceptance } from './acceptance-registry.mjs';
+import { acceptancePath, generatedVerifierId, withAcceptance } from './acceptance-registry.mjs';
 import { configSchema, rulesSchema, sbiSchema, riskPolicySchema, relativePath, securityPolicySchema, humanGatesSchema, lanePolicySchema, dependencyBotPolicySchema } from './schemas.mjs';
 // sbi is the execution SBI built from a ready SBI Issue; without it the SBI JSON at sbiPath (or the configured sample) is read.
 // sbiIssue adds the Trusted Acceptance registered for that SBI Issue (.harness/acceptance/sbi-<N>.json) and nothing else.
@@ -52,11 +52,16 @@ export async function check(root, sbiPath, sbiValue, { sbiIssue = null } = {}) {
   if (sbi.affectedAreas.some(area => !areas.has(area))) throw new Error('SBI affectedAreas references an unknown area');
   for (const v of config.verifiers) {
     for (const p of v.appliesTo || []) new RegExp(p);
-    if (v.trust === 'acceptance') {
+    if (v.trust === 'acceptance' && v.generated) {
+      // Generated from a version 2 registration (#147): it runs the generated specs, and has no trustedScript.
+      if (v.trustedScript || v.commands.length || v.sbiIssue === undefined || v.id !== generatedVerifierId(v.sbiIssue)) throw new Error('Generated Trusted Acceptance must come from a version 2 registration');
+    } else if (v.trust === 'acceptance') {
       if (!v.trustedScript || !/^\.harness\/verification\/[^\n]+\.mjs$/.test(v.trustedScript) || !await exists(join(root,v.trustedScript))) throw new Error('Trusted acceptance requires a protected .harness/verification script');
     } else if (v.acceptanceIds.length || v.trustedScript || v.sbiIssue !== undefined) throw new Error('Application tests cannot provide trusted acceptance evidence');
   }
   for (const a of sbi.acceptanceCriteria) {
+    // A spec-approved SBI starts before its Trusted Acceptance is generated in the run workspace.
+    if (sbiIssue && a.verifier === generatedVerifierId(sbiIssue) && !registry.has(a.verifier)) continue;
     if (!registry.has(a.verifier) || registry.get(a.verifier).trust !== 'acceptance' || !registry.get(a.verifier).acceptanceIds.includes(a.id)) throw new Error(`Unsupported acceptance verifier or unregistered AC: ${a.verifier}/${a.id}`);
   }
   if (sbi.acceptanceCriteria.some(a => a.verifier === 'sample-bdd') && !sbi.allowedFiles.includes('greeting.mjs')) throw new Error('sample-bdd requires greeting.mjs');

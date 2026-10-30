@@ -105,12 +105,14 @@ export async function generateAcceptance({ workspace, issue, provider, runId, ag
 
 // The registration is reused only while it belongs to this SBI, the Issue spec, every registered test and every support file
 // are exactly what was generated and checked.
-export async function verifyGeneratedRegistration({ root, registration: raw, issue }) {
+export async function verifyGeneratedRegistration({ root, registration: raw, issue, specDigest: expectedDigest, sbiIssue }) {
   const parsed = generatedRegistrationSchema.safeParse(raw);
   if (!parsed.success) return [`the registration is not a valid version 2 registration (${parsed.error.issues.map(i => `${i.path.join('.')} ${i.message}`).join(', ')})`];
   const registration = parsed.data, reasons = [];
-  if (registration.sbiIssue !== issue.number) reasons.push(`the registration is for SBI Issue #${registration.sbiIssue}, not #${issue.number}`);
-  if (specDigest(issue.body) !== registration.specDigest) reasons.push(`spec digest of the SBI Issue changed since the Trusted Acceptance was generated (${registration.specDigest.slice(0, 12)})`);
+  // CI passes the current Issue; a run passes the spec digest it approved at start.
+  const number = issue?.number ?? sbiIssue, digest = issue ? specDigest(issue.body) : expectedDigest;
+  if (registration.sbiIssue !== number) reasons.push(`the registration is for SBI Issue #${registration.sbiIssue}, not #${number}`);
+  if (digest !== registration.specDigest) reasons.push(`spec digest of the SBI Issue changed since the Trusted Acceptance was generated (${registration.specDigest.slice(0, 12)})`);
   const compare = async (entries, label) => {
     for (const entry of entries) {
       const text = await readFile(join(root, entry.path), 'utf8').catch(() => null);
@@ -127,4 +129,15 @@ export async function verifyGeneratedRegistration({ root, registration: raw, iss
     if (!registration.protectedFiles.some(p => p.path === entry.path)) reasons.push(`${entry.path} was added after registration (spec support)`);
   }
   return reasons;
+}
+
+// What the implementation agent must not write once Trusted Acceptance is generated: the tests, the registration and their spec support.
+export function isGeneratedAcceptanceInput(path) {
+  return /^apps\/[^/]+\/spec\/acceptance\//i.test(path) || /^\.harness\/acceptance\//.test(path)
+    || supportPaths.includes(path) || path.startsWith(supportDirectory);
+}
+// The files the Harness itself commits for the generated Trusted Acceptance of one SBI (outside the SBI's own change scope).
+export function isGeneratedRegistrationPath(path, sbi) {
+  const number = Number(/\/issues\/(\d+)$/.exec(sbi.issueUrl ?? '')?.[1]);
+  return Number.isInteger(number) && number > 0 && (path === acceptancePath(number) || path.startsWith(acceptanceDirectory(number)));
 }
