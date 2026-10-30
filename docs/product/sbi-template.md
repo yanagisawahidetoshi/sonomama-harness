@@ -33,7 +33,7 @@ Feature: [機能]
 | securityImpact | 影響するセキュリティの分類（RLS、PII、AuthN、AuthZなど）。分類は.harness/rules/security.jsonで定義している |
 | requiredSecurityRules | 関係するルールID（SEC-RLS-001など） |
 | requiredVerifiers | このSBIのために追加で必須にする検証 |
-| preImplementationGate | trueなら、実装を始める前に人の承認を求める |
+| preImplementationGate | trueなら、SBI承認で人が判断した安全性に関わるSBIとして扱う。実装前には止めず、レベル3と実装後の2人以上のレビューを求める |
 | minimumRiskLevel | 2または3 |
 
 ここに書いた値で、docs/securityのルールを弱めることはできない。ルールが求める検証を省いても、Harnessは必ず実行する。必須の検証が用意されていなければ、そこで止まる。

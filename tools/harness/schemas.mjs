@@ -282,7 +282,9 @@ export const securityPolicySchema = z.strictObject({
     appliesTo: z.array(text).optional() })),
   secretPatterns: z.array(text).min(1), forbiddenPatterns: z.array(text), piiLogPatterns: z.array(text),
 }).refine(p => new Set(p.rules.map(r => r.id)).size === p.rules.length && new Set(p.verifiers.map(v => v.id)).size === p.verifiers.length, 'duplicate security rule/verifier');
-export const humanGatesSchema = z.strictObject({ version: z.literal(1), preImplementationRuleIds: z.array(text).min(1) });
+// preImplementationRuleIds keeps its name so that rule IDs stay matched with security.json and docs; since #175 it lists the rules a human
+// decides at SBI approval, not a gate before implementation.
+export const humanGatesSchema = z.strictObject({ version: z.literal(1), description: text.optional(), preImplementationRuleIds: z.array(text).min(1) });
 
 export const lanePolicySchema = z.strictObject({
   version: z.literal(1), prototypePaths: z.array(text).min(1), productionPaths: z.array(text).min(1),

@@ -6,8 +6,10 @@
    新方式では`ready`の代わりに`pnpm harness:spec-approve`で仕様を承認する（Trusted Acceptanceの生成は未実装。今は開始前に止まる）。
 2. pnpm harness:checkで検証する。
 3. `pnpm harness:run <SBI Issue URL>`を実行する。IssueからSBIを組み立て、Run開始時のsnapshotを保存する。デモは`pnpm harness:demo`（サンプルSBI）。
-4. WAITING_FOR_HUMAN_GATEなら、人間が設計・作業範囲を確認し、`pnpm harness:approve <SBI Issue URL> --phase gate`を実行する。
-5. approveの記録後、Harnessがrunを自動で再開する（`harness:resume`は不要）。失敗は修正→再検証。連続3回失敗などはESCALATED。
+   承認済みSBIは、LEVEL 3・Security rule・protected pathでも実装前Gateなしで実装を始める（#175）。Risk・Security Impact・想定変更範囲はSBI承認で人間が確認済みとみなす。
+4. 失敗は修正→再検証。連続3回失敗などはESCALATED。承認済みSBIで決められない判断（範囲外の変更、新しいSecurity影響、SBIが宣言していないLEVEL 3、仕様・Design・API契約・ADRの判断）は、
+   ESCALATED / NEEDS_HUMAN_DECISIONとして具体的な理由（escalation.json）を残して止まる。人間が判断してSBIを更新・再承認し、新しいrunで再開する。止まったrunは再開しない。
+5. 検証が通ると、AI Review（Semantic Review）を全LEVELで実行する。adapter（#187で接続）が無いとNOT_CONFIGUREDになり、merge判定はBLOCKED（`ai_review_not_passed`）のまま。
 6. executionStatus=DONEになると、Harnessがtested SHAでPRを作る（fake providerを除く）。GitHub Reviewで承認する（[pull-request.md](pull-request.md)）。
    PRを作らないLocal modeでは、LEVEL 2は1人、LEVEL 3は異なる2人以上がapprove --phase mergeで承認する。
 7. 判定の更新が要るときだけ、保守用のresume --run IDでMERGE_ALLOWEDとautoMergeEligibleを確認する。
@@ -15,12 +17,12 @@
 8. レビュー待ちの間にmainが進んだら、最新のmainをpullして`pnpm harness:reverify <PR URL>`を実行する。実装を保持したまま再検証し、同じPRを更新する（[pull-request.md](pull-request.md)）。
 9. 実際のmergeは人間が行う。このHarnessはmergeしない。
 
-ゲート承認とマージ承認は別purpose・別context。使い回せない。
+SBI承認とマージ承認は別purpose・別context。使い回せない。実装前Gate（implementation-gate）は無い。
 証跡approvals.jsonを編集しても承認にならない。人間用CLIの署名付き台帳を使う。
 OSユーザーの別名は別人として数えない。複数人の本運用には認証済み承認adapterを接続する。
 
 SHA・source・SBI・Rules・検証コードが変わったら新規runで再検証・再承認する。
-途中iterationはresumeしない。承認待ちだけを再開・再評価する。
+途中iterationとESCALATEDのrunはresumeしない。merge判定だけを再評価する。
 承認撤回後もresumeでMERGE_ALLOWEDを取り消せる。
 PBI → SBI Plannerは[pbi-sbi-planner.md](pbi-sbi-planner.md)。API変更を伴うSBIは実装前に[api-schema.md](api-schema.md)でAPI契約を承認する。Harnessは実mergeを行わず、GitHubのRuleset・CODEOWNERSも変更しない（mainのRulesetは人が適用済み）。
 
@@ -47,4 +49,4 @@ Productionはapps・packages。試作から本番へ採用するときは新し�
 SBIの項目は人間向けのdocs/product/sbi-template.md、実行用JSONの例は.harness/state/sample-sbi.json。
 acceptance verifierは、組み込みのsample-bddと、harness.jsonで`trust: acceptance`と`trustedScript`（.harness/verification/*.mjs）を指定したもの、SBI Issueごとの`.harness/acceptance/sbi-<番号>.json`に登録したもの。
 別のSBIを実行する前に、信頼する検証adapterとACの対応を追加する。
-SBIのSecurity metadata（securityImpact・requiredSecurityRules・requiredVerifiers・preImplementationGate・minimumRiskLevel）は強制ルールを弱められない（[security-rules.md](../security-rules.md)）。
+SBIのSecurity metadata（securityImpact・requiredSecurityRules・requiredVerifiers・preImplementationGate・minimumRiskLevel）は強制ルールを弱められない。preImplementationGateは実装前に止めず、Human Gate risk（LEVEL 3・実装後2人）として扱う（[security-rules.md](../security-rules.md)）。
