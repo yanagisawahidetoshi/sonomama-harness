@@ -15,6 +15,7 @@ jobs:
     outputs:
       required_verifiers: ${{ steps.impact.outputs.required_verifiers }}
       full_gate: ${{ steps.impact.outputs.full_gate }}
+      maestro: ${{ steps.impact.outputs.maestro }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -97,8 +98,85 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm harness:demo --full
   # Completion Judge. The job id stays "harness" because it is the required status check.
+  # Mobile E2E (#68, #145): only for mobile SBIs that ask for E2E (impact maestro lanes), plus a push to main that keeps the APK cache.
+  # It builds the Development Build and runs Metro and the Emulator on the runner itself, outside the Docker isolation of the other
+  # verifiers (docs/security/threat-model.md). So it gets no secret, reads the repository only and never writes the shared cache from a PR.
+  maestro:
+    needs: impact
+    if: needs.impact.outputs.maestro != '[]' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 60
+    env:
+      MAESTRO_VERSION: 2.12.0
+      MAESTRO_SHA256: a6044a84542f522f434c5dc3d609e60c7446d423f3ed1b2ae513f5c48663ec5e
+      APK: apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0; packageManager in package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # The APK is rebuilt only when the native fingerprint (Expo SDK, React Native, native dependencies, config plugins, native config) changes.
+      - id: fingerprint
+        working-directory: apps/mobile
+        run: echo "hash=$(pnpm exec fingerprint fingerprint:generate --platform android | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).hash))')" >> "$GITHUB_OUTPUT"
+      - id: apk
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.APK }}
+          key: maestro-apk-${{ steps.fingerprint.outputs.hash }}
+      - if: steps.apk.outputs.cache-hit != 'true'
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '17'
+      - if: steps.apk.outputs.cache-hit != 'true'
+        run: bash tools/harness/maestro-build.sh
+      # Only main writes the shared APK cache; a pull request uses what main built or builds its own copy for this run.
+      - if: github.event_name == 'push' && steps.apk.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.APK }}
+          key: maestro-apk-${{ steps.fingerprint.outputs.hash }}
+      - if: needs.impact.outputs.maestro != '[]'
+        run: |
+          curl -fsSL -o maestro.zip "https://github.com/mobile-dev-inc/maestro/releases/download/cli-${MAESTRO_VERSION}/maestro.zip"
+          echo "${MAESTRO_SHA256}  maestro.zip" | sha256sum -c -
+          unzip -q maestro.zip -d "$HOME" && echo "$HOME/maestro/bin" >> "$GITHUB_PATH"
+      - if: needs.impact.outputs.maestro != '[]'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - if: needs.impact.outputs.maestro != '[]'
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          disable-animations: true
+          script: bash tools/harness/maestro-ci.sh "$APK" "${{ github.event.pull_request.head.sha || github.sha }}" ${{ join(fromJson(needs.impact.outputs.maestro), ' ') }}
+      - if: always() && needs.impact.outputs.maestro != '[]'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: maestro-results
+          path: .maestro-ci/results/
+          if-no-files-found: ignore
+      - if: always() && needs.impact.outputs.maestro != '[]'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: maestro-evidence
+          path: .maestro-ci/evidence/
+          if-no-files-found: ignore
   harness:
-    needs: [impact, verifiers, harness-test, harness-demo]
+    needs: [impact, verifiers, harness-test, harness-demo, maestro]
     if: always()
     runs-on: ubuntu-latest
     # The Completion Judge reads the source SBI Issue of a Production change, and the author and commits of a dependency bot PR, from the GitHub API.
@@ -118,8 +196,16 @@ jobs:
         with:
           node-version-file: .node-version
       - run: pnpm install --frozen-lockfile --prod --ignore-workspace
+      # The maestro job's result files; a missing artifact is judged as a missing result, not skipped.
+      - if: needs.impact.outputs.maestro != '[]'
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: maestro-results
+          path: .maestro-ci/results
       - run: pnpm harness:judge $HARNESS_SCOPE
         env:
           HARNESS_NEEDS: ${{ toJson(needs) }}
+          HARNESS_MAESTRO_RESULTS: .maestro-ci/results
           HARNESS_PULL_REQUEST: ${{ github.event.pull_request.number }}
           GH_TOKEN: ${{ github.token }}
