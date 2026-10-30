@@ -23,6 +23,7 @@
 すべての実装SBIが完了し、最終確認SBIがあればPASSした後に、そのEvidence digestに対する人間の`pbi-acceptance`承認で通る。
 PBIは、すべてのSBIが完了し、PBI Human Acceptance Gateが承認され、PBIのblocker（GitHub issue dependenciesの`blocked by`）がすべてclosedのときだけ完了する。判定は`pbi-judge.mjs`の`judgePbi`で行う。
 `pbi-acceptance`はImplementation Gate・Design Approval・Merge Approval・API Schema Approvalとは別の承認で、どれの代わりにもならない。
+Maestroのlane（実装SBIはモックAPI、最終確認SBIは実API）とCompletion Judgeでの必須判定は[ci.md](ci.md)にある。
 
 ### PBIの完了判定
 

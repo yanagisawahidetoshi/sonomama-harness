@@ -1,0 +1,28 @@
+# Opens the Development Build on the Metro server of the CI Emulator host (10.0.2.2 is the host loopback seen from the Emulator).
+appId: com.sonomama.student.dev
+---
+- launchApp:
+    clearState: true
+# The launcher drops a link that arrives before it is ready.
+- extendedWaitUntil:
+    visible: Connect
+    timeout: 60000
+- openLink: sonomama://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8081&disableOnboarding=1
+# The first bundle takes a while, and the developer menu may open over the app on the first launch; close it whenever it shows.
+- repeat:
+    while:
+      notVisible:
+        id: home-title
+    times: 40
+    commands:
+      - runFlow:
+          when:
+            visible: Go home
+          commands:
+            - pressKey: back
+      - waitForAnimationToEnd:
+          timeout: 5000
+- extendedWaitUntil:
+    visible:
+      id: home-title
+    timeout: 30000
