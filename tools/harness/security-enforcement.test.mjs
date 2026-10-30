@@ -137,6 +137,11 @@ describe('Security enforcement in the execution loop', () => {
       assert.equal(securityPassed(evidence), false);
     }));
   });
+  describe('given required content checks and no list of changed files', () => {
+    it('when Security is verified then it refuses instead of scanning the SBI allowedFiles', async () => {
+      await assert.rejects(verifySecurity({ workspace: '.', sbi: { allowedFiles: ['greeting.mjs'] }, assessment: { requiredVerifiers: ['secret-scan'] }, policy, config: { securityVerifiers: [] }, headSha: 'x' }), /changed files/);
+    });
+  });
   describe('given security rules on the docs lane', () => {
     it('when docs/security changes then minimum security risk overrides docs LOW and AI LOW', () => {
       const result = assess([{ path: 'docs/security/pii.md', added: 'Security requirements update.' }]);

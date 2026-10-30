@@ -29,3 +29,16 @@ SONOMAMAのセキュリティ要件は、人がこのディレクトリに書い
 各ルールにはSEC-で始まるIDを付けている。Harnessは同じIDを使って、該当する変更を見つけ、必要な検証と承認を求める。
 設定は.harness/rules/security.json（変更の見つけ方と必要な検証）と.harness/rules/human-gates.json（実装前の承認が要るルール）にある。
 Harnessが確かめるのは、IDと文書の対応が取れているかどうかだけで、要件の中身が妥当かどうかは人がレビューする。
+
+## 変更内容の検査（ローカルのrunとCI）
+
+秘密情報・禁止パターン・ログへの個人情報出力の検査（secret-scan、forbidden-pattern-check、pii-log-check）は、ローカルのrunとCIの両方で行う。検査する範囲は次のとおり異なる。
+
+| 実行場所 | 検査するファイルと内容 | 検査対象が0件のとき |
+| --- | --- | --- |
+| ローカルのrun（harness:run） | run worktreeのbaselineからコミットまでの差分にあるファイル（削除を除く）と、SBIがファイル名で許可したファイル。どちらも全文を読む | SKIPとし、Securityは不合格になる |
+| CI（harness:judge --base） | PRの差分にあるファイル（削除を除く）の追加行 | PASSのまま |
+| CI（harness:judge --all、mainへのpush） | 差分がないため検査しない | PASSのまま |
+
+SBI Issueから作ったSBIはディレクトリ単位で範囲を許可し、ファイル名では何も許可しない。そのため、ローカルのrunは許可範囲ではなく実際の差分を検査する。
+CIの0件をPASSとしている扱い（削除だけのPR、mainへのpush）は未決定で、人が判断する。
