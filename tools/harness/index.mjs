@@ -21,6 +21,8 @@ import { saveRun, loadRun, readRunState, runPaths, withRunLock } from './run-sto
 import { classifyLane } from './lanes.mjs';
 import { assertState } from './state-machine.mjs';
 import { loadSbiIssue, inScope } from './sbi-issue.mjs';
+import { generateAcceptance, isGeneratedAcceptanceInput, isGeneratedRegistrationPath } from './acceptance-generation.mjs';
+import { judgeDetection, runGeneratedAcceptance } from './acceptance-run.mjs';
 import { snapshotFromIssue, snapshotPath, riskView, snapshotVerified, matchSbiSource } from './sbi-source.mjs';
 import { verifyReverifyLink, committedSnapshot, parsePullUrl, reverifyTrailers, mergeTree, gitVersion } from './reverify.mjs';
 import { parseIssueUrl } from './planner.mjs';
@@ -158,11 +160,16 @@ async function verifyHead({ root, summary, inputs, result, iterDir, iteration, r
   result.verification = redact(await verify({ root, workspace, config,
     sbi:{...sbi,requiredVerifiers:sbi.requiredVerifiers.filter(id=>!securityIds.has(id) || generalIds.has(id))}, files,
     lane:summary.lane, full:summary.fullVerification,
-    requiredVerifiers:summary.securityAssessment.requiredVerifiers.filter(id=>generalIds.has(id)) }));
+    requiredVerifiers:summary.securityAssessment.requiredVerifiers.filter(id=>generalIds.has(id)),
+    acceptanceRunner: inputs.acceptanceRunner, generatedSpecDigest: summary.acceptance?.specDigest }));
   await json(join(iterDir,'verifier-selection.json'),result.verification.checks.map(({id,selectionReasons,required,status})=>({id,selectionReasons,required,status})));
   summary.securityAssessment = combineSecurity(summary.securityAssessment, classifySecurity({files:await riskFiles(root,summary,inputs,files),sbi},securityPolicy));
   summary.executionSecurityAssessment = summary.securityAssessment;
-  result.securityVerification = redact(await verifySecurity({ workspace, sbi, assessment: summary.securityAssessment, policy: securityPolicy, config, headSha:summary.headSha, verification:result.verification }));
+  // The committed diff, not allowedFiles alone: an SBI Issue allows directories only, and its allowedFiles is empty.
+  // The Issue snapshot the Harness commits is Issue text, not code, so it neither counts as a target nor fails on a pattern the Issue names.
+  const snapshot = inputs.sbiSnapshot && snapshotPath(inputs.sbiSnapshot);
+  const changed = [...new Set([...files.filter(f => f.status !== 'D').map(f => f.path), ...sbi.allowedFiles])].filter(path => path !== snapshot).map(path => ({ path }));
+  result.securityVerification = redact(await verifySecurity({ workspace, sbi, assessment: summary.securityAssessment, policy: securityPolicy, config, headSha:summary.headSha, verification:result.verification, changed, requireTargets: true }));
   result.security = { id:'security',required:true,status:securityPassed(result.securityVerification)?'PASS':'FAIL' };
   result.gateApproved = await resolveGate(root,summary);
   await json(join(directory,'security-assessment.json'),{...summary.securityAssessment,headSha:summary.headSha});
@@ -238,6 +245,8 @@ async function executeLoop({ root, summary, inputs, quiet, agent = runAgent, rev
       for (const file of response.files) {
         assertWritablePath(file.path);
         if (!inScope(sbi, file.path)) throw new Error(`scope/path violation: ${file.path}`);
+        // The generated Trusted Acceptance and what it runs with are fixed before the implementation (#147).
+        if (summary.acceptance?.mode === 'generated' && isGeneratedAcceptanceInput(file.path)) throw new Error(`scope/path violation: ${file.path} is generated Trusted Acceptance or its spec support`);
         if (Buffer.byteLength(file.content) > rules.maxFileBytes) throw new Error(`scope file size exceeded: ${file.path}`);
         let parent = workspace;
         for (const segment of file.path.split('/')) {
@@ -322,7 +331,26 @@ async function assessPreflight(root, summary, inputs, quiet) {
   await json(join(directory, 'merge-decision.json'), summary.merge);
   return null;
 }
-async function runProtected({ root, provider, sbiPath, issueUrl, quiet = false, agent = runAgent, reviewer = review, semanticReviewer, full = false, publish = false, issues = githubCli }) {
+// #147: generation → quality checks → registration commit → detection (G), before the gate and before the implementation agent.
+// Nothing is committed unless the generated tests passed the checks; the registration commit advances headSha, never baselineSha.
+async function prepareGeneratedAcceptance({ root, summary, inputs, source, quiet, acceptanceAgent, acceptanceRunner = runGeneratedAcceptance }) {
+  const { directory, workspace } = runPaths(root, summary.id);
+  const { escalate } = controller(root, summary, quiet);
+  const agent = acceptanceAgent ?? (request => runAgent({ provider: summary.provider, iteration: 0, prompt: request.prompt, schema: request.schema, directory, workspace, timeoutMs: inputs.config.timeoutMs }));
+  const generation = await generateAcceptance({ workspace, issue: source.issue, provider: summary.provider, runId: summary.id, agent });
+  await json(join(directory, 'acceptance-generation.json'), redact(generation));
+  if (generation.status === 'ESCALATED') return escalate(`Trusted Acceptanceの生成を止めました（仕様が曖昧）: ${generation.reason}`, 'SPEC_AMBIGUOUS');
+  if (generation.status !== 'REGISTERED') return escalate(`生成したTrusted Acceptanceが品質検査に通りません: ${generation.findings.map(f => `${f.path}: ${f.message}`).join('; ')}`, 'ACCEPTANCE_REJECTED');
+  summary.headSha = await commitWorkspace(workspace, `SBI ${inputs.sbi.id}: register generated Trusted Acceptance\n\nHarness-Run: ${summary.id}\nSBI-Issue: ${source.ref.url}`);
+  summary.acceptance = { mode: 'generated', specDigest: generation.registration.specDigest, registrationSha: summary.headSha };
+  const detection = judgeDetection({ registration: generation.registration, report: await acceptanceRunner({ workspace, sbiIssue: source.ref.number, config: inputs.config }) });
+  await json(join(directory, 'acceptance-detection.json'), redact(detection));
+  if (detection.status !== 'PASS') return escalate(`検出（G）を判定できません: ${detection.reasons.join('; ')}`, 'DETECTION_UNDETERMINABLE');
+  if (detection.scenarios.every(s => s.outcome === 'already satisfied')) return escalate('検出（G）: すべてのScenarioが実装の前からPASSしています（already satisfied）。生成したテストは新しい振る舞いを何も検出していないので、人が確認してください', 'DETECTION_UNDETERMINABLE');
+  await saveRun(root, summary);
+  return null;
+}
+async function runProtected({ root, provider, sbiPath, issueUrl, quiet = false, agent = runAgent, reviewer = review, semanticReviewer, full = false, publish = false, issues = githubCli, acceptanceAgent, acceptanceRunner }) {
   root = await realpath(root);
   if (issueUrl && sbiPath) throw new Error('Give either an SBI Issue URL or --sbi, not both');
   // The Issue is read and validated before any run directory or worktree exists.
@@ -349,6 +377,12 @@ async function runProtected({ root, provider, sbiPath, issueUrl, quiet = false, 
   await json(join(directory, 'inputs.json'), inputs);
   const { transition } = controller(root, summary, quiet);
   await transition('PENDING', sbi.title);
+  // Not serialized: a resumed run uses the default runner. Tests replace it so harness:test never starts Docker for the generated specs.
+  inputs.acceptanceRunner = acceptanceRunner;
+  if (source?.mode === 'generate') {
+    const halted = await prepareGeneratedAcceptance({ root, summary, inputs, source, quiet, acceptanceAgent, acceptanceRunner });
+    if (halted) return halted;
+  }
   const stopped = await assessPreflight(root, summary, inputs, quiet);
   if (stopped) return stopped;
   return withRunLock(root, id, () => executeLoop({ root, summary, inputs, quiet, agent, reviewer, semanticReviewer }));
@@ -719,7 +753,7 @@ async function reverifyProtected({ root, pullUrl, quiet = false, reviewer = revi
       for (const file of await changedFiles(workspace, baselineSha, summary.headSha)) {
         if (file.path === snapshotPath(snapshot)) continue;
         try { assertWritablePath(file.path); } catch (error) { return escalate(error.message); }
-        if (!inScope(sbi, file.path)) return escalate(`scope/path violation: ${file.path}`);
+        if (!inScope(sbi, file.path) && !isGeneratedRegistrationPath(file.path, sbi)) return escalate(`scope/path violation: ${file.path}`);
       }
       const stopped = await assessPreflight(root, summary, inputs, quiet);
       if (stopped) return stopped;

@@ -58,6 +58,9 @@ export const githubCli = {
   async updateComment({ owner, repo }, id, body) {
     return githubCommentSchema.parse(await api('PATCH', `repos/${owner}/${repo}/issues/comments/${id}`, { body }));
   },
+  async updateIssue({ owner, repo, number }, { body }) {
+    return githubIssueSchema.parse(await api('PATCH', `repos/${owner}/${repo}/issues/${number}`, { body }));
+  },
   async createIssue({ owner, repo }, { title, body, labels }) {
     return githubIssueSchema.parse(await api('POST', `repos/${owner}/${repo}/issues`, { title, body, labels }));
   },
@@ -69,6 +72,33 @@ export const githubCli = {
   },
   async addComment({ owner, repo, number }, body) {
     return githubCommentSchema.parse(await api('POST', `repos/${owner}/${repo}/issues/${number}/comments`, { body }));
+  },
+  // A file as committed at a commit; null when that commit does not have it.
+  async fileAt({ owner, repo }, path, ref) {
+    let file;
+    try { file = await api('GET', `repos/${owner}/${repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}?${new URLSearchParams({ ref })}`); }
+    catch (error) { if (error.httpStatus === '404') return null; throw error; }
+    if (file?.type !== 'file' || file.encoding !== 'base64') throw new Error(`${path} at ${ref} is not a file`);
+    return Buffer.from(file.content, 'base64').toString('utf8');
+  },
+  // Every version of an Issue body that GitHub keeps in its edit history, oldest first. A version deleted from the history has no body.
+  async bodyVersions({ owner, repo, number }) {
+    const query = 'query($owner:String!,$repo:String!,$number:Int!,$after:String){repository(owner:$owner,name:$repo){issue(number:$number){userContentEdits(first:100,after:$after){nodes{editedAt deletedAt diff} pageInfo{hasNextPage endCursor}}}}}';
+    const versions = [];
+    let after = null;
+    for (let page = 0; page < 50; page++) {
+      const edits = (await api('POST', 'graphql', { query, variables: { owner, repo, number, after } }))?.data?.repository?.issue?.userContentEdits;
+      if (!edits) throw new Error(`GraphQL: edit history of ${owner}/${repo}#${number} is unavailable`);
+      versions.push(...edits.nodes);
+      // GitHub returns the edits newest first. editedAt has only seconds, so the API order (reversed) is kept instead of sorting by time.
+      if (!edits.pageInfo.hasNextPage) return versions.reverse().map(v => ({ body: v.deletedAt ? null : v.diff, deletedAt: v.deletedAt ?? null }));
+      after = edits.pageInfo.endCursor;
+    }
+    throw new Error(`GraphQL: edit history of ${owner}/${repo}#${number} has too many pages`);
+  },
+  // GitHub issue dependencies: the Issues registered as blocking this one (blocked by).
+  async blockedBy({ owner, repo, number }) {
+    return listAll(`repos/${owner}/${repo}/issues/${number}/dependencies/blocked_by`, {}, githubIssueListSchema);
   },
   async issueTimeline({ owner, repo, number }) {
     return listAll(`repos/${owner}/${repo}/issues/${number}/timeline`, {}, githubTimelineSchema);
