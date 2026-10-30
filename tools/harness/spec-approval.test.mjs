@@ -76,8 +76,10 @@ describe('Starting a run from a spec-approved SBI Issue', () => {
     issueTimeline: async () => [],
   });
   const load = gh => loadSbiIssue({ issueUrl: ref.url, config, github: gh });
-  it('when the spec is approved for the current digest but no Trusted Acceptance is registered then the run stops and says generation is not available yet', async () => {
-    await assert.rejects(load(github({ comments: [comment(1, 'alice', specApprovalLine(specDigest(body())))] })), /仕様は承認済み[\s\S]*生成/);
+  // #147: the approved spec starts the run in the generate mode; Trusted Acceptance is generated inside the run.
+  it('when the spec is approved for the current digest and no Trusted Acceptance is registered then the run starts in the generate mode', async () => {
+    const loaded = await load(github({ comments: [comment(1, 'alice', specApprovalLine(specDigest(body())))] }));
+    assert.equal(loaded.mode, 'generate');
   });
   it('when neither ready nor a spec approval exists then the run does not start and names both ways to start', async () => {
     await assert.rejects(load(github()), /readyではありません[\s\S]*harness-spec/);

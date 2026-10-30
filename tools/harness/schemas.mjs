@@ -77,6 +77,8 @@ export const configSchema = z.strictObject({
     trustedScript: relativePath.optional(),
     // Trusted Acceptance a human registered for one SBI Issue; its acceptanceIds are that Issue's acceptance criteria.
     sbiIssue: z.number().int().positive().optional(),
+    // Trusted Acceptance generated in the run from a version 2 registration (#147); it runs the generated specs, not a trustedScript.
+    generated: z.boolean().optional(),
     areas: z.array(text).default([]),
     // container: workspace-only Docker container. compose: Harness-started Compose after the file is checked.
     // harness: a Harness-owned script that only parses workspace files. network grants egress to this verifier only.
@@ -323,6 +325,8 @@ export const runStateSchema = z.strictObject({
   escalation: z.strictObject({ code: z.enum(escalationCodes), detail: z.string(), decision: z.literal('NEEDS_HUMAN_DECISION').optional() }).optional(),
   // A Human Gate risk the approved SBI declared (#175): level 3 and two humans after implementation, never a stop before it.
   humanGateRisk: z.boolean().optional(),
+  // #147: Trusted Acceptance generated in the run from the approved spec; registrationSha is the commit that registered it.
+  acceptance: z.strictObject({ mode: z.literal('generated'), specDigest: sha256, registrationSha: gitSha }).optional(),
   pullRequest: z.strictObject({ number: z.number().int().positive(), url: z.url(), branch: text, base: text, repository: text }).optional(),
   // harness:reverify (ADR-0003): a run that verifies the code of an existing PR merged with the new main, without the implementation agent.
   kind: z.literal('reverify').optional(),

@@ -1,7 +1,9 @@
 // Machine-countable stop reasons for Health Metrics. Human-facing reason text is kept separately.
 export const escalationCodes = Object.freeze(['SPEC_AMBIGUOUS', 'DESIGN_DECISION_REQUIRED', 'AGENT_ESCALATION', 'SECRET_PROPOSAL', 'NEW_SECURITY_SCOPE', 'NEW_HIGH_RISK',
   'VERIFIER_NOT_CONFIGURED', 'SECURITY_VERIFIER_NOT_CONFIGURED', 'SCOPE_VIOLATION', 'LANE_ESCALATION', 'ITERATION_LIMIT', 'CONSECUTIVE_FAILURE',
-  'SOURCE_DIRTY', 'SOURCE_CHANGED', 'WORKSPACE_CHANGED', 'APPROVAL_INVALID', 'SECURITY_CHECKS_CHANGED', 'REVERIFY_CONFLICT', 'UNKNOWN']);
+  'SOURCE_DIRTY', 'SOURCE_CHANGED', 'WORKSPACE_CHANGED', 'APPROVAL_INVALID', 'SECURITY_CHECKS_CHANGED', 'REVERIFY_CONFLICT',
+  // #147: generated Trusted Acceptance that failed the quality checks, and detection (G) that could not be judged.
+  'ACCEPTANCE_REJECTED', 'DETECTION_UNDETERMINABLE', 'UNKNOWN']);
 // A decision the approved SBI cannot settle (#175): the human decides, updates the SBI, approves it again and starts a new run.
 // The others are failures a human investigates (environment, configuration, tampering, repeated failures).
 const humanDecisionCodes = new Set(['SPEC_AMBIGUOUS', 'DESIGN_DECISION_REQUIRED', 'AGENT_ESCALATION', 'NEW_SECURITY_SCOPE', 'NEW_HIGH_RISK', 'SCOPE_VIOLATION', 'LANE_ESCALATION']);
