@@ -8,6 +8,7 @@ import { planResponseSchema, planJsonSchema } from './schemas.mjs';
 import { judgePlan, creationOrder, limits } from './planner-judge.mjs';
 import { githubCli } from './planner-github.mjs';
 import { withEvidenceProtection, redactText, hasSecret } from './evidence-protection.mjs';
+import { planOf, planDigest, writePlanSection } from './pbi-plan.mjs';
 
 // Every generated SBI carries both labels. A human removes needs-review and adds ready; the Planner never does.
 export const sbiLabels = Object.freeze(['sbi', 'needs-review']);
@@ -133,6 +134,10 @@ async function planProtected({ root, issueUrl, provider, quiet, agent, github, s
       await json(join(directory, 'issues.json'), { created: summary.created, comment: null });
       await save(); log(`${reuse ? 'Reused' : 'Created'} #${issue.number} ${title}`);
     }
+    // The complete SBI set goes into the PBI body as ## SBI構成; a human approves it once with harness:pbi-plan-approve.
+    const plan = planOf(ref.number, summary.created.map(c => { const sbi = response.sbis.find(s => s.id === c.sbiId); return { id: c.sbiId, number: c.number, kind: sbi.kind, dependsOn: sbi.dependsOn }; }));
+    await writePlanSection({ ref, issue, plan, github });
+    summary.planDigest = planDigest(plan); await save();
     const comment = renderGeneratedComment(summary.created, pbi);
     if (hasSecret(comment)) throw new Error('Secret/Credential detected in PBI comment; rejected before any GitHub write');
     const previous = (await github.listComments(ref)).find(c => (c.body || '').includes(listMarker(ref.url)));

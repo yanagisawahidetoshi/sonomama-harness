@@ -53,6 +53,9 @@ export const githubCli = {
   async updateComment({ owner, repo }, id, body) {
     return githubCommentSchema.parse(await api('PATCH', `repos/${owner}/${repo}/issues/comments/${id}`, { body }));
   },
+  async updateIssue({ owner, repo, number }, { body }) {
+    return githubIssueSchema.parse(await api('PATCH', `repos/${owner}/${repo}/issues/${number}`, { body }));
+  },
   async createIssue({ owner, repo }, { title, body, labels }) {
     return githubIssueSchema.parse(await api('POST', `repos/${owner}/${repo}/issues`, { title, body, labels }));
   },

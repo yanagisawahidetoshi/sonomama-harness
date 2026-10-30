@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { check } from './check.mjs';
-import { parseIssueUrl, markerPattern } from './planner.mjs';
+import { parseIssueUrl } from './planner.mjs';
 import { githubCli } from './planner-github.mjs';
 import { githubPrCli, ciStatus } from './github-pr.mjs';
-import { issueKind, issueDependsOn, mergedHarnessPull } from './sbi-issue.mjs';
+import { mergedHarnessPull } from './sbi-issue.mjs';
+import { parsePlan, planDigest, pbiSbis, comparePlan, planPrefix } from './pbi-plan.mjs';
+import { readCommentApprovals } from './github-approval-records.mjs';
 import { judgePbi } from './pbi-judge.mjs';
 import { pbiAcceptanceRecords, recordPbiAcceptance } from './pbi-acceptance.mjs';
 import { localHumanIdentity } from './human-approvals.mjs';
@@ -26,26 +28,6 @@ const evidenceSchema = z.discriminatedUnion('connected', [
 const digestOf = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const sha256 = /^[0-9a-f]{64}$/;
 
-async function sbisOfPbi(ref, github, problems) {
-  const issues = (await github.listIssues(ref, 'sbi')).filter(issue => !issue.pull_request && markerPattern.exec(issue.body ?? '')?.[1] === ref.url);
-  const byId = new Map();
-  for (const issue of issues) {
-    const id = markerPattern.exec(issue.body)[2];
-    byId.set(id, [...(byId.get(id) ?? []), issue]);
-  }
-  const sbis = [];
-  for (const [id, found] of [...byId].sort(([a], [b]) => a.localeCompare(b))) {
-    // A replaced SBI Issue loses its sbi label (pbi-sbi-planner.md); two that still claim one ID are a human decision, not ours.
-    if (found.length > 1) { problems.push(`SBI ${id} を名乗るIssueが複数あります（${found.map(i => `#${i.number}`).join(', ')}）。古いIssueから sbi ラベルを外してください`); continue; }
-    const [issue] = found;
-    sbis.push({ id, kind: issueKind(issue.body), dependsOn: issueDependsOn(issue.body), number: issue.number, title: issue.title, issueUrl: issue.html_url });
-  }
-  if (!sbis.length && !problems.length) problems.push(`${ref.url} に紐づくSBI Issue（sbiラベルとPlannerのmarker）がありません`);
-  // An SBI that dropped out of the list (label or marker removed) is still named by the SBIs that depend on it.
-  for (const sbi of sbis) for (const id of sbi.dependsOn) if (!byId.has(id)) problems.push(`SBI ${sbi.id} の依存SBI ${id} がこのPBIのSBI Issueにありません`);
-  return sbis;
-}
-
 async function requiredChecks(ref, config, githubPr) {
   const base = config.github?.base ?? 'main';
   const configured = (config.github?.requiredChecks ?? []).map(context => ({ context, integrationId: null }));
@@ -57,13 +39,22 @@ export async function collectPbiStatus({ root, pbiUrl, config, github = githubCl
   const ref = parseIssueUrl(pbiUrl);
   evidence ??= maestroEvidence({ ref, github, ...(actions ? { actions } : {}) });
   config ??= (await check(root)).config;
-  const problems = [], output = { pbi: { url: ref.url, number: ref.number, title: null }, sbis: [], blockers: [] };
+  const problems = [], output = { pbi: { url: ref.url, number: ref.number, title: null }, plan: { digest: null, approved: false, approvers: [] }, sbis: [], blockers: [] };
   const attempt = async (what, fn, fallback) => { try { return await fn(); } catch (error) { problems.push(`${what}をGitHubから読めません（${error.message}）`); return fallback; } };
 
   const issue = await attempt(`PBI ${ref.url}`, () => github.fetchIssue(ref), null);
   if (issue?.pull_request) problems.push(`${ref.url} is a pull request, not a PBI Issue`);
   output.pbi.title = issue?.title ?? null;
-  const sbis = issue && !issue.pull_request ? await attempt('SBI Issueの一覧', () => sbisOfPbi(ref, github, problems), []) : [];
+  const sbis = issue && !issue.pull_request ? await attempt('SBI Issueの一覧', () => pbiSbis(ref, github, problems), []) : [];
+  // The approved plan, the PBI marker of each SBI Issue and the SBI Issues found on GitHub must be the same set.
+  const { plan, errors: planErrors } = issue && !issue.pull_request ? parsePlan(issue.body, ref.url) : { plan: null, errors: [] };
+  problems.push(...planErrors.map(e => `PBI plan: ${e}（pnpm harness:pbi-plan ${ref.url} で生成し、pnpm harness:pbi-plan-approve ${ref.url} で承認する）`));
+  if (plan) {
+    output.plan.digest = planDigest(plan);
+    Object.assign(output.plan, await attempt('PBI planの承認', () => readCommentApprovals({ ref, prefix: planPrefix, digest: output.plan.digest, github, githubPr }), {}));
+    if (!output.plan.approved) problems.push(`PBI plan（digest ${output.plan.digest.slice(0, 12)}）が承認されていません。## SBI構成 を確認して pnpm harness:pbi-plan-approve ${ref.url}`);
+    problems.push(...comparePlan(plan, sbis));
+  }
   const required = await attempt('必須check', () => requiredChecks(ref, config, githubPr), null);
   const base = config.github?.base ?? 'main', results = {}, merged = [];
   const composition = sbis.map(({ id, number, kind }) => ({ id, number, kind }));
@@ -86,7 +77,7 @@ export async function collectPbiStatus({ root, pbiUrl, config, github = githubCl
     if (read) row.evidence = read.connected ? 'CONNECTED' : 'NOT_CONNECTED';
     if (sbi.kind === 'validation') {
       // The digest the human approves also binds the SBI composition, so adding, dropping or swapping an SBI voids an earlier APPROVE.
-      if (read?.connected) results[sbi.id] = { e2e, evidenceDigest: digestOf({ sbis: composition, evidence: read.evidenceDigest }) };
+      if (read?.connected) results[sbi.id] = { e2e, evidenceDigest: digestOf({ plan: output.plan.digest, sbis: composition, evidence: read.evidenceDigest }) };
       continue;
     }
     if (pull === null) problems.push(`${where} にmainへmergeされたHarness PR（Closes #${sbi.number} と SBI-Issue trailer）がありません`);
@@ -103,7 +94,7 @@ export async function collectPbiStatus({ root, pbiUrl, config, github = githubCl
   const implementations = sbis.filter(s => s.kind === 'implementation'), validations = sbis.filter(s => s.kind === 'validation');
   // Without a validation SBI the human confirms the merged implementation evidence; the digest changes whenever any part of it does.
   const evidenceDigest = validations.length ? (sha256.test(results[validations[0].id]?.evidenceDigest ?? '') ? results[validations[0].id].evidenceDigest : null)
-    : implementations.length && merged.length === implementations.length ? digestOf({ sbis: composition, evidence: merged }) : null;
+    : implementations.length && merged.length === implementations.length ? digestOf({ plan: output.plan.digest, sbis: composition, evidence: merged }) : null;
   output.blockers = issue && !issue.pull_request ? (await attempt('PBIをブロックしているIssue（blocked by）', () => github.blockedBy(ref), [])).map(i => ({ url: i.html_url, title: i.title, state: i.state ?? null })) : [];
   let records = [];
   try { records = await acceptanceRecords(ref.url); } catch (error) { problems.push(`PBI Human Acceptanceの台帳を読めません（${error.message}）`); }
