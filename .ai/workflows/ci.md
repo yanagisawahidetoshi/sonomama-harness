@@ -97,7 +97,7 @@ Full Gateの`harness-demo`は、PRでは`harness:demo`（fake providerの自己�
 - SBIの`requiredVerifiers`にあるapplication verifierは、matrix jobの結果をSecurityの判定にも使う。
 - secret-scanとforbidden-pattern-checkは、変更ファイルの追加行を検査する。`tools/harness/*.test.mjs`はredactionのfixtureを含むため、Harness worktree作成時と同じくcredential形式の値だけを秘密値とみなす。
 - mainへのpush（`--all`）は差分が無いので、Securityの検査対象も無い。PRの判定で検査済みの前提。
-- 実装前Gate・Human Approvalの要否はCIでは判定しない。Harness runとGitHub Reviewで扱う。
+- Human Approvalの要否はCIでは判定しない。Harness runとGitHub Reviewで扱う。実装前Gateは無い（#175）。
 
 ## expo-doctor
 

@@ -2,6 +2,7 @@
 
 - 状態: Accepted（2026-10-30、柳沢英俊がPR #153の再レビュー後に承認）
 - 日付: 2026-10-30
+- 改訂: Accepted（PR #195 のマージで承認。2026-10-31、#175・#193の決定に合わせて実装前Gateの扱いを改めた）
 - 判断者: 柳沢英俊（設計案はIssue #144で承認）
 - 関連Issue: #144、#148
 - 関連SBI: なし
@@ -58,9 +59,10 @@ ADR-0001は、PRのbaseをrunのbaselineに固定し、mainが進んだら`base_
 - PR HEADが同じリポジトリのbranchでなければ（forkや削除されたfork）、再検証しない。
 - PR HEADが変えたファイルは、worktreeへ取り出す前にGitのobject上で、baselineと同じ検査（symlink・submodule・運用証跡のパス・秘密値を含むファイル全体）にかける。
 - 差分の判定対象は`baseline..候補`。上流mainの変更は含まない。人が競合解消で触れたファイルも含めて、SBIのscope外や予約パスがあれば検証前に停止する。
-- 入力（config・rules・policy・Trusted Acceptance・Harnessのコード）は新baselineの元checkoutから取る。lane・Security・Risk・Gate要否も新baselineのルールで計算し直す。
-- 実装前Gateは、既存の束縛（`baselineSha`と新runの`inputsDigest`を含むcontext）どおり**毎回取り直す**。SBI・scope・Securityが変わらなくても引き継がない。
-- 検証は実装Agentを呼ばずに1回だけ行う（Verifier → Security → Policy Reviewer → Completion Judge）。失敗したら`FAILED`で止め、実装に戻らず、PRも更新しない。
+- 入力（config・rules・policy・Trusted Acceptance・Harnessのコード）は新baselineの元checkoutから取る。lane・Security・Riskも新baselineのルールで計算し直す。
+- 実装前Gateは無い（#175・#193）。実装を始めてよいかは人がSBIの承認で判断し、再検証でも承認を取り直さない。SBIが変わっていれば前項のsnapshot照合で停止し、新しいrunでの実装に戻すので、変わったSBIが古い承認のまま検証されることはない。
+  検証中に承認済みSBIで決められない判断（scope外の変更、新しいSecurity影響など）が出たら、`ESCALATED / NEEDS_HUMAN_DECISION`で止める。
+- 検証は実装Agentを呼ばずに1回だけ行う（Verifier → Security → Policy Reviewer → AI Review → Completion Judge）。失敗したら`FAILED`で止め、実装に戻らず、PRも更新しない。
 - 公開は、新baselineが`origin/main`の先頭のまま、かつPRブランチの先頭が取り込んだPR HEAD（または候補）のときだけ行う。
   push前に`PUSHING`を署名付きstateへ保存し、push後に`PUSHED`、merge判定とPR本文の更新後に`PR_UPDATED`とする。再実行は記録した段階から続ける。
 - PR本文のmarker・Run ID・tested SHA・検証結果・Riskを新runの値に更新し、親run・旧tested SHA・baselineを足す。SBI・Issue・`Closes #N`・元PBIは維持する。
@@ -81,7 +83,7 @@ ADR-0001は、PRのbaseをrunのbaselineに固定し、mainが進んだら`base_
 
 ### Negative / Trade-offs
 
-- mainが進むたびに、CIとApproveを取り直す点は変わらない。Gate対象のSBIは実装前承認も毎回取り直す。
+- mainが進むたびに、CIとApproveを取り直す点は変わらない。実装前の承認は取り直さない（#175）。
 - `assertBaseIsBaseline`の直後からpushまでの間にmainが進むと、候補はpushされるが`base_not_baseline`でMERGE_ALLOWEDにならない。この窓は閉じられない（候補自体は検証済み）。
 - 操作者は先にmainをpullしておく必要がある（元checkoutのHEADが`origin/main`の先頭と一致しなければ開始しない）。
 - trailerは誰でも書けるため、関連付けは認証にならない。Harnessが書いたことの証明はできない。

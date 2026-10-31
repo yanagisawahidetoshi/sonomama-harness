@@ -21,7 +21,7 @@ harness:run → executionStatus=DONE
 | GitHub PR mode（PRを作成したrun） | GitHub Review。`harness:approve --phase merge`は拒否する |
 | Local mode（PRを作っていないrun、demo） | ローカル署名台帳（`harness:approve --phase merge`） |
 
-2つの方式を同時には要求しない。API Schema Approvalと実装前Gateは、どちらのモードでもローカル署名台帳を使う。
+2つの方式を同時には要求しない。API Schema Approvalは、どちらのモードでもローカル署名台帳を使う。実装前Gateは無い（#175）。
 
 ## 判定
 

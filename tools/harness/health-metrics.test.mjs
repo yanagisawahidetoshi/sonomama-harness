@@ -47,7 +47,7 @@ describe('Health metrics signal collection', () => {
       assert.equal(metrics.approvals.design, undefined);
       assert.deepEqual(metrics.approvals.implementationGate, { required: false, state: 'NOT_REQUIRED' });
       assert.deepEqual(metrics.approvals.merge, { required: 1, valid: 0, requestedChanges: false });
-      assert.deepEqual(metrics.review, { policyReview: 'PASS', semanticReview: { enabled: false, status: 'SKIP' }, humanReviewRequired: true });
+      assert.deepEqual(metrics.review, { policyReview: 'PASS', semanticReview: { enabled: true, status: 'PASS' }, humanReviewRequired: true });
       assert.equal(metrics.escalation, null);
     }));
     it('when one human approves and the run resumes then records MERGE_ALLOWED without reviewer identities', () => fixture(async root => {
@@ -99,39 +99,18 @@ describe('Health metrics signal collection', () => {
       assert.equal(metrics.executionStatus, 'DONE');
     }));
   });
-  describe('given a run that stops before implementation', () => {
-    it('when an implementation Human Gate is required then records the gate and preflight risk without escalation', () => fixture(async root => {
+  describe('given an approved SBI with a Human Gate risk', () => {
+    // #175: the SBI approval covered AuthN, so the metrics show no implementation gate and the run starts implementing at once.
+    it('when the run starts then records no implementation gate, the preflight risk and the reason it stopped later', () => fixture(async root => {
       await update(root, sbiPath, s => s.risks = ['AuthN']);
-      const run = await runHarness({ root, quiet: true, agent: async () => { throw new Error('must not run'); } });
-      assert.equal(run.status, 'WAITING_FOR_HUMAN_GATE');
+      const run = await runHarness({ root, quiet: true, agent: async () => ({ escalation: 'API契約とDesignが矛盾しています', files: [] }) });
       const metrics = await metricsOf(root, run);
-      assert.equal(metrics.executionStatus, 'PENDING');
-      assert.equal(metrics.mergeStatus, 'NOT_ASSESSED');
+      assert.equal(metrics.executionStatus, 'ESCALATED');
       assert.equal(metrics.riskLevel, 3);
       assert.equal(metrics.riskPhase, 'preflight');
-      assert.deepEqual(metrics.approvals.implementationGate, { required: true, state: 'WAITING_FOR_HUMAN_GATE' });
-      assert.equal(metrics.approvals.design, undefined);
-      assert.deepEqual(metrics.approvals.merge, { required: null, valid: null, requestedChanges: false });
-      assert.deepEqual(metrics.iterations, { total: 0, failed: 0, done: false, limitReached: false, consecutiveFailure: false });
-      assert.deepEqual(metrics.verifiers, { summary: { pass: 0, fail: 0, skip: 0, notConfigured: 0 }, checks: [] });
-      assert.equal(metrics.review.humanReviewRequired, null);
-      assert.equal(metrics.executionDurationMs, null);
-      assert.equal(metrics.escalation, null);
-    }));
-    it('when a gated run is approved and resumed then execution duration excludes the human wait', () => fixture(async root => {
-      await update(root, '.harness/config/harness.json', c => c.securityVerifiers = [{ id: 'rails-rls-test', directory: 'apps/api', commands: [['node', '-e', 'require("node:assert/strict").ok(true)']] }]);
-      await update(root, sbiPath, s => s.risks = ['RLS']);
-      const run = await runHarness({ root, quiet: true });
-      assert.equal(run.status, 'WAITING_FOR_HUMAN_GATE');
-      await new Promise(resolve => setTimeout(resolve, 20));
-      await recordDecision({ root, runId: run.id, purpose: 'implementation-gate', identityProvider: human('A') });
-      const resumed = await resumeRun({ root, runId: run.id, quiet: true });
-      assert.equal(resumed.executionStatus, 'DONE');
-      const metrics = await metricsOf(root, run);
-      const implementing = resumed.events.find(e => e.status === 'IMPLEMENTING');
-      assert.ok(Date.parse(implementing.at) - Date.parse(run.startedAt) >= 20);
-      assert.ok(metrics.executionDurationMs < Date.parse(resumed.events.filter(e => e.phase === 'execution').at(-1).at) - Date.parse(run.startedAt));
-      assert.ok(metrics.executionDurationMs < metrics.durationMs);
+      assert.deepEqual(metrics.approvals.implementationGate, { required: false, state: 'NOT_REQUIRED' });
+      assert.deepEqual(metrics.escalation, { code: 'AGENT_ESCALATION' });
+      assert.equal(metrics.iterations.total, 1);
     }));
     it('when a prototype is promoted then the metrics have no Design Approval and the run reaches merge review', () => fixture(async root => {
       const { agent } = await prototype(root, { promotion: true });

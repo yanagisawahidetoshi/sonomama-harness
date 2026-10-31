@@ -10,7 +10,7 @@ import { githubCli } from './planner-github.mjs';
 import { reviewLabels, approvedLabel, proposalFiles, proposalDirectory, proposalDigest, assertGenerated, readProposalMeta, readGeneration } from './api-schema-files.mjs';
 
 // API Schema Approval is a signed, content-addressed record outside Git and the agent workspace.
-// It is separate from implementation-gate / merge records and never substitutes for them. Labels are only a projection.
+// It is separate from the SBI approval and merge records and never substitutes for them. Labels are only a projection.
 const ledgerPath = (root, ref) => join(root, '.harness/state/human/api-schema', `${ref.owner}__${ref.repo}__${ref.number}.json`);
 async function records(root, ref) {
   const path = ledgerPath(root, ref);
