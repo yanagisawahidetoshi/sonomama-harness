@@ -34,7 +34,7 @@ describe('Security Impact Classifier', () => {
     for (const [path, impact] of [
       ['apps/api/security/rls.sql', 'RLS'], ['apps/api/auth/login.rb', 'AuthN'], ['apps/api/authz/check.rb', 'AuthZ'],
       ['apps/api/pii/access.rb', 'PII'], ['.upload-access-key', 'Secret'], ['apps/api/roles/model.rb', 'RolePermission'],
-      ['infra/main.tf', 'InfrastructureSecurity'],
+      ['infra/production/main.tf', 'ProductionInfrastructure'],
     ]) {
       it(`when ${impact} changes then requires an implementation gate and minimum risk 3`, () => {
         const result = assess([{ path, status: 'M' }]);
@@ -52,6 +52,7 @@ describe('Security Impact Classifier', () => {
       ['.github/workflows/deploy.yml', 'CICDSecurity', 'forbidden-pattern-check'],
       ['docs/security/threat-model.md', 'SecurityConfig', 'forbidden-pattern-check'],
       ['docs/adr/0001-example.md', 'SecurityDesign', 'forbidden-pattern-check'],
+      ['infra/main.tf', 'InfrastructureSecurity', 'forbidden-pattern-check'],
     ]) {
       it(`when ${impact} changes then requires its Verifier with one review and no implementation gate`, () => {
         const result = assess([{ path, status: 'M' }]);

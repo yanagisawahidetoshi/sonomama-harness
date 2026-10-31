@@ -247,14 +247,14 @@ describe('Security Impact Classifier on OpenAPI structure names in the API contr
 // dangerous need two. Only added lines count as the dangerous direction, so narrowing an existing setting stays ordinary.
 describe('Security Impact Classifier on infrastructure', () => {
   const infra = (path, added, extra = {}) => assess([{ path, status: 'M', added, deleted: '', ...extra }]);
-  const ordinary = result => detected(result, 'SEC-INFRA-001') && !detected(result, 'SEC-INFRA-CRITICAL-001') && result.minimumRiskLevel === 2 && result.requiredHumanApprovals === 1;
-  const critical = result => detected(result, 'SEC-INFRA-CRITICAL-001') && result.minimumRiskLevel === 3 && result.requiredHumanApprovals === 2;
+  const ordinary = result => detected(result, 'SEC-INFRA-001') && !detected(result, 'SEC-PRODINFRA-001') && result.minimumRiskLevel === 2 && result.requiredHumanApprovals === 1;
+  const critical = result => detected(result, 'SEC-PRODINFRA-001') && result.minimumRiskLevel === 3 && result.requiredHumanApprovals === 2;
   describe('given an infrastructure change outside production that adds nothing dangerous', () => {
     it('when a module is added in staging then it is ordinary infrastructure at level 2 with one review', () => assert.ok(ordinary(infra('infra/staging/network.tf', 'module "vpc" { source = "./vpc" }'))));
     it('when tags change then it is ordinary infrastructure', () => assert.ok(ordinary(infra('terraform/modules/db/main.tf', 'tags = { team = "core" }'))));
     it('when an existing open ingress is narrowed then it stays ordinary', () => assert.ok(ordinary(infra('infra/staging/sg.tf', 'cidr_blocks = ["10.0.0.0/16"]', { deleted: 'cidr_blocks = ["0.0.0.0/0"]' }))));
     it('when an egress rule opens to everywhere then it stays ordinary', () => assert.ok(ordinary(infra('infra/staging/sg.tf', 'egress {\n  from_port = 0\n  cidr_blocks = ["0.0.0.0/0"]\n}'))));
-    it('when a document only mentions a dangerous setting then it is not infrastructure at all', () => assert.equal(detected(infra('docs/product/notes.md', 'Never set force_destroy = true.'), 'SEC-INFRA-CRITICAL-001'), false));
+    it('when a document only mentions a dangerous setting then it is not infrastructure at all', () => assert.equal(detected(infra('docs/product/notes.md', 'Never set force_destroy = true.'), 'SEC-PRODINFRA-001'), false));
   });
   describe('given a change to production infrastructure', () => {
     for (const path of ['infra/production/main.tf', 'terraform/envs/prod/main.tf', 'terraform/envs/prod.tfvars', 'k8s/overlays/production/deployment.yaml', 'deploy/prod/app.yaml']) {
