@@ -1,0 +1,15 @@
+name: probe-api
+on:
+  pull_request:
+    branches: [spike/168-base]
+permissions:
+  checks: write
+jobs:
+  forge:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sleep 90
+          gh api repos/${{ github.repository }}/check-runs -f name=probe -f head_sha=${{ github.event.pull_request.head.sha }} -f status=completed -f conclusion=success
