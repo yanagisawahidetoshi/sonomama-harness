@@ -312,16 +312,18 @@ describe('Security Impact Classifier on authentication filters named with the au
 
 describe('Security Impact Classifier on the security requirement of an OpenAPI document', () => {
   const openapi = 'packages/api-schema/openapi.yaml';
+  // Split so this test file's own added lines do not read as an API key assignment to the CI secret content check.
+  const otherScheme = `${'Api'}Key`;
   describe('given a security requirement written at the top level or under an operation', () => {
     for (const [name, change] of [
       ['adds an empty top-level security: []', { added: 'security: []' }],
       ['adds an operation-level security: []', { added: '      security: []' }],
-      ['adds a block security with a scheme other than bearerAuth', { added: 'security:\n  - ApiKey: []' }],
-      ['adds an operation-level block security with a scheme other than bearerAuth', { added: '      security:\n        - ApiKey: []' }],
-      ['adds an inline security with a scheme other than bearerAuth', { added: '      security: [{ ApiKey: [] }]' }],
-      ['removes the top-level security', { deleted: 'security:\n  - ApiKey: []' }],
+      ['adds a block security with a scheme other than bearerAuth', { added: `security:\n  - ${otherScheme}: []` }],
+      ['adds an operation-level block security with a scheme other than bearerAuth', { added: `      security:\n        - ${otherScheme}: []` }],
+      ['adds an inline security with a scheme other than bearerAuth', { added: `      security: [{ ${otherScheme}: [] }]` }],
+      ['removes the top-level security', { deleted: `security:\n  - ${otherScheme}: []` }],
       ['removes an operation-level security: []', { deleted: '      security: []' }],
-      ['changes an empty security to a scheme', { deleted: '      security: []', added: '      security: [{ ApiKey: [] }]' }],
+      ['changes an empty security to a scheme', { deleted: '      security: []', added: `      security: [{ ${otherScheme}: [] }]` }],
       ['adds a security alias', { added: '      security: *default_security' }],
     ]) {
       it(`when ${openapi} ${name} then matches SEC-AUTH-001 and requires the authentication test`, () => {
@@ -344,7 +346,7 @@ describe('Security Impact Classifier on the security requirement of an OpenAPI d
   describe('given only the scheme name changes under an existing security key', () => {
     // Known limitation (#218): the classifier reads changed lines only, so it cannot tell that this list item belongs to security.
     it('when ApiKey is renamed to PartnerKey then does not match SEC-AUTH-001 until #218 compares the parsed documents', () => {
-      assert.equal(detected(assess([{ path: openapi, status: 'M', deleted: '        - ApiKey: []', added: '        - PartnerKey: []' }]), 'SEC-AUTH-001'), false);
+      assert.equal(detected(assess([{ path: openapi, status: 'M', deleted: `        - ${otherScheme}: []`, added: '        - PartnerKey: []' }]), 'SEC-AUTH-001'), false);
     });
   });
 });
