@@ -7,8 +7,10 @@
 
 - Security RequirementsのSSOTはdocs/security・docs/product・ADR。Harness内で業務権限・PII定義・retention期間・匿名化要件を決めない。未決事項をAIが推測して確定しない。
 - Security rule IDを文書・security.json・human-gates.jsonで対応させる。harness:checkはIDと文書参照の整合性だけを検証し、意味の妥当性は人間がレビューする。
-- Security-sensitiveは事前Gate、最低LEVEL 3、必須Verifierを強制する。matched ruleが要求する検証は、SBI側で省略しても強制される。
-- security.jsonでappliesToを持つ実装Verifier（rails-authz-test等）は、ルールに一致したファイルがappliesToに入るとき、またはSBIがそのルールを宣言したときだけ必須にする。docs・ADRだけの変更でもGate・LEVEL 3・承認人数は変わらない。
+- Security-sensitiveは必須Verifierを強制する。matched ruleが要求する検証は、SBI側で省略しても強制される。
+- Gateと最低LEVELはrule単位。`preImplementationGate: true`のrule（AuthN / AuthZ / RLS / PII / Secret / RolePermission / Infrastructure / 破壊的操作 / DataLifecycle / PIILogging）は事前Gateと最低LEVEL 3・2人承認を強制する。Migration / DBSchema / CICDSecurity / SecurityConfig / SecurityDesignは最低LEVEL 2・1人承認で、事前Gateを要求しない。
+- secret-scanとforbidden-pattern-checkはalwaysRequiredVerifiersで、Risk Levelに関係なく全変更で走る。ここを条件実行にしない。
+- security.jsonでappliesToを持つ実装Verifier（rails-authz-test等）は、ルールに一致したファイルがappliesToに入るとき、またはSBIがそのルールを宣言したときだけ必須にする。docs・ADRだけの変更でも、そのruleのGate・最低LEVEL・承認人数は変わらない。
 - required Security VerifierのFAIL/SKIP/NOT_CONFIGURED、rule violation、未承認GateではDONEもMERGE_ALLOWEDも禁止。NOT_CONFIGUREDはFAIL/SKIPと区別し、必須なら停止する。
 - Semantic Reviewや承認人数だけで検証失敗を上書きしない。
 - 破壊的Migrationは、expand/contractのcontract段階で`apps/api/db/migrate/exceptions/<version>.json`を置き、2人の承認Review（COMMENTED。Approveはmerge承認なので数えない）が揃ったときだけ通る（docs/workflows/database-migrations.md）。mainへのmergeを本番反映とみなさない。AIは承認Reviewを投稿しない。
@@ -28,8 +30,10 @@
 
 ## Risk / Human Approval
 
-- Default Risk Levelは2。明示的なsafe ruleのみLEVEL 1への降格を許可する。
-- LEVEL 3の最低ルール、Human Gateは常に優先する。AIはRiskを下げられない。
+- Default Risk Levelは1。ルールは水準を上げるだけで、下げる仕組みは持たない。通常のUI / API / test / refactor / docsはLEVEL 1。
+- LEVEL 2は通常のMigration・schema・OpenAPI・CI / GitHub Actions・Dockerfile・ADR・Harness実装。LEVEL 3は重大な影響に限る（AuthN / AuthZ / RLS / PII、権限モデル、Secret / Credential、docs/security、本番Infrastructure / Deployment、破壊的・不可逆なデータ / schema操作、`.harness/rules/`・`.harness/state/`・`.github/rulesets/`・`.githooks/`）。
+- ポリシー自身（`.harness/rules/`等）はLEVEL 3のまま据え置く。自分の承認要件を下げたPRが、その緩めたルールで自分をmergeする経路を作らない。
+- 最低ルールとHuman Gateは常に優先する。AIはRiskを下げられない。
 - 変更内容、検証対象、レビュー対象、SHAは同じrun workspaceに固定する。
 - 実装前gateと実装後merge approvalは別state・別purpose・別contextで管理する。
 - 承認は信頼するidentity adapter経由だけ。agentのJSONや証跡ファイルを承認の正本にしない。
@@ -37,7 +41,7 @@
 - 必須チェックはすべてPASS。任意の非該当チェックと未生成placeholderだけSKIP可能。
 - 出力はMERGE_ALLOWEDとautoMergeEligible。LEVEL 1でautoMergeEligibleがtrueのときだけ自動mergeしてよい。LEVEL 2・3は人間がmergeする。
 - 承認待ちのresumeと実装の再試行は分離し、Plannerより実行・判定の整合性を優先する。
-- 通常prototypeのLEVEL 1候補はpr-risk.jsonの明示的safe ruleで定義する。laneだけで承認数を減らさない。prototypeもLEVEL 1なら他と同じ条件で自動mergeしてよい。
+- laneだけで承認数を減らさない。prototypeもLEVEL 1なら他と同じ条件で自動mergeしてよい。
 
 ## Lane
 

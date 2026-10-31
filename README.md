@@ -66,7 +66,7 @@ SBI → 意図的な誤実装 → Verifier FAIL
 run/approve/resume/pr/demoは、人間かGitHub CIへ引き継いだ状態ならexit 0。PR作成済みでCI待ち・Review待ち、
 MERGE_ALLOWED、Riskが要求するHuman Gate待ち、PRを作らないrun（デモ等）のDONEが該当する。
 FAILED・ESCALATED・REJECTED・CI以外の理由のBLOCKEDはexit 2、PR作成失敗・入力やCLI操作のエラーはexit 1。
-**Execution DONEはマージ承認ではない。** このサンプルはruntime変更のため既定LEVEL 2。
+**Execution DONEはマージ承認ではない。** このサンプルのSBIは`minimumRiskLevel: 2`を宣言しているためLEVEL 2。
 承認を自動生成せず、実際のmergeも行わない。
 
 ## 構成
@@ -185,7 +185,9 @@ SBIで次のmetadataを指定できる。
 }
 ```
 
-Security-sensitiveな変更は事前Gate・最低LEVEL 3を強制する。
+Security-sensitiveな変更のうち、AuthN / AuthZ / RLS / PII / Secret / RolePermission / Infrastructure /
+破壊的操作 / DataLifecycle / PIILoggingは事前Gateと最低LEVEL 3を強制する。
+Migration / DBSchema / CICDSecurity / SecurityConfig / SecurityDesignは検知してVerifierを選ぶが、事前Gateは要求せず最低LEVEL 2。
 Gate承認はそのSBIと検知した変更範囲に対するもの。agentが新しいSecurity影響を提案したら、
 適用前に止め、新しいSBI/承認を要求する。実装後の2人承認で事前Gateを代用できない。
 既存のgate.state=WAITING_FOR_HUMAN_GATEは維持し、approvalState=WAITING_FOR_HUMAN_APPROVALを併記する。
@@ -212,9 +214,10 @@ rails-authz-testも接続済み。apps/api/spec/authorizationの*_spec.rbをロ�
 harness.jsonのsecurityVerifiersにid、workspace内directory、信頼するcommandsを登録して接続する。
 組み込みの必須検査は置き換えられない。実ツール本体の導入・本番の権限検証はまだ行っていない。
 
-Security / Human Gateの強制 → minimumRiskLevel → protected path → deterministic → AIによる上方提案
-→ 明示的なLOW候補の順に優先する。DefaultはLEVEL 2。
-docs/securityとdocs/adrはdocs-onlyのLOW候補より保護ルールを優先する。
+Security / Human Gateの強制 → minimumRiskLevel → protected path → deterministic → AIによる上方提案の順に下限を取り、
+いちばん高い水準を採用する。DefaultはLEVEL 1で、どのルールにも当たらない変更がそこに落ちる。
+Security ruleは一律でLEVEL 3を強制せず、rule自身の`minimumRiskLevel`（2または3）まで上げる。
+`docs/security`はLEVEL 3、`docs/adr`はLEVEL 1に落ちずLEVEL 2。
 
 ## Secret保護とレビューZIP
 
@@ -248,7 +251,7 @@ export時にも再検査し、旧run内の秘密ファイルから伏せるべ�
 
 ## Risk LevelとMerge Policy
 
-**Default Risk Levelは2。** ファイル名・拡張子・diff・SBI・AC・Human Gateを使って分類する。
+**Default Risk Levelは1。** ファイル名・拡張子・diff・SBI・AC・Human Gateを使って分類し、ルールは水準を上げるだけで下げない（[ADR-0008](docs/adr/0008-default-risk-level-one.md)）。
 
 | LEVEL | 必要な実装後Human Approval | autoMergeEligible |
 | --- | --- | --- |
@@ -256,20 +259,27 @@ export時にも再検査し、旧run内の秘密ファイルから伏せるべ�
 | 2 / MEDIUM | 1人 | false |
 | 3 / HIGH | 異なる2人以上 | false |
 
-LEVEL 1への降格には明示的なsafe ruleが必要。
-安全なdocsの追加・更新と、後述の条件を満たす非機密prototypeを候補とする。バイナリ、rename、削除は降格しない。
-テストのみ、Storybookのみ、コメントのみ、refactor、feature flag付きという理由だけでは降格しない。
-意味上の安全性を機械的に確認できない変更はLEVEL 2に留める。
+通常のUI変更、一般的なAPI実装、テスト追加、内部リファクタ、docsはLEVEL 1。降格のための明示ルールは要らない。
+必須CI・Application Test・Trusted Acceptance・Security検査はLEVEL 1でも全部走る。減らしたのは人間の判断回数で、検証ではない。
 
-AuthN/AuthZ/RLS/PII、Migration、schema、権限モデル、本番データ、secret、Security、
-CI/CD、deploy、Infrastructure、破壊的操作、ADR、API互換性破壊、データ削除・匿名化・retentionはLEVEL 3。
-既定のpath/metadata/contentルールで検出し、SBIのrisksでも宣言する。
+LEVEL 2（人間1人）は、機械的には意味上の安全性を確認できないが重大ではない変更。
+通常のMigration、schema、OpenAPI / API Schema、CI / GitHub Actions、Dockerfile、ADR、
+Harness実装（`tools/harness/`・`.harness/`・`.ai/`・`AGENTS.md`）。
+
+LEVEL 3（異なる2人以上）は重大な影響を持つ変更に限る。
+AuthN / AuthZ / RLS / PII、権限モデル、Secret / Credential、`docs/security`、本番Infrastructure / Deployment、
+本番データの破壊・不可逆操作（`delete_all`・`destroy_all`・`TRUNCATE`・`DROP TABLE`・`drop_table`・`remove_column`等）、
+`ALTER|CREATE|DROP POLICY|ROLE`、そしてポリシー自身（`.harness/rules/`・`.harness/state/`・`.github/rulesets/`・`.githooks/`）。
+ポリシー自身を別格にしているのは、PRが自分の承認要件を下げ、その緩めたルールで自分をmergeする経路を塞ぐため。
+
+ファイル種別だけでLEVEL 3にはしない。通常のMigrationはLEVEL 2で、破壊的な操作を含むときだけLEVEL 3へ上がる。
+破壊的migrationはRisk Levelとは別に、migration-safety verifierが申請ファイルと異なる2人の承認を要求する。
+
+minimumLevelは下限。混在変更は最も高い判定を採用する。SBIは`riskCandidate`で自分の下限（L1 / L2 / L3）を宣言できる。
+Human Gateなら最低LEVEL 3。AIのLOWで既定や強制されたLEVELを下げられない。
+AIが追加リスクを検出した場合は引き上げられる。分類根拠・該当パス・判定元を証跡に保存する。
 未知のコードから意味上の影響を完全推論する仕組みではない。人間が影響をSBIに記録する。
 OpenAPI SSOTとHarnessポリシー自体も保護対象とする。
-
-candidateLevelは降格候補、minimumLevelは下限。混在変更は最も高い判定を採用する。
-Human Gateなら最低LEVEL 3。AIのLOWで既定LEVEL 2や強制LEVEL 3を下げられない。
-AIが追加リスクを検出した場合は引き上げられる。分類根拠・該当パス・判定元を証跡に保存する。
 
 Merge Policy Judgeは別モジュール。Verifier・Policy・Security・Completionと、
 有効時のSemantic Reviewを必須条件として、SHAと承認を評価する。
@@ -526,9 +536,8 @@ CIはmainへのpushで全Verifierを実行し、PRではSBIと差分から選ぶ
 通常の試作はtypecheck・lint・format:check・build・secret-scanが必須。
 prototypeのpackage.jsonにはこの4スクリプトを用意する。mobileのbuildはExpo exportに接続する。
 統合テスト・E2E・Maestro・VRT・本番向けSecurityコマンドは通常は必須にしない。
-ただしACの独立検証と軽量の禁止パターン検査は行う。Riskの既定はLEVEL 2。通常の試作はpr-risk.jsonの`explicit_safe_prototype_only`に一致し、
-非機密のprototype lane内・通常の追加/変更・許可拡張子・サイズ上限・通常ファイルmodeという条件を満たす場合だけLEVEL 1候補になる。
-LEVEL 3の保護ルールやAIによる引き上げは常に優先する。LEVEL 1=0人、LEVEL 2=1人、LEVEL 3=異なる2人以上という承認契約は共通。
+ただしACの独立検証と軽量の禁止パターン検査は行う。Riskの既定はLEVEL 1で、通常の試作もそこに落ちる。
+保護ルールやAIによる引き上げは常に優先する。LEVEL 1=0人、LEVEL 2=1人、LEVEL 3=異なる2人以上という承認契約は共通。
 PrototypeはLEVEL 1でMERGE_ALLOWEDになってもautoMergeEligibleはfalseで、merge実行はしない。
 
 認証・権限・PII・Secret/Credential・本番データ/API・Cognito User Pool・機密設定への影響は

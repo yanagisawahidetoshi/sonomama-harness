@@ -13,7 +13,7 @@ SBIは、PBIをAIが実装できる大きさに分けた作業単位である。
 | 受け入れ要件（acceptance criteria） | 何ができれば受け入れるか。項目ごとに一意のIDと検証方法を付ける |
 | 変更してよいファイル（allowedFiles） | AIが変更してよいファイルの相対パス。書いたファイルだけを許可する |
 | 変更してよいディレクトリ（allowedDirs） | 末尾`/`付きのディレクトリ。配下のファイルを許可する。SBI Issueの想定変更範囲から作る |
-| リスク（risks） | 認証（AuthN）、認可（AuthZ）、行単位のアクセス制御（RLS）、個人情報（PII）、マイグレーション、ADRへの影響 |
+| リスク（risks） | Human Gateの対象となる影響だけを書く。認証（AuthN）、認可（AuthZ）、行単位のアクセス制御（RLS）、個人情報（PII）。マイグレーションやADRはここではなくsecurityImpactとriskCandidateで表す |
 | あいまいさ（ambiguous / requiresDesignDecision） | 仕様があいまいか、先に設計の判断が要るか。真偽値で書く |
 
 受け入れ要件は、次の形のシナリオで書く。

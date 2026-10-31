@@ -24,5 +24,5 @@
 
 ## Human Gate
 
-`docs/adr/`の変更は、新規作成・状態の変更・本文の修正を問わずHuman Gate対象になる。実装前の人の承認、レベル3、異なる2人以上の承認が必要（`.harness/rules/security.json`のSEC-DESIGN-001、`pr-risk.json`の`adr`、`policy.json`のprotectedPathPatterns）。
-本文が認証・認可・RLS・PIIなどに触れると、そのSecurity ruleにも当たる（[docs/security/authorization.md](../security/authorization.md)）。
+`docs/adr/`の変更は、新規作成・状態の変更・本文の修正を問わずレベル2になり、mergeに人1人のレビューが必要（`.harness/rules/security.json`のSEC-DESIGN-001、`pr-risk.json`の`adr`）。ファイルを触っただけで実装前の承認や異なる2人の承認は求めない（[ADR-0008](0008-default-risk-level-one.md)）。
+本文が認証・認可・RLS・PIIなどに触れると、そのSecurity ruleにも当たり、実装前の人の承認とレベル3・異なる2人以上の承認へ上がる（[docs/security/authorization.md](../security/authorization.md)）。

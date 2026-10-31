@@ -7,16 +7,19 @@
 
 ## Harnessで守らせるルール
 
-次の変更には、実装前の人の承認、レベル3のリスク判定、決めた検証の実行が必要になる（詳しくは[README](README.md)）。
+次の変更には、決めた検証の実行が必要になる。実装前の人の承認とレベル3のリスク判定が付くかどうかはルールごとに違う（詳しくは[README](README.md)）。
 
-| ルールID | 対象となる変更 | 必ず実行する検証 |
-| --- | --- | --- |
-| SEC-MIGRATION-001 | データベースのマイグレーション | マイグレーションの安全性検査（migration-safety）。破壊的な操作はexpand/contractの例外承認だけで通す（[手順](../workflows/database-migrations.md)） |
-| SEC-SCHEMA-001 | データベースのスキーマ | マイグレーションの安全性検査（migration-safety） |
-| SEC-CICD-001 | CI/CDのセキュリティ設定 | 禁止パターンの検査（forbidden-pattern-check） |
-| SEC-INFRA-001 | インフラのセキュリティ設定 | 禁止パターンの検査（forbidden-pattern-check） |
-| SEC-DESTRUCTIVE-001 | 破壊的な操作、本番データ | データの保存と削除のテスト（data-lifecycle-test） |
-| SEC-DESIGN-001 | セキュリティに関わる重要な設計、ADR | 禁止パターンの検査（forbidden-pattern-check） |
+| ルールID | 対象となる変更 | 必ず実行する検証 | 実装前の承認 | リスクの下限 |
+| --- | --- | --- | --- | --- |
+| SEC-MIGRATION-001 | データベースのマイグレーション | マイグレーションの安全性検査（migration-safety）。破壊的な操作はexpand/contractの例外承認だけで通す（[手順](../workflows/database-migrations.md)） | 不要 | レベル2 |
+| SEC-SCHEMA-001 | データベースのスキーマ | マイグレーションの安全性検査（migration-safety） | 不要 | レベル2 |
+| SEC-CICD-001 | CI/CDのセキュリティ設定 | 禁止パターンの検査（forbidden-pattern-check） | 不要 | レベル2 |
+| SEC-INFRA-001 | インフラのセキュリティ設定 | 禁止パターンの検査（forbidden-pattern-check） | 必要 | レベル3 |
+| SEC-DESTRUCTIVE-001 | 破壊的な操作、本番データ | データの保存と削除のテスト（data-lifecycle-test） | 必要 | レベル3 |
+| SEC-DESIGN-001 | セキュリティに関わる重要な設計、ADR | 禁止パターンの検査（forbidden-pattern-check） | 不要 | レベル2 |
+
+マイグレーション、スキーマ、CI/CD、ADRをレベル2にしているのは、ファイルの種類だけで一律に2人の承認を求めないためで、検知と検証はそのまま続ける。
+破壊的・不可逆な操作（`drop_table`・`remove_column`・`DROP TABLE`・`delete_all`等）は変更内容から検知してレベル3へ上げ、破壊的マイグレーションはそれとは別に例外承認（異なる2人）を必要とする。
 
 汎用のパターン検査だけでは、業務上の安全性は証明できない。必要な個別のテストを用意し、Harnessに登録する。
 
