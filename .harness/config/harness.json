@@ -903,9 +903,6 @@
       "network": true
     }
   ],
-  "semanticReview": {
-    "enabled": false
-  },
   "impact": {
     "crossLayer": [
       {

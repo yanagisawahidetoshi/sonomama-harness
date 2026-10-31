@@ -18,7 +18,7 @@ const basic = { risks: [], acceptanceCriteria: [], securityImpact: [], requiredS
 const assess = (files, sbi = {}) => classifySecurity({ files, sbi: { ...basic, ...sbi } }, policy);
 const pass = { id: 'secret-scan', required: true, status: 'PASS' };
 const security = status => ({ status, requiredVerifiers: ['secret-scan'], violations: [], checks: [{ ...pass, status }] });
-const baseResult = { verification: { status: 'PASS', checks: [{ id: 'bdd', required: true, status: 'PASS' }], acceptance: ['AC'] }, review: { status: 'PASS' }, security: { status: 'PASS' }, gateApproved: true };
+const baseResult = { verification: { status: 'PASS', checks: [{ id: 'bdd', required: true, status: 'PASS' }], acceptance: ['AC'] }, review: { status: 'PASS' }, security: { status: 'PASS' }, gateApproved: true, semanticReview: { enabled: true, status: 'PASS' } };
 const ac = { acceptanceCriteria: [{ id: 'AC', verifier: 'bdd' }] };
 
 async function assertNoValue(directory, value) {
@@ -109,7 +109,7 @@ describe('Security cannot be overridden by completion or approval', () => {
       it(`when security fails with two human approvals and gate=${gateApproved} then never permits merge`, () => {
         const headSha = 'a'.repeat(40), contextDigest = 'ctx';
         const approvals = ['A', 'B'].map(reviewer => ({ reviewer, kind: 'human', purpose: 'merge', decision: 'APPROVE', commitSha: headSha, contextDigest }));
-        const checks = ['verification', 'policy-review', 'security', 'completion'].map(id => ({ id, required: true, status: 'PASS' }));
+        const checks = ['verification', 'policy-review', 'security', 'completion', 'semantic-review'].map(id => ({ id, required: true, status: 'PASS' }));
         const result = mergeDecision({ risk: { level: 3, requiredHumanApprovals: 2 }, headSha, contextDigest, approvals, checks, humanGate: true, gateApproved, securityVerification: security('FAIL') });
         assert.notEqual(result.decision, 'MERGE_ALLOWED');
       });
@@ -119,13 +119,10 @@ describe('Security cannot be overridden by completion or approval', () => {
 
 describe('Security enforcement in the execution loop', () => {
   describe('given RLS metadata and no installed RLS verifier', () => {
-    it('when gate approval is granted then reports NOT_CONFIGURED and never DONE', () => fixture(async root => {
+    it('when the approved SBI runs then reports NOT_CONFIGURED and never DONE', () => fixture(async root => {
       await update(root, '.harness/state/sample-sbi.json', s => s.securityImpact = ['RLS']);
       const run = await runHarness({ root, quiet: true });
-      assert.equal(run.status, 'WAITING_FOR_HUMAN_GATE');
-      await recordDecision({ root, runId: run.id, purpose: 'implementation-gate', identityProvider: human('Designer') });
-      const resumed = await resumeRun({ root, runId: run.id, quiet: true });
-      assert.notEqual(resumed.executionStatus, 'DONE');
+      assert.notEqual(run.executionStatus, 'DONE');
       const evidence = await readJson(join(root, run.runDir, 'security-verification.json'));
       assert.equal(evidence.checks.find(c => c.id === 'rails-rls-test').status, 'NOT_CONFIGURED');
     }));
@@ -133,8 +130,7 @@ describe('Security enforcement in the execution loop', () => {
       await update(root, '.harness/state/sample-sbi.json', s => s.securityImpact = ['RLS']);
       await update(root, '.harness/config/harness.json', c => c.securityVerifiers = [{ id: 'rails-rls-test', directory: 'apps/api', commands: [['node', '-e', 'require("node:assert/strict").ok(true)']] }]);
       const run = await runHarness({ root, quiet: true });
-      await recordDecision({ root, runId: run.id, purpose: 'implementation-gate', identityProvider: human('Designer') });
-      let resumed = await resumeRun({ root, runId: run.id, quiet: true });
+      let resumed = run;
       assert.equal(resumed.executionStatus, 'DONE');
       assert.equal(resumed.risk.level, 3);
       for (const id of ['A', 'B']) await recordDecision({ root, runId: run.id, purpose: 'merge', identityProvider: human(id) });
@@ -146,6 +142,7 @@ describe('Security enforcement in the execution loop', () => {
     }));
   });
   // An SBI from an Issue names only directories (allowedFiles is empty), so the content checks must read the committed diff instead.
+  // The SBI is approved, so the run implements it without an implementation gate (#175).
   describe('given an approved SecurityConfig SBI that allows a directory and no file by name', () => {
     // Split so this test file's own added lines do not trip the CI forbidden pattern check.
     const tls = `process.env.NODE_TLS_${'REJECT_UNAUTHORIZED'} = '0';\n`;
@@ -157,8 +154,6 @@ describe('Security enforcement in the execution loop', () => {
       });
       const agent = async () => ({ files });
       const run = await runHarness({ root, quiet: true, agent });
-      for (const id of ['A', 'B']) await recordDecision({ root, runId: run.id, purpose: 'implementation-gate', identityProvider: human(id) });
-      await resumeRun({ root, runId: run.id, quiet: true, agent });
       return readJson(join(root, run.runDir, 'iteration-1/security-verification.json'));
     };
     it('when the agent adds a forbidden pattern under that directory then the forbidden pattern check fails on that file', () => fixture(async root => {
@@ -191,8 +186,6 @@ describe('Security enforcement in the execution loop', () => {
       await writeFile(join(root, '.harness/acceptance/sbi-7.json'), JSON.stringify({ version: 1, sbiIssue: 7, verifiers: [{ id: 'issue-7-acceptance', trustedScript: '.harness/verification/issue-7.mjs', planned: ['通信設定'], acceptanceIds: ['AC-1'] }] }));
       const agent = async () => ({ files });
       const run = await runHarness({ root, quiet: true, agent, issueUrl });
-      for (const id of ['A', 'B']) await recordDecision({ root, runId: run.id, purpose: 'implementation-gate', identityProvider: human(id) });
-      await resumeRun({ root, runId: run.id, quiet: true, agent });
       evidence = await readJson(join(root, run.runDir, 'iteration-1/security-verification.json'));
     }); return evidence; };
     it('when the agent changes no file then the content checks skip instead of passing on the Issue snapshot alone', () => fixture(async root => {
@@ -277,11 +270,10 @@ describe('Security rule and evidence boundaries', () => {
       assert.ok(result.matchedRules.includes('SEC-CONFIG-001'));
       assert.ok(result.requiredVerifiers.includes('forbidden-pattern-check'));
     });
-    it('when agent introduces PII after an RLS-only gate then stops before applying it', () => fixture(async root => {
+    it('when agent introduces PII in an approved RLS-only SBI then stops before applying it', () => fixture(async root => {
       await update(root,'.harness/state/sample-sbi.json',s=>s.securityImpact=['RLS']);
-      const run=await runHarness({root,quiet:true});
-      await recordDecision({root,runId:run.id,purpose:'implementation-gate',identityProvider:human('Designer')});
-      const resumed=await resumeRun({root,runId:run.id,quiet:true,agent:async()=>({files:[{path:'greeting.mjs',content:good+'\n// logger.info(user.email)'}]})});
+      // Split so this test file's own added lines do not trip the CI pii-log-check.
+      const resumed=await runHarness({root,quiet:true,agent:async()=>({files:[{path:'greeting.mjs',content:good+`\n// ${'logger'}.info(user.email)`}]})});
       assert.equal(resumed.status,'ESCALATED');
       assert.match(resumed.reason,/security scope/);
       assert.equal(resumed.headSha,resumed.baselineSha);

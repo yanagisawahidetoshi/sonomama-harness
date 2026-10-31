@@ -75,7 +75,6 @@ export const configSchema = z.strictObject({
     isolation: z.enum(['container', 'compose', 'harness']).default('container'), network: z.boolean().default(false) }).superRefine(isolationRules)).default([]),
   // Untrusted verifier commands run in a Docker container; docker names the trusted CLI that starts it.
   isolation: z.strictObject({ docker: text }).default({ docker: 'docker' }),
-  semanticReview: z.strictObject({ enabled: z.boolean() }).default({ enabled: false }),
   // GitHub PR mode. requiredChecks are combined with the ruleset's required status checks of the base branch.
   github: z.strictObject({ remote: text, base: text, requiredChecks: z.array(text) }).default({ remote: 'origin', base: 'main', requiredChecks: ['harness'] }),
   verifiers: z.array(z.strictObject({ id: text, directory: z.union([z.literal('.'), relativePath]), marker: relativePath.optional(),
@@ -203,11 +202,12 @@ export const apiSchemaJsonSchema = object({
 // GitHub REST responses carry many more fields; only the ones the Planner relies on are validated.
 export const githubIssueSchema = z.object({
   number: z.number().int().positive(), title: z.string(), body: z.string().nullable().default(null), html_url: z.url(),
-  state: z.string().optional(), state_reason: z.string().nullable().optional(), labels: z.array(z.object({ name: z.string() })).default([]), pull_request: z.unknown().optional(),
+  state: z.string().optional(), state_reason: z.string().nullable().optional(), labels: z.array(z.object({ name: z.string(), color: z.string().optional() })).default([]), pull_request: z.unknown().optional(),
 });
 export const githubIssueListSchema = z.array(githubIssueSchema);
-// Only the fields that decide whether a dependency SBI was merged through its Harness PR.
-export const githubTimelineSchema = z.array(z.object({ event: z.string().nullable().optional(),
+// Only the fields that decide whether a dependency SBI was merged through its Harness PR, and when and by whom ready was added or the title changed (#194, #200).
+export const githubTimelineSchema = z.array(z.object({ event: z.string().nullable().optional(), created_at: z.string().nullable().optional(), label: z.object({ name: z.string(), color: z.string().optional() }).nullable().optional(),
+  actor: z.object({ login: z.string(), type: z.string().optional() }).nullable().optional(), rename: z.object({ from: z.string(), to: z.string() }).nullable().optional(),
   source: z.object({ issue: z.object({ number: z.number().int().positive(), html_url: z.url(), pull_request: z.unknown().optional() }).optional() }).nullable().optional() }));
 export const githubPullSchema = z.object({
   number: z.number().int().positive(), merged_at: z.string().nullable(), merge_commit_sha: z.string().nullable().optional(), base: z.object({ ref: z.string() }), body: z.string().nullable().default(null),
@@ -253,7 +253,7 @@ export const apiSchemaApprovalRecordSchema = z.strictObject({
   commitSha: z.string().regex(/^[0-9a-f]{40,64}$/), proposalDigest: z.string().regex(/^[0-9a-f]{64}$/), signature: text,
 });
 // The PBI Human Acceptance Gate is bound to the PBI and the evidence it confirms (validation evidence, or the merged implementation evidence).
-// It is separate from implementation-gate / merge / api-schema records and never substitutes for them.
+// It is separate from the SBI approval and merge / api-schema records and never substitutes for them.
 export const pbiAcceptanceRecordSchema = z.strictObject({
   id: text, purpose: z.literal('pbi-acceptance'), pbiUrl: z.url(), reviewer: text, kind: z.literal('human'), identitySource: text,
   decision: z.enum(['APPROVE', 'REQUEST_CHANGES', 'REVOKE']), decidedAt: z.iso.datetime(),
@@ -295,7 +295,9 @@ export const securityPolicySchema = z.strictObject({
     appliesTo: z.array(text).optional() })),
   secretPatterns: z.array(text).min(1), forbiddenPatterns: z.array(text), piiLogPatterns: z.array(text),
 }).refine(p => new Set(p.rules.map(r => r.id)).size === p.rules.length && new Set(p.verifiers.map(v => v.id)).size === p.verifiers.length, 'duplicate security rule/verifier');
-export const humanGatesSchema = z.strictObject({ version: z.literal(1), preImplementationRuleIds: z.array(text).min(1) });
+// preImplementationRuleIds keeps its name so that rule IDs stay matched with security.json and docs; since #175 it lists the rules a human
+// decides at SBI approval, not a gate before implementation.
+export const humanGatesSchema = z.strictObject({ version: z.literal(1), description: text.optional(), preImplementationRuleIds: z.array(text).min(1) });
 
 export const lanePolicySchema = z.strictObject({
   version: z.literal(1), prototypePaths: z.array(text).min(1), productionPaths: z.array(text).min(1),
@@ -336,7 +338,9 @@ export const runStateSchema = z.strictObject({
   executionSecurityAssessment: z.looseObject({ matchedRules: z.array(text), requiredVerifiers: z.array(text) }).optional(),
   riskPreflight: z.looseObject({ level: z.union([z.literal(1), z.literal(2), z.literal(3)]) }).optional(),
   risk: z.looseObject({ level: z.union([z.literal(1), z.literal(2), z.literal(3)]) }).optional(),
-  escalation: z.strictObject({ code: z.enum(escalationCodes), detail: z.string() }).optional(),
+  escalation: z.strictObject({ code: z.enum(escalationCodes), detail: z.string(), decision: z.literal('NEEDS_HUMAN_DECISION').optional() }).optional(),
+  // A Human Gate risk the approved SBI declared (#175): level 3 and two humans after implementation, never a stop before it.
+  humanGateRisk: z.boolean().optional(),
   // #147: Trusted Acceptance generated in the run from the approved spec; registrationSha is the commit that registered it.
   acceptance: z.strictObject({ mode: z.literal('generated'), specDigest: sha256, registrationSha: gitSha }).optional(),
   pullRequest: z.strictObject({ number: z.number().int().positive(), url: z.url(), branch: text, base: text, repository: text }).optional(),

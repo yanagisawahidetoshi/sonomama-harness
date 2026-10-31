@@ -7,7 +7,7 @@ import { pbiAcceptanceRecordSchema, pbiEvidenceManifestSchema } from './schemas.
 import { parseIssueUrl } from './planner.mjs';
 
 // PBI Human Acceptance is a signed record outside Git and the agent workspace, bound to the PBI and the evidence digest the human confirmed.
-// It is separate from implementation-gate / design-approval / merge / api-schema records and never substitutes for them.
+// It is separate from the SBI approval and merge / api-schema records and never substitutes for them.
 export const pbiAcceptanceLedgerPath = (root, ref) => join(root, '.harness/state/human/pbi-acceptance', `${ref.owner}__${ref.repo}__${ref.number}.json`);
 export async function pbiAcceptanceRecords(root, pbiUrl) {
   const ref = parseIssueUrl(pbiUrl), path = pbiAcceptanceLedgerPath(root, ref);

@@ -4,6 +4,7 @@ import { relativePath } from './schemas.mjs';
 import { assertWritablePath } from './workspace.mjs';
 import { acceptancePath, generatedVerifierId } from './acceptance-registry.mjs';
 import { readSpecApproval, specApprovalLine } from './spec-approval.mjs';
+import { readReadyBinding } from './ready-approval.mjs';
 // harness:run SBI_URL reads the SBI from the GitHub Issue a human marked ready. Nothing here is written back to GitHub,
 // and nobody transcribes the Issue into SBI JSON: the Harness builds the execution SBI and records it as the Run snapshot.
 
@@ -154,6 +155,8 @@ export async function loadSbiIssue({ issueUrl, config, github = githubCli }) {
     }
     reasons.push(`仕様の承認もありません。write権限のある人が \`${specApprovalLine(spec.digest ?? '<spec digest>')}\` をIssueにコメントすると承認になります（pnpm harness:spec-approve ${ref.url}）`);
   }
+  // #194: ready approves the Issue only as it was when the label was added.
+  if (!reasons.length) reasons.push(...await readReadyBinding({ ref, issue, github }));
   if (reasons.length) throw new Error([`SBI Issue ${ref.url} はreadyではありません。Runは開始していません。`, ...reasons.map(r => `- ${r}`)].join('\n'));
   const sbi = sbiFromIssue({ ref, issue, config });
   const waiting = await unfinishedDependencies({ ref, issue, config, github });

@@ -25,10 +25,13 @@ describe('Lane quality and promotion enforcement',()=>{
       assert.equal(run.status,'ESCALATED');assert.notEqual(run.executionStatus,'DONE');
       assert.equal(run.iterations[0].verification.checks.find(c=>c.id==='prototype-web').status,'FAIL');
     }));
-    it('when a prototype touches Production API then stops for Security before calling agent',()=>fixture(async root=>{
-      await prototype(root);await update(root,state,s=>s.description='Connect Production API');
-      const run=await runFixture({root,quiet:true,agent:async()=>{throw Error('must not run')}});
-      assert.equal(run.lane.name,'production');assert.equal(run.gate.required,true);assert.equal(run.status,'WAITING_FOR_HUMAN_GATE');assert.equal(run.iterations.length,0);
+    // #175: the approved SBI already names Production API, so the run is promoted to the Production lane and Security level 3, not stopped.
+    it('when an approved prototype SBI touches Production API then runs in the Production lane at level 3 without an implementation gate',()=>fixture(async root=>{
+      const {agent}=await prototype(root);await update(root,state,s=>s.description='Connect Production API');
+      let called=false;
+      const run=await runFixture({root,quiet:true,agent:async()=>{called=true;return agent();}});
+      assert.equal(run.lane.name,'production');assert.equal(run.gate.required,false);assert.equal(called,true);
+      assert.equal(run.riskPreflight.level,3);assert.equal(run.events.some(e=>e.status==='WAITING_FOR_HUMAN_GATE'),false);
     }));
     // #155: the SBI Issue approval already decides the production implementation, so a promotion adds no Design Approval Gate.
     it('when promoting a prototype then the run implements without a Design Approval and only merge approval remains',()=>fixture(async root=>{

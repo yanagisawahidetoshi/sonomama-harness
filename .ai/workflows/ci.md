@@ -22,7 +22,7 @@ Maestroは通常の`expo` Verifierに入れない。Impact Analysisの`maestro`�
 SBIの無いmobileの変更ではMaestroを実行しない。laneがあるとき、Completion Judgeは`maestro` jobの成功と、laneごとの結果ファイル（`HARNESS_MAESTRO_RESULTS/<lane>.json`、`node tools/harness/maestro.mjs`がMaestroのJUnit reportから作る）を求める。
 jobが無い・失敗・skip、結果ファイルが無い・読めない・別のlaneや別のcommitのもの、flowが0件、失敗したflowがある、ログやスクリーンショットのartifactが無い、のどれかでFAILする。
 `maestro` jobは、`tools/harness/maestro-build.sh` でDevelopment Build（`expo-dev-client` のdebug APK）を作り、`tools/harness/maestro-ci.sh` でlaneごとにPrism（mock）かRails + DB（real）とMetroを起動して、`apps/mobile/.maestro/<lane>/` を実行する。
-APKはExpoのnative fingerprintをkeyにcacheし、fingerprintが同じなら作り直さない。cacheを保存するのはmainへのpushだけ。結果ファイルは `maestro-results`、JUnit report・ログ・スクリーンショットは `maestro-evidence` のartifactになり、harness jobが `maestro-results` をダウンロードしてCompletion Judgeに渡す。
+APKはExpoのnative fingerprintをkeyにcacheし、fingerprintが同じなら作り直さない。cacheを保存するのはmainへのpushだけ。結果ファイルは `maestro-results`、JUnit report・ログ・スクリーンショットは `maestro-evidence` のartifactになり、harness jobが `maestro-results` をダウンロードしてCompletion Judgeに渡す。書き込みもダウンロードもcheckoutの外（`runner.temp`）で行うので、PRがコミットした結果ファイルは使われない（#188）。
 mock laneは `packages/api-schema/openapi.yaml` が無いと起動できず、FAILする。この jobはDocker隔離の例外で、条件は[threat-model](../../docs/security/threat-model.md)にある。
 
 ## Verifierの選び方
@@ -61,7 +61,7 @@ Completion Judge（`harness` job）が次をすべて確かめ、1つでも欠�
 | 確認 | 内容 |
 | --- | --- |
 | snapshot | PRで追加・変更された `.harness/state/sbi-<Issue番号>.json` が `sbiSnapshotSchema` を満たす。source Issue（repo / number / url）、Run開始時のtitle / body digest、Run ID、RunのSBIを持つ |
-| source Issue | GitHub APIで読んだ現在のIssueが、このリポジトリのもので、open・`sbi`・`ready`あり・`needs-review`なし。読めなければFAIL。生成したTrusted Acceptance（version 2の登録）のPRでは、`ready`の代わりに現在のspec digestへの`harness-spec`承認（write以上・未編集）を求める。`ready`だけでは通らない |
+| source Issue | GitHub APIで読んだ現在のIssueが、このリポジトリのもので、open・`sbi`・`ready`あり・`needs-review`なし。最後に`ready`を付けたのがwrite以上の人間でない、または`ready`を付けた後に本文・titleの編集があればFAIL（#194・#200）。読めなければFAIL。生成したTrusted Acceptance（version 2の登録）のPRでは、`ready`の代わりに現在のspec digestへの`harness-spec`承認（write以上・未編集）を求める。`ready`だけでは通らない |
 | 現在のIssueとの一致 | 現在のIssue本文と、そのIssueのTrusted Acceptance登録（`.harness/acceptance/sbi-<番号>.json`）からSBIを組み立て直し、snapshotのSBIと完全に一致する。title / body digestも現在のIssueから計算し直して一致する。組み立てられない・1項目でも違えばFAILし、違う項目名を出す |
 | Run の紐付け | PRのcommitのどれかが、snapshotと同じ値の `Harness-Run: <Run ID>` と `SBI-Issue: <Issue URL>` trailerを持つ |
 | 変更ファイル数 | 実装SBI（`kind: implementation`）のPRは、snapshotと生成したTrusted Acceptance（登録とテスト）を除いた変更ファイル数（削除を含む）が、目安10ファイルとIssueの `## 想定変更ファイル数` の両方を超えたらFAIL。想定が書かれていないIssueもFAIL。最終確認SBIは数えない。通すにはPRを分けるか、Issueの想定を直して新しいRunを始める |
@@ -97,7 +97,7 @@ Full Gateの`harness-demo`は、PRでは`harness:demo`（fake providerの自己�
 - SBIの`requiredVerifiers`にあるapplication verifierは、matrix jobの結果をSecurityの判定にも使う。
 - secret-scanとforbidden-pattern-checkは、変更ファイルの追加行を検査する。`tools/harness/*.test.mjs`はredactionのfixtureを含むため、Harness worktree作成時と同じくcredential形式の値だけを秘密値とみなす。
 - mainへのpush（`--all`）は差分が無いので、Securityの検査対象も無い。PRの判定で検査済みの前提。
-- 実装前Gate・Human Approvalの要否はCIでは判定しない。Harness runとGitHub Reviewで扱う。
+- Human Approvalの要否はCIでは判定しない。Harness runとGitHub Reviewで扱う。実装前Gateは無い（#175）。
 
 ## expo-doctor
 

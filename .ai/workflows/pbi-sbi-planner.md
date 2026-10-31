@@ -10,7 +10,8 @@
 7. 採用するSBIは、ACごとのTrusted Acceptanceを人間が書いてレビューし、
    `.harness/acceptance/sbi-<SBI番号>.json`に`{ "version": 1, "sbiIssue": <SBI番号>, "verifiers": [{ "id", "trustedScript", "planned", "acceptanceIds": [IssueのAC ID] }] }`で登録する。
 8. 全ACの対応を確認したら`needs-review`を外して`ready`を付ける。`gh issue edit <number> --remove-label needs-review --add-label ready`。
-   新方式（#147、[ADR-0005](../../docs/adr/0005-generated-trusted-acceptance.md)）: Trusted Acceptanceを手書きせず、`needs-review`を外して`pnpm harness:spec-approve <SBI Issue URL>`で仕様を承認する。正本はIssueの`harness-spec: <spec digest>`コメント（write以上・未編集・本文がその1行だけ）で、`spec-approved` labelは表示だけ。受け入れ要件・Gherkin・想定変更範囲・Risk / Security Impactを編集すると承認は無効になる。runがテストを生成し、`.harness/acceptance/sbi-<番号>.json`（version 2）と一緒に実装PRに入れる。今はRailsのrequest specだけを生成できる。
+   `ready`は、write以上の権限を持つ人間（botは数えない）が付けたときだけ、付けた時点のIssueを承認する（#194・#200）。最後に`ready`を付けた人で判定する。付けた後に本文を編集するかtitleを変えると、元に戻してもrunは開始せず、CIも通らない。見直してから`ready`を外し、付け直す。判定はGitHubのtimeline（labeled・renamed）と本文の編集履歴の日時で行い、同じ秒の編集も後とみなす。
+   新方式（#147、[ADR-0005](../../docs/adr/0005-generated-trusted-acceptance.md)）: Trusted Acceptanceを手書きせず、`needs-review`を外して`pnpm harness:spec-approve <SBI Issue URL>`で仕様を承認する。正本はIssueの`harness-spec: <spec digest>`コメント（write以上・未編集・本文がその1行だけ）で、`spec-approved` labelは表示だけ。title・Planner marker・目的・種類・受け入れ要件・Gherkin・依存SBI・想定変更範囲・想定変更ファイル数・検証方法・Risk / Security Impactを編集すると承認は無効になる（#194・#200でAgentへの指示・Risk・Security分類・実行範囲に使う項目を追加）。runがテストを生成し、`.harness/acceptance/sbi-<番号>.json`（version 2）と一緒に実装PRに入れる。今はRailsのrequest specだけを生成できる。
 9. PBIの`## SBI構成`を確認し、`pnpm harness:pbi-plan-approve <PBI URL>`で一度だけ承認する（下記「PBI plan」）。
 10. `pnpm harness:run <SBI Issue URL>`で実行する。SBI JSONは書かない。HarnessがIssueを取得・検証し、Run snapshotを保存して実装・検証・PR作成まで進める。
 

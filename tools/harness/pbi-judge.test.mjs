@@ -148,7 +148,7 @@ describe('PBI Completion Judge', () => {
 describe('Completion Judge for an SBI', () => {
   const passing = {
     verification: { status: 'PASS', acceptance: ['AC-1'], checks: [{ id: 'v', status: 'PASS', trust: 'acceptance', required: true }] },
-    review: { status: 'PASS' }, security: { status: 'PASS' }, gateApproved: true,
+    review: { status: 'PASS' }, security: { status: 'PASS' }, gateApproved: true, semanticReview: { enabled: true, status: 'PASS' },
     securityVerification: { status: 'PASS', violations: [], requiredVerifiers: ['secret'], checks: [{ id: 'secret', required: true, status: 'PASS' }] },
   };
   const criteria = [{ id: 'AC-1', verifier: 'v' }];

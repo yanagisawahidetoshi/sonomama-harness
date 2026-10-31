@@ -62,7 +62,7 @@ describe('Starting a run from a spec-approved SBI Issue', () => {
     listComments: async () => comments, permission: async () => 'admin',
   });
   it('when the spec is approved for the current digest then the run starts in the generate mode with the generated verifier', async () => {
-    const comments = [{ id: 1, body: specApprovalLine(specDigest(body)), html_url: `${ref.url}#c1`, user: { login: 'alice', type: 'User' }, created_at: at, updated_at: at }];
+    const comments = [{ id: 1, body: specApprovalLine(specDigest(issue)), html_url: `${ref.url}#c1`, user: { login: 'alice', type: 'User' }, created_at: at, updated_at: at }];
     const loaded = await loadSbiIssue({ issueUrl: ref.url, config: { verifiers: [] }, github: github(comments) });
     assert.equal(loaded.mode, 'generate');
     assert.equal(loaded.sbi.acceptanceCriteria[0].verifier, generatedVerifierId(7));

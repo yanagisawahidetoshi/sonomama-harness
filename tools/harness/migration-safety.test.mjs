@@ -161,12 +161,10 @@ describe('migration-safety in the execution loop', () => {
     return async () => ({ files: [{ path: 'greeting.mjs', content: greeting }, { path: migrationPath, content }] });
   };
   describe('given an SBI that adds a Rails migration', () => {
-    it('when the gate is approved and the migration is safe then migration-safety PASSes, DONE needs two merge reviewers', () => fixture(async root => {
+    it('when the approved SBI runs and the migration is safe then migration-safety PASSes, DONE needs two merge reviewers', () => fixture(async root => {
       const agent = await prepare(root, safe);
       const run = await runHarness({ root, quiet: true, agent });
-      assert.equal(run.status, 'WAITING_FOR_HUMAN_GATE');
-      await recordDecision({ root, runId: run.id, purpose: 'implementation-gate', identityProvider: human('Designer') });
-      let resumed = await resumeRun({ root, runId: run.id, quiet: true, agent });
+      let resumed = run;
       assert.equal(resumed.executionStatus, 'DONE');
       assert.equal(resumed.risk.level, 3);
       const evidence = await readJson(join(root, run.runDir, 'security-verification.json'));
@@ -179,11 +177,10 @@ describe('migration-safety in the execution loop', () => {
       resumed = await resumeRun({ root, runId: run.id, quiet: true, agent });
       assert.equal(resumed.status, 'MERGE_ALLOWED');
     }));
-    it('when the gate is approved and the migration drops a table then migration-safety FAILs and the run is never DONE', () => fixture(async root => {
+    it('when the approved SBI runs and the migration drops a table then migration-safety FAILs and the run is never DONE', () => fixture(async root => {
       const agent = await prepare(root, migration('    drop_table :probes'));
       const run = await runHarness({ root, quiet: true, agent });
-      await recordDecision({ root, runId: run.id, purpose: 'implementation-gate', identityProvider: human('Designer') });
-      const resumed = await resumeRun({ root, runId: run.id, quiet: true, agent });
+      const resumed = run;
       assert.notEqual(resumed.executionStatus, 'DONE');
       const evidence = await readJson(join(root, run.runDir, 'security-verification.json'));
       assert.equal(evidence.checks.find(c => c.id === 'migration-safety').status, 'FAIL');
