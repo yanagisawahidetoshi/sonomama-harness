@@ -20,7 +20,7 @@
     "planner:api-schema-status": "node tools/harness/cli.mjs api-schema-status",
     "api:mock": "node tools/harness/cli.mjs api-mock",
     "api:docs": "node tools/harness/cli.mjs api-docs",
-    "harness:test": "node --test tools/harness/*.test.mjs tools/harness/agents/*.test.mjs .harness/verification/*.test.mjs .harness/verification/lib/*.test.mjs",
+    "harness:test": "node --test ${HARNESS_TEST_SHARD:+--test-shard=$HARNESS_TEST_SHARD} tools/harness/*.test.mjs tools/harness/agents/*.test.mjs .harness/verification/*.test.mjs .harness/verification/lib/*.test.mjs",
     "harness:approve": "node tools/harness/cli.mjs approve",
     "harness:pbi-status": "node tools/harness/cli.mjs pbi-status",
     "harness:pbi-accept": "node tools/harness/cli.mjs pbi-accept",

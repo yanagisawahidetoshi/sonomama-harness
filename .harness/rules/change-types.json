@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "engineering": [
+    {
+      "id": "markdown",
+      "pattern": "^(apps|packages)/.+\\.md$",
+      "exclude": ["^apps/[^/]+/src/", "^apps/api/(app|config)/", "(^|/)public/"]
+    },
+    { "id": "lockfile", "pattern": "^(pnpm-lock\\.yaml|apps/api/Gemfile\\.lock)$" },
+    { "id": "package-json-dependency-versions", "pattern": "^(apps|packages)/[^/]+/package\\.json$", "content": "package-json-dependency-versions" },
+    { "id": "gemfile-versions", "pattern": "^apps/api/Gemfile$", "content": "gemfile-versions" },
+    { "id": "storybook-stories", "pattern": "^(apps|packages)/.+\\.stories\\.tsx$" },
+    { "id": "storybook-config", "pattern": "^(apps|packages)/[^/]+/\\.storybook/" },
+    { "id": "tests", "pattern": "^(apps|packages)/.+\\.test\\.tsx?$|^apps/api/spec/" },
+    { "id": "test-config", "pattern": "^(apps|packages)/[^/]+/((jest|vitest)\\.config\\.[cm]?[jt]s|\\.rspec)$" },
+    { "id": "lint-config", "pattern": "^(apps|packages)/[^/]+/biome\\.json$" }
+  ]
+}
