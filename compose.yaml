@@ -13,8 +13,11 @@ services:
       DATABASE_HOST: db
       DATABASE_USERNAME: postgres
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+      # Request specs check Rails against the OpenAPI SSOT (spec/support/api_contract.rb); apps/api keeps no copy of it.
+      API_SCHEMA_DIR: /api-schema
     volumes:
       - ./apps/api:/rails
+      - ./packages/api-schema:/api-schema:ro
       # Keep runtime output inside the container so verifier runs never change the source snapshot.
       - /rails/tmp
       - /rails/log

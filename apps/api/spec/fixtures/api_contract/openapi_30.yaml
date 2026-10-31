@@ -1,0 +1,6 @@
+# An OpenAPI 3.0 document. The SSOT is OpenAPI 3.1, so the adapter rejects it.
+openapi: 3.0.3
+info:
+  title: OpenAPI 3.0 fixture
+  version: "1"
+paths: {}
