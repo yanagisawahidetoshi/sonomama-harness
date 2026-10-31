@@ -3,7 +3,7 @@
 ## run の流れ
 
 1. 通常は`pnpm planner:sbi <PBI URL>`で作ったSBI Issueをレビューし、ACごとのTrusted Acceptanceを`.harness/acceptance/sbi-<番号>.json`に登録して`ready`にする（[pbi-sbi-planner.md](pbi-sbi-planner.md)）。SBI JSONは書かない。
-   新方式では`ready`の代わりに`pnpm harness:spec-approve`で仕様を承認する（Trusted Acceptanceの生成は未実装。今は開始前に止まる）。
+   新方式では`ready`の代わりに`pnpm harness:spec-approve`で仕様を承認する。runがIssueの仕様からRailsのrequest specを生成し、品質検査と実装前の実行（G）を通ったものだけを登録してから実装する。実装後は同じspecが全てPASSすることを確かめる（I）。
 2. pnpm harness:checkで検証する。
 3. `pnpm harness:run <SBI Issue URL>`を実行する。IssueからSBIを組み立て、Run開始時のsnapshotを保存する。デモは`pnpm harness:demo`（サンプルSBI）。
    承認済みSBIは、LEVEL 3・Security rule・protected pathでも実装前Gateなしで実装を始める（#175）。Risk・Security Impact・想定変更範囲はSBI承認で人間が確認済みとみなす。

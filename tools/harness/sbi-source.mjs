@@ -4,6 +4,8 @@ import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { githubCli } from './planner-github.mjs';
 import { sbiFromIssue } from './sbi-issue.mjs';
+import { readAcceptance } from './acceptance-registry.mjs';
+import { readSpecApproval, specApprovalLine } from './spec-approval.mjs';
 import { sbiSchema, sbiSnapshotSchema } from './schemas.mjs';
 import { git } from './workspace.mjs';
 // A Production change is backed by a Harness Run that started from an approved SBI Issue. The Run commits what it took from the Issue
@@ -57,7 +59,9 @@ export async function claimsSbiSource(root, base, files) {
 }
 
 // issue is null when it was not read because the snapshot points outside this repository.
-export function judgeSbiSource({ snapshot, issue, repository, runs }) {
+// specApproval is given for generated Trusted Acceptance (#147): the tests are trusted because a writer approved the spec they were
+// generated from, so the harness-spec approval of the current spec replaces ready, and ready alone is not enough.
+export function judgeSbiSource({ snapshot, issue, repository, runs, specApproval }) {
   const { url } = snapshot.source, reasons = [];
   if (!repository) reasons.push(`sbi source: ${url} cannot be matched to this repository (GITHUB_REPOSITORY is not set)`);
   else if (snapshot.source.repo !== repository) reasons.push(`sbi source: ${url} is not in ${repository}`);
@@ -65,7 +69,9 @@ export function judgeSbiSource({ snapshot, issue, repository, runs }) {
     const labels = issue.labels.map(l => l.name);
     if (issue.state !== 'open') reasons.push(`sbi source: ${url} is not open (${issue.state ?? 'unknown'})`);
     if (!labels.includes('sbi')) reasons.push(`sbi source: ${url} has no sbi label`);
-    if (!labels.includes('ready')) reasons.push(`sbi source: ${url} has no ready label`);
+    if (specApproval) {
+      if (!specApproval.approved) reasons.push(`sbi source: ${url} has no spec approval of its current spec; the generated Trusted Acceptance needs \`${specApprovalLine(specApproval.digest ?? '<spec digest>')}\` from a writer`);
+    } else if (!labels.includes('ready')) reasons.push(`sbi source: ${url} has no ready label`);
     if (labels.includes('needs-review')) reasons.push(`sbi source: ${url} has needs-review`);
   }
   if (!runs.some(r => r.runId === snapshot.runId && r.url === url)) reasons.push(`sbi source: ${url} is not linked to this PR; no commit carries Harness-Run: ${snapshot.runId} with SBI-Issue: ${url}`);
@@ -73,12 +79,12 @@ export function judgeSbiSource({ snapshot, issue, repository, runs }) {
 }
 
 // The snapshot must be what the Harness would build from the Issue as it is now: an edited Issue or a replaced snapshot both fail.
-export function matchSbiSource({ snapshot, issue, config }) {
+export function matchSbiSource({ snapshot, issue, config, generate = false }) {
   const { repo, number, url } = snapshot.source, [owner, name] = repo.split('/'), reasons = [];
   if (digestOf(issue.title) !== snapshot.titleDigest) reasons.push(`sbi source: ${url} titleDigest does not match the current Issue title`);
   if (digestOf(issue.body) !== snapshot.bodyDigest) reasons.push(`sbi source: ${url} bodyDigest does not match the current Issue body`);
   let rebuilt;
-  try { rebuilt = sbiSchema.parse(sbiFromIssue({ ref: { owner, repo: name, number, url }, issue, config })); }
+  try { rebuilt = sbiSchema.parse(sbiFromIssue({ ref: { owner, repo: name, number, url }, issue, config, generate })); }
   catch (error) { return [...reasons, `sbi source: ${url} cannot be rebuilt into an SBI (${error.message.replaceAll('\n', ' ')})`]; }
   const differs = [...new Set([...Object.keys(rebuilt), ...Object.keys(snapshot.sbi)])].filter(key => !isDeepStrictEqual(rebuilt[key], snapshot.sbi[key]));
   if (differs.length) reasons.push(`sbi source: ${url} snapshot SBI does not match the SBI rebuilt from the current Issue (${differs.sort().join(', ')})`);
@@ -107,9 +113,17 @@ export async function verifySbiSource({ root, base, files, required, config, rep
       try { issue = await github.fetchIssue({ owner, repo, number: snapshot.source.number }); }
       catch (error) { source.reasons.push(`sbi source: ${snapshot.source.url} could not be read (${error.message})`); continue; }
     }
-    source.reasons.push(...judgeSbiSource({ snapshot, issue, repository, runs }));
+    // A version 2 registration in the PR means the Run generated its Trusted Acceptance from an approved spec.
+    let generated = false, specApproval;
+    try { generated = (await readAcceptance(root, snapshot.source.number))?.version === 2; }
+    catch (error) { source.reasons.push(`sbi source: ${error.message}`); }
+    if (generated && issue) {
+      try { specApproval = await readSpecApproval({ ref: { owner, repo, number: snapshot.source.number, url: snapshot.source.url }, issue, github }); }
+      catch (error) { specApproval = { approved: false, digest: null }; source.reasons.push(`sbi source: the spec approval of ${snapshot.source.url} could not be read (${error.message})`); }
+    }
+    source.reasons.push(...judgeSbiSource({ snapshot, issue, repository, runs, specApproval }));
     if (issue) {
-      source.reasons.push(...matchSbiSource({ snapshot, issue, config }));
+      source.reasons.push(...matchSbiSource({ snapshot, issue, config, generate: generated }));
       source.sources.push({ url: snapshot.source.url, runId: snapshot.runId });
     }
   }
