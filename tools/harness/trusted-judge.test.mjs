@@ -144,6 +144,11 @@ describe('Workflow of the trusted Completion Judge', () => {
     assert.deepEqual(jobs.judge.permissions, { actions: 'read', contents: 'read', issues: 'read', 'pull-requests': 'read' });
   });
 
+  it('when the PR comes from a fork then the Judge does not judge it, so the published check fails and the PR stays blocked', async () => {
+    const { jobs } = await load();
+    assert.match(String(jobs.judge.if), /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/);
+  });
+
   it('when the result is published then only the job with the App key checks nothing out and runs no Harness code', async () => {
     const { jobs } = await load();
     assert.equal(jobs.publish.environment, 'completion-judge');
