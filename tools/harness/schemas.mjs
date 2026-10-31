@@ -243,7 +243,7 @@ export const apiSchemaApprovalRecordSchema = z.strictObject({
   commitSha: z.string().regex(/^[0-9a-f]{40,64}$/), proposalDigest: z.string().regex(/^[0-9a-f]{64}$/), signature: text,
 });
 // The PBI Human Acceptance Gate is bound to the PBI and the evidence it confirms (validation evidence, or the merged implementation evidence).
-// It is separate from implementation-gate / merge / api-schema records and never substitutes for them.
+// It is separate from the SBI approval and merge / api-schema records and never substitutes for them.
 export const pbiAcceptanceRecordSchema = z.strictObject({
   id: text, purpose: z.literal('pbi-acceptance'), pbiUrl: z.url(), reviewer: text, kind: z.literal('human'), identitySource: text,
   decision: z.enum(['APPROVE', 'REQUEST_CHANGES', 'REVOKE']), decidedAt: z.iso.datetime(),

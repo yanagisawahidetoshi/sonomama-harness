@@ -481,7 +481,7 @@ Quality Judgeは決定的なルールで構造・認証認可・Security Impact�
 
 承認は`node tools/harness/cli.mjs api-schema-approve <Issue URL>`で署名付き台帳に記録し、Proposalのdigestとcommit SHAに紐づける。
 判定は`pnpm planner:api-schema-status <Issue URL>`。Issueの`api-schema-approved`ラベルは目印で、承認の正本ではない。
-Execution Harnessの実装前Gate・Merge Approvalとは別で、どちらの代わりにもならない。承認後に人間がpackages/api-schemaへ反映し、実装SBIを作る。
+Execution HarnessのSBI承認・Merge Approvalとは別で、どちらの代わりにもならない。承認後に人間がpackages/api-schemaへ反映し、実装SBIを作る。
 手順は[.ai/workflows/api-schema.md](.ai/workflows/api-schema.md)。
 
 承認済みOpenAPIのMock Serverは`pnpm api:mock <Issue URL>`で`127.0.0.1:4010`に起動する。承認済みProposalと`packages/api-schema/openapi.yaml`のdigestが一致するときだけ起動する。

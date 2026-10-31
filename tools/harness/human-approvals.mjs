@@ -36,7 +36,7 @@ export async function recordDecision({ root, runId, purpose, decision = 'APPROVE
     const { summary } = await loadRun(root, runId);
     // Chosen by Issue URL: re-checked on the verified run under its lock, so no other run receives the decision.
     if (issueUrl && !waitsForIssue(summary, issueUrl, purpose)) throw new Error(`run ${runId} は ${issueUrl} の${purpose}を待っていません。記録していません`);
-    if (purpose === 'merge' && summary.executionStatus !== 'DONE') throw new Error('Execution/gate must complete before merge approval');
+    if (purpose === 'merge' && summary.executionStatus !== 'DONE') throw new Error('Execution must be DONE before merge approval');
     if (purpose === 'merge' && summary.pullRequest) throw new Error(`GitHub PR mode: merge approval comes from GitHub Review on ${summary.pullRequest.url}; harness:approve --phase merge is not used`);
     const identity = await identityProvider();
     if (identity?.kind !== 'human' || !identity.id || !identity.source) throw new Error('Authenticated human identity required');
