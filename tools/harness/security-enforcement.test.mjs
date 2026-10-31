@@ -65,7 +65,7 @@ describe('Security Impact Classifier', () => {
     }
     // The light content checks run on every change, so an ordinary Production change needs no heavy Security Verifier at all (#157).
     it('when an ordinary Production file changes then only the always required content checks are selected', () => {
-      // before_action :authenticate_user! is an AuthN change (SEC-AUTH-001, #177), so the ordinary change sets up a record instead.
+      // An authentication filter is an AuthN change (SEC-AUTH-001, #177), so the ordinary change sets up a record instead.
       const result = assess([{ path: 'apps/api/app/controllers/courses_controller.rb', status: 'M', added: 'before_action :set_course' }]);
       assert.deepEqual(result.matchedRules, []);
       assert.equal(result.securitySensitive, false);
