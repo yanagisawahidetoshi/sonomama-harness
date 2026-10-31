@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "defaultLevel": 2,
+  "defaultLevel": 1,
   "levels": {
     "1": {
       "requiredHumanApprovals": 0,
@@ -17,53 +17,13 @@
   },
   "pathRules": [
     {
+      "id": "policy_root",
+      "pattern": "^(\\.harness/(rules|state)|\\.github/rulesets|\\.githooks)/",
+      "minimumLevel": 3
+    },
+    {
       "id": "auth",
       "pattern": "(^|/)(auth|authn|authz|authentication|authorization)(/|\\.|$)",
-      "minimumLevel": 3
-    },
-    {
-      "id": "security",
-      "pattern": "(^|/)(security|rls|policies|permissions|roles)(/|\\.|$)",
-      "minimumLevel": 3
-    },
-    {
-      "id": "migration",
-      "pattern": "(^|/)(migrate|migrations)(/|$)",
-      "minimumLevel": 3
-    },
-    {
-      "id": "schema",
-      "pattern": "(^|/)(schema\\.(rb|sql|prisma)|structure\\.sql)$",
-      "minimumLevel": 3
-    },
-    {
-      "id": "adr",
-      "pattern": "(^|/)docs/adr(/|$)",
-      "minimumLevel": 3
-    },
-    {
-      "id": "cicd",
-      "pattern": "(^|/)(\\.github|\\.gitlab|\\.circleci)(/|$)|(^|/)(Jenkinsfile|Dockerfile|docker-compose[^/]*|.*\\.tf)$",
-      "minimumLevel": 3
-    },
-    {
-      "id": "infrastructure",
-      "pattern": "(^|/)(infra|infrastructure|terraform|deploy|deployment|release|k8s|helm)(/|\\.|$)",
-      "minimumLevel": 3
-    },
-    {
-      "id": "secret",
-      "pattern": "(^|/)(\\.env[^/]*|secrets?|credentials?)(/|\\.|$)|\\.(pem|key|p12)$",
-      "minimumLevel": 3
-    },
-    {
-      "id": "harness_policy",
-      "pattern": "(^|/)(\\.harness|\\.ai|tools/harness)(/|$)|(^|/)AGENTS\\.md$",
-      "minimumLevel": 3
-    },
-    {
-      "id": "api_contract",
-      "pattern": "(^|/)packages/api-schema(/|$)",
       "minimumLevel": 3
     },
     {
@@ -72,9 +32,54 @@
       "minimumLevel": 3
     },
     {
+      "id": "security",
+      "pattern": "(^|/)(security|rls|policies|permissions|roles)(/|\\.|$)",
+      "minimumLevel": 3
+    },
+    {
       "id": "security_policy",
       "pattern": "(^|/)docs/security(/|$)",
       "minimumLevel": 3
+    },
+    {
+      "id": "secret",
+      "pattern": "(^|/)(\\.env[^/]*|secrets?|credentials?)(/|\\.|$)|\\.(pem|key|p12)$",
+      "minimumLevel": 3
+    },
+    {
+      "id": "infrastructure",
+      "pattern": "(^|/)(infra|infrastructure|terraform|deploy|deployment|release|k8s|helm)(/|\\.|$)|\\.tf$",
+      "minimumLevel": 3
+    },
+    {
+      "id": "migration",
+      "pattern": "(^|/)(migrate|migrations)(/|$)",
+      "minimumLevel": 2
+    },
+    {
+      "id": "schema",
+      "pattern": "(^|/)(schema\\.(rb|sql|prisma)|structure\\.sql)$",
+      "minimumLevel": 2
+    },
+    {
+      "id": "adr",
+      "pattern": "(^|/)docs/adr(/|$)",
+      "minimumLevel": 2
+    },
+    {
+      "id": "cicd",
+      "pattern": "(^|/)(\\.github|\\.gitlab|\\.circleci)(/|$)|(^|/)(Jenkinsfile|Dockerfile|docker-compose[^/]*)$",
+      "minimumLevel": 2
+    },
+    {
+      "id": "harness_policy",
+      "pattern": "(^|/)(\\.harness|\\.ai|tools/harness)(/|$)|(^|/)AGENTS\\.md$",
+      "minimumLevel": 2
+    },
+    {
+      "id": "api_contract",
+      "pattern": "(^|/)packages/api-schema(/|$)",
+      "minimumLevel": 2
     }
   ],
   "metadataRules": [
@@ -99,16 +104,6 @@
       "minimumLevel": 3
     },
     {
-      "id": "db_migration",
-      "pattern": "\\bmigration\\b|\\bmigrations\\b|DB移行",
-      "minimumLevel": 3
-    },
-    {
-      "id": "db_schema_changed",
-      "pattern": "\\bdb.schema\\b|\\bdatabase.schema\\b|\\bschema.change\\b|スキーマ変更",
-      "minimumLevel": 3
-    },
-    {
       "id": "permission_model",
       "pattern": "permission.model|role.model|アクセス範囲",
       "minimumLevel": 3
@@ -129,28 +124,8 @@
       "minimumLevel": 3
     },
     {
-      "id": "cicd_changed",
-      "pattern": "ci/cd|\\bcicd\\b|deploy.workflow|release.workflow",
-      "minimumLevel": 3
-    },
-    {
-      "id": "infra_changed",
-      "pattern": "\\binfrastructure\\b|インフラ",
-      "minimumLevel": 3
-    },
-    {
       "id": "destructive_operation",
       "pattern": "destructive.operation|破壊的操作",
-      "minimumLevel": 3
-    },
-    {
-      "id": "architecture_decision",
-      "pattern": "\\badr\\b|重要設計",
-      "minimumLevel": 3
-    },
-    {
-      "id": "breaking_api",
-      "pattern": "breaking.api|API互換性",
       "minimumLevel": 3
     },
     {
@@ -159,37 +134,59 @@
       "minimumLevel": 3
     },
     {
-      "id": "sql_schema_operation",
-      "pattern": "\\b(ALTER|CREATE|DROP)\\s+(TABLE|POLICY|ROLE|SCHEMA)\\b",
-      "minimumLevel": 3
-    },
-    {
       "id": "destructive_data_operation",
-      "pattern": "\\b(delete_all|destroy_all|TRUNCATE)\\b|\\bDROP\\s+TABLE\\b",
+      "pattern": "\\b(delete_all|destroy_all|TRUNCATE)\\b",
       "minimumLevel": 3
-    }
-  ],
-  "safeRules": [
-    {
-      "id": "explicit_safe_docs_only",
-      "pattern": "^docs/(?!adr/).+\\.(md|txt|rst)$",
-      "candidateLevel": 1,
-      "allowedStatuses": [
-        "A",
-        "M"
-      ],
-      "maxChangedBytes": 32768
     },
     {
-      "id": "explicit_safe_prototype_only",
-      "pattern": "^prototypes/(web|mobile)/.+\\.(tsx?|jsx?|mjs|json|css|scss|md|txt|html|svg|ya?ml)$",
-      "candidateLevel": 1,
-      "requiredLane": "prototype",
-      "allowedStatuses": [
-        "A",
-        "M"
-      ],
-      "maxChangedBytes": 32768
+      "id": "destructive_schema_operation",
+      "pattern": "\\bDROP\\s+(TABLE|SCHEMA)\\b",
+      "minimumLevel": 3
+    },
+    {
+      "id": "sql_authorization_operation",
+      "pattern": "\\b(ALTER|CREATE|DROP)\\s+(POLICY|ROLE)\\b",
+      "minimumLevel": 3
+    },
+    {
+      "id": "destructive_migration_operation",
+      "pattern": "\\b(drop_table|drop_join_table|remove_column|remove_columns|remove_reference|remove_belongs_to|remove_timestamps)\\b",
+      "minimumLevel": 3
+    },
+    {
+      "id": "db_migration",
+      "pattern": "\\bmigration\\b|\\bmigrations\\b|DB移行",
+      "minimumLevel": 2
+    },
+    {
+      "id": "db_schema_changed",
+      "pattern": "\\bdb.schema\\b|\\bdatabase.schema\\b|\\bschema.change\\b|スキーマ変更",
+      "minimumLevel": 2
+    },
+    {
+      "id": "sql_schema_operation",
+      "pattern": "\\b(ALTER|CREATE)\\s+(TABLE|SCHEMA)\\b",
+      "minimumLevel": 2
+    },
+    {
+      "id": "cicd_changed",
+      "pattern": "ci/cd|\\bcicd\\b|deploy.workflow|release.workflow",
+      "minimumLevel": 2
+    },
+    {
+      "id": "infra_changed",
+      "pattern": "\\binfrastructure\\b|インフラ",
+      "minimumLevel": 2
+    },
+    {
+      "id": "architecture_decision",
+      "pattern": "\\badr\\b|重要設計",
+      "minimumLevel": 2
+    },
+    {
+      "id": "breaking_api",
+      "pattern": "breaking.api|API互換性",
+      "minimumLevel": 2
     }
   ]
 }

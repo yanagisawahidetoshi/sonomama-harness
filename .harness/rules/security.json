@@ -136,7 +136,7 @@
     },
     {
       "id": "SEC-MIGRATION-001",
-      "description": "Migrationへの影響を検知し着手承認・必須検証・HIGHを強制する",
+      "description": "Migrationへの影響を検知しmigration-safetyを必須にする。破壊的migrationはmigration-safetyがexception requestと異なる2人の承認を要求し、pr-risk.jsonのdestructive_migration_operationがHIGHへ上げるので、変更しただけではMEDIUM・1人レビュー（SEC-MIGRATION-001）",
       "categories": [
         "Migration"
       ],
@@ -147,9 +147,9 @@
       "metadataPatterns": [
         "\\bmigrations?\\b|DB移行"
       ],
-      "preImplementationGate": true,
-      "minimumRiskLevel": 3,
-      "requiredHumanApprovals": 2,
+      "preImplementationGate": false,
+      "minimumRiskLevel": 2,
+      "requiredHumanApprovals": 1,
       "requiredVerifiers": [
         "migration-safety"
       ],
@@ -171,9 +171,9 @@
       "metadataPatterns": [
         "db.schema|database.schema|スキーマ変更"
       ],
-      "preImplementationGate": true,
-      "minimumRiskLevel": 3,
-      "requiredHumanApprovals": 2,
+      "preImplementationGate": false,
+      "minimumRiskLevel": 2,
+      "requiredHumanApprovals": 1,
       "requiredVerifiers": [
         "migration-safety"
       ],
@@ -210,9 +210,9 @@
         "SensitiveConfig"
       ],
       "pathPatterns": [
-        "(^|/)docs/security(/|$)|(^|/)(security|\\.harness/rules)(/|$)",
-        "(^|/)config(/|$)",
-        "(^|/)security([_./-]|$)"
+        "(^|/)docs/security(/|$)|^\\.harness/rules/",
+        "(^|/)security([_./-]|$)",
+        "(^|/)config/(database\\.ya?ml|credentials[^/]*|bundler-audit\\.ya?ml|environments/production\\.rb|initializers/(cors|content_security_policy|permissions_policy|session_store|filter_parameter_logging)\\.rb)$"
       ],
       "contentPatterns": [
         "security.rule"
@@ -220,9 +220,9 @@
       "metadataPatterns": [
         "security.config|sensitive.config|security.rule"
       ],
-      "preImplementationGate": true,
-      "minimumRiskLevel": 3,
-      "requiredHumanApprovals": 2,
+      "preImplementationGate": false,
+      "minimumRiskLevel": 2,
+      "requiredHumanApprovals": 1,
       "requiredVerifiers": [
         "forbidden-pattern-check"
       ],
@@ -241,9 +241,9 @@
       "metadataPatterns": [
         "ci/cd|cicd|deploy.workflow|release.workflow"
       ],
-      "preImplementationGate": true,
-      "minimumRiskLevel": 3,
-      "requiredHumanApprovals": 2,
+      "preImplementationGate": false,
+      "minimumRiskLevel": 2,
+      "requiredHumanApprovals": 1,
       "requiredVerifiers": [
         "forbidden-pattern-check"
       ],
@@ -355,9 +355,9 @@
       "metadataPatterns": [
         "security.design|重要Security設計"
       ],
-      "preImplementationGate": true,
-      "minimumRiskLevel": 3,
-      "requiredHumanApprovals": 2,
+      "preImplementationGate": false,
+      "minimumRiskLevel": 2,
+      "requiredHumanApprovals": 1,
       "requiredVerifiers": [
         "forbidden-pattern-check"
       ],

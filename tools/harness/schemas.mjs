@@ -26,7 +26,8 @@ export const sbiSchema = z.strictObject({
   requiredVerifiers: z.array(text).default([]), affectedAreas: z.array(text).default([]), preImplementationGate: z.boolean().default(false),
   // Records which prototype a production SBI adopts. The SBI Issue approval decides the implementation; there is no separate Design Approval (#155).
   promotion: z.strictObject({ source: relativePath.refine(p => /^prototypes\/(web|mobile)(\/|$)/.test(p)) }).optional(),
-  minimumRiskLevel: z.union([z.literal(2), z.literal(3)]).default(2),
+  // The level the SBI itself declares, from the Planner's Risk candidate. LEVEL 1 is the default, and rules can only raise it (#157).
+  minimumRiskLevel: z.union([z.literal(1), z.literal(2), z.literal(3)]).default(1),
   // The Planner's expected number of changed files, from the SBI Issue. Hand-written SBI JSON has none.
   estimatedFiles: z.number().int().min(0).nullable().optional(),
   // The E2E line of the SBI Issue's verification; it decides the Maestro lane of a mobile SBI.
@@ -104,10 +105,11 @@ export const configSchema = z.strictObject({
     toolchain: z.array(text).default([]),
   }).default({ crossLayer: [], fullGate: [], toolchain: [] }),
 }).refine(c => new Set(c.verifiers.map(v => v.id)).size === c.verifiers.length && !c.verifiers.some(v => v.id === 'sample-bdd'), 'duplicate or reserved verifier');
+// Migration and ADR left the Human Gate with #157: an ordinary schema change or an ADR needs one review, not two humans before implementation.
 export const rulesSchema = z.strictObject({
-  humanGate: z.array(z.enum(['AuthN', 'AuthZ', 'RLS', 'PII', 'Migration', 'ADR'])).length(6),
+  humanGate: z.array(z.enum(['AuthN', 'AuthZ', 'RLS', 'PII'])).length(4),
   protectedPathPatterns: z.array(text).min(1), maxFileBytes: z.number().int().positive(),
-}).refine(r => new Set(r.humanGate).size === 6, 'all Human Gates required');
+}).refine(r => new Set(r.humanGate).size === 4, 'all Human Gates required');
 export const responseSchema = z.strictObject({
   files: z.array(z.strictObject({ path: relativePath, content: z.string() })).max(20),
   escalation: z.string().nullable().optional(),
@@ -229,7 +231,7 @@ export const githubCommentListSchema = z.array(githubCommentSchema);
 export const githubLabelListSchema = z.array(z.object({ name: z.string() }));
 
 export const riskPolicySchema = z.strictObject({
-  version: z.literal(1), defaultLevel: z.literal(2),
+  version: z.literal(1), defaultLevel: z.literal(1),
   levels: z.strictObject({
     '1': z.strictObject({ requiredHumanApprovals: z.literal(0), autoMerge: z.literal(true) }),
     '2': z.strictObject({ requiredHumanApprovals: z.literal(1), autoMerge: z.literal(false) }),
@@ -237,7 +239,6 @@ export const riskPolicySchema = z.strictObject({
   }),
   pathRules: z.array(z.strictObject({ id: text, pattern: text, minimumLevel: z.union([z.literal(2), z.literal(3)]) })).min(1),
   metadataRules: z.array(z.strictObject({ id: text, pattern: text, minimumLevel: z.union([z.literal(2), z.literal(3)]) })).min(1),
-  safeRules: z.array(z.strictObject({ id: text, pattern: text, candidateLevel: z.literal(1), requiredLane: z.enum(['prototype', 'production']).optional(), allowedStatuses: z.array(z.enum(['A', 'M'])), maxChangedBytes: z.number().int().positive() })),
 });
 export const approvalRecordSchema = z.strictObject({
   id: text, runId: text, purpose: z.enum(['implementation-gate', 'merge']),
@@ -285,8 +286,9 @@ export const securityPolicySchema = z.strictObject({
     pathPatterns: z.array(text), contentPatterns: z.array(text), metadataPatterns: z.array(text),
     // A pattern that matches empty text would exempt every path or erase every content, so it is rejected.
     contentExceptions: z.array(z.strictObject({ pathPatterns: z.array(narrowPattern).min(1), ignoredPatterns: z.array(narrowPattern).min(1) })).optional(),
-    preImplementationGate: z.literal(true), minimumRiskLevel: z.literal(3),
-    requiredHumanApprovals: z.number().int().min(2), requiredVerifiers: z.array(text).min(1), policyDocument: relativePath,
+    // A rule carries the Human Gate and two reviews only when its impact is severe; an ordinary one asks for a single review (#157).
+    preImplementationGate: z.boolean(), minimumRiskLevel: z.union([z.literal(2), z.literal(3)]),
+    requiredHumanApprovals: z.number().int().min(1), requiredVerifiers: z.array(text).min(1), policyDocument: relativePath,
   })).min(1),
   verifiers: z.array(z.strictObject({ id: text, kind: z.enum(['secret', 'forbidden', 'pii-log', 'command']),
     directory: z.union([z.literal('.'), relativePath]).optional(), commands: z.array(z.array(text).min(1)).optional(),

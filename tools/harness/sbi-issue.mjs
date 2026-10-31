@@ -100,7 +100,8 @@ export function sbiFromIssue({ ref, issue, config, generate = false }) {
     gherkin: [`Feature: ${issue.title}`, ...gherkin.map(line => line.trim() ? `  ${line}` : '')].join('\n'),
     acceptanceCriteria, allowedFiles: [], allowedDirs, risks: securityImpact, ambiguous: false, requiresDesignDecision: false,
     securityImpact, requiredSecurityRules: [], requiredVerifiers: [], affectedAreas: [], preImplementationGate: false,
-    minimumRiskLevel: candidate === 'L3' || securityImpact.length ? 3 : 2, estimatedFiles, e2e, issueUrl: ref.url, pbiUrl: markerPattern.exec(issue.body ?? '')?.[1],
+    // The Planner's Risk candidate becomes the SBI's own floor; declared Security impact still means two reviews (#157).
+    minimumRiskLevel: candidate === 'L3' || securityImpact.length ? 3 : candidate === 'L2' ? 2 : 1, estimatedFiles, e2e, issueUrl: ref.url, pbiUrl: markerPattern.exec(issue.body ?? '')?.[1],
   };
 }
 
