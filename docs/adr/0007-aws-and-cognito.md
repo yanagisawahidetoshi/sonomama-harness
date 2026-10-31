@@ -12,7 +12,7 @@
 ## 選択肢
 
 候補は、各アプリのREADMEに挙げていたAmazon Cognito、Google Cloud Identity Platform、Firebase Authenticationだった。
-インフラをAWSにするため、同じAWSのサービスであるAmazon Cognitoを選ぶ。
+選定理由の詳細はこのADRでは扱わず、採用の決定だけを記録する。
 
 ## 決定
 
