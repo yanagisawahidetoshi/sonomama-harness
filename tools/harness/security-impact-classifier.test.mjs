@@ -358,3 +358,35 @@ describe('Security Impact Classifier on infrastructure', () => {
     it('when an infrastructure file is binary then it cannot be inspected and is critical', () => assert.ok(critical(infra('infra/staging/state.bin', '', { binary: true }))));
   });
 });
+
+// An SBI that only says a request needs no authentication does not change authentication (#233). A change that makes an
+// existing endpoint public, or that blocks unauthenticated users, still matches, and so does any authentication in the code.
+describe('Security Impact Classifier on an SBI that states no authentication is needed', () => {
+  const sbi = (description, ac = 'GET /api/v1/health returns 200') => ({ title: 'Health check', description, risks: [], acceptanceCriteria: [{ id: 'AC-1', description: ac }] });
+  const classify = (spec, files = []) => classifySecurity({ files, sbi: spec }, policy);
+  describe('given an SBI whose text only negates authentication', () => {
+    for (const [name, spec] of [
+      ['an endpoint that needs no authentication', sbi('Rails API に認証不要の GET /api/v1/health を実装する。')],
+      ['a request without an authentication header', sbi('疎通確認を実装する。', '認証ヘッダや Cookie を付けないリクエストでも HTTP 200 が返る')],
+      ['a client that has no authentication header', sbi('疎通確認を実装する。', '認証ヘッダも Cookie も持たないクライアントでも 200 が返る')],
+      ['an unauthenticated client that can reach it', sbi('未認証クライアントが疎通確認できる。')],
+      ['an English endpoint with no authentication required', sbi('A health endpoint with no authentication required.')],
+    ]) {
+      it(`when it describes ${name} then does not match SEC-AUTH-001`, () => assert.equal(detected(classify(spec), 'SEC-AUTH-001'), false));
+    }
+  });
+  describe('given an SBI or code that changes authentication', () => {
+    for (const [name, spec] of [
+      ['making an existing endpoint public', sbi('既存の GET /api/v1/courses を認証不要にする。')],
+      ['blocking unauthenticated users', sbi('未認証ユーザーは 401 を返す。')],
+      ['adding authentication', sbi('ログインに認証を追加する。')],
+      ['an English change that adds authentication', sbi('Add authentication to the courses API.')],
+    ]) {
+      it(`when it describes ${name} then still matches SEC-AUTH-001`, () => assert.ok(detected(classify(spec), 'SEC-AUTH-001')));
+    }
+    it('when the SBI negates authentication but the code adds it then still matches SEC-AUTH-001', () => {
+      const result = classify(sbi('認証不要の GET /api/v1/health を実装する。'), [{ path: 'apps/api/app/controllers/health_controller.rb', status: 'A', added: 'before_action :authenticate' }]);
+      assert.ok(detected(result, 'SEC-AUTH-001'));
+    });
+  });
+});
