@@ -34,7 +34,7 @@ const planned = (then = '403になる') => ({
 const issueOf = (body, labels = ['sbi']) => ({ number: 7, title: 'SBI-001 担当講師だけが講座を閲覧できる', body, html_url: ref.url, state: 'open', labels: labels.map(name => ({ name })) });
 const approved = issueOf(renderSbiBody(planned(), pbi));
 const at = '2026-10-30T00:00:00Z';
-const approvalOf = issue => ({ id: 1, issue: 7, body: specApprovalLine(specDigest(issue.body)), html_url: `${ref.url}#issuecomment-1`, user: { login: 'alice', type: 'User' }, created_at: at, updated_at: at });
+const approvalOf = issue => ({ id: 1, issue: 7, body: specApprovalLine(specDigest(issue)), html_url: `${ref.url}#issuecomment-1`, user: { login: 'alice', type: 'User' }, created_at: at, updated_at: at });
 const githubOf = (issue, comments = [approvalOf(issue)]) => ({ fetchIssue: async () => issue, listComments: async () => comments, permission: async () => 'admin' });
 
 const testPath = 'apps/api/spec/acceptance/sbi_7/courses_spec.rb';

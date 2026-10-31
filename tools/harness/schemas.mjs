@@ -213,11 +213,12 @@ export const apiSchemaJsonSchema = object({
 // GitHub REST responses carry many more fields; only the ones the Planner relies on are validated.
 export const githubIssueSchema = z.object({
   number: z.number().int().positive(), title: z.string(), body: z.string().nullable().default(null), html_url: z.url(),
-  state: z.string().optional(), state_reason: z.string().nullable().optional(), labels: z.array(z.object({ name: z.string() })).default([]), pull_request: z.unknown().optional(),
+  state: z.string().optional(), state_reason: z.string().nullable().optional(), labels: z.array(z.object({ name: z.string(), color: z.string().optional() })).default([]), pull_request: z.unknown().optional(),
 });
 export const githubIssueListSchema = z.array(githubIssueSchema);
-// Only the fields that decide whether a dependency SBI was merged through its Harness PR.
-export const githubTimelineSchema = z.array(z.object({ event: z.string().nullable().optional(),
+// Only the fields that decide whether a dependency SBI was merged through its Harness PR, and when and by whom ready was added or the title changed (#194, #200).
+export const githubTimelineSchema = z.array(z.object({ event: z.string().nullable().optional(), created_at: z.string().nullable().optional(), label: z.object({ name: z.string(), color: z.string().optional() }).nullable().optional(),
+  actor: z.object({ login: z.string(), type: z.string().optional() }).nullable().optional(), rename: z.object({ from: z.string(), to: z.string() }).nullable().optional(),
   source: z.object({ issue: z.object({ number: z.number().int().positive(), html_url: z.url(), pull_request: z.unknown().optional() }).optional() }).nullable().optional() }));
 export const githubPullSchema = z.object({
   number: z.number().int().positive(), merged_at: z.string().nullable(), merge_commit_sha: z.string().nullable().optional(), base: z.object({ ref: z.string() }), body: z.string().nullable().default(null),

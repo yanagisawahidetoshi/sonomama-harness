@@ -61,7 +61,7 @@ Completion Judge（`harness` job）が次をすべて確かめ、1つでも欠�
 | 確認 | 内容 |
 | --- | --- |
 | snapshot | PRで追加・変更された `.harness/state/sbi-<Issue番号>.json` が `sbiSnapshotSchema` を満たす。source Issue（repo / number / url）、Run開始時のtitle / body digest、Run ID、RunのSBIを持つ |
-| source Issue | GitHub APIで読んだ現在のIssueが、このリポジトリのもので、open・`sbi`・`ready`あり・`needs-review`なし。読めなければFAIL。生成したTrusted Acceptance（version 2の登録）のPRでは、`ready`の代わりに現在のspec digestへの`harness-spec`承認（write以上・未編集）を求める。`ready`だけでは通らない |
+| source Issue | GitHub APIで読んだ現在のIssueが、このリポジトリのもので、open・`sbi`・`ready`あり・`needs-review`なし。最後に`ready`を付けたのがwrite以上の人間でない、または`ready`を付けた後に本文・titleの編集があればFAIL（#194・#200）。読めなければFAIL。生成したTrusted Acceptance（version 2の登録）のPRでは、`ready`の代わりに現在のspec digestへの`harness-spec`承認（write以上・未編集）を求める。`ready`だけでは通らない |
 | 現在のIssueとの一致 | 現在のIssue本文と、そのIssueのTrusted Acceptance登録（`.harness/acceptance/sbi-<番号>.json`）からSBIを組み立て直し、snapshotのSBIと完全に一致する。title / body digestも現在のIssueから計算し直して一致する。組み立てられない・1項目でも違えばFAILし、違う項目名を出す |
 | Run の紐付け | PRのcommitのどれかが、snapshotと同じ値の `Harness-Run: <Run ID>` と `SBI-Issue: <Issue URL>` trailerを持つ |
 | 変更ファイル数 | 実装SBI（`kind: implementation`）のPRは、snapshotと生成したTrusted Acceptance（登録とテスト）を除いた変更ファイル数（削除を含む）が、目安10ファイルとIssueの `## 想定変更ファイル数` の両方を超えたらFAIL。想定が書かれていないIssueもFAIL。最終確認SBIは数えない。通すにはPRを分けるか、Issueの想定を直して新しいRunを始める |

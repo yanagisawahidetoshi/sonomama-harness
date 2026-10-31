@@ -23,7 +23,7 @@ export function approvedSpec(issue) {
   const acceptanceCriteria = (parts.get('受け入れ要件') ?? []).flatMap(line => { const m = /^- \[[ xX]\] (\S+?): (.+)$/.exec(line.trim()); return m ? [{ id: m[1], description: m[2].trim() }] : []; });
   const gherkin = fenced(parts.get('Gherkin') ?? []) ?? [];
   const scenarios = gherkin.flatMap(line => { const m = /^\s*Scenario(?: Outline)?: (.+?)\s*$/.exec(line); return m ? [m[1]] : []; });
-  return { sbiIssue: issue.number, title: issue.title, digest: specDigest(issue.body), acceptanceCriteria, scenarios, gherkin: gherkin.join('\n') };
+  return { sbiIssue: issue.number, title: issue.title, digest: specDigest(issue), acceptanceCriteria, scenarios, gherkin: gherkin.join('\n') };
 }
 
 const answerSchema = z.strictObject({
@@ -112,7 +112,7 @@ export async function verifyGeneratedRegistration({ root, registration: raw, iss
   if (!parsed.success) return [`the registration is not a valid version 2 registration (${parsed.error.issues.map(i => `${i.path.join('.')} ${i.message}`).join(', ')})`];
   const registration = parsed.data, reasons = [];
   // CI passes the current Issue; a run passes the spec digest it approved at start.
-  const number = issue?.number ?? sbiIssue, digest = issue ? specDigest(issue.body) : expectedDigest;
+  const number = issue?.number ?? sbiIssue, digest = issue ? specDigest(issue) : expectedDigest;
   if (registration.sbiIssue !== number) reasons.push(`the registration is for SBI Issue #${registration.sbiIssue}, not #${number}`);
   if (digest !== registration.specDigest) reasons.push(`spec digest of the SBI Issue changed since the Trusted Acceptance was generated (${registration.specDigest.slice(0, 12)})`);
   const compare = async (entries, label) => {

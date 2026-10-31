@@ -128,6 +128,8 @@ async function pullRequest(root, registered = [7, 8]) {
 }
 
 describe('Trusted Acceptance registry of SBI Issues in CI', () => {
+  // #194: a person with write access marked the Issue ready and left it unedited, so the ready label still covers what the Run took from it.
+  const readyGitHub = { fetchIssue: async () => readyIssue, issueTimeline: async () => [{ event: 'labeled', label: { name: 'ready' }, created_at: '2026-10-01T00:00:00Z', actor: { login: 'alice', type: 'User' } }], bodyHistory: async () => ({ lastEditedAt: null, edits: [] }), collaboratorPermission: async () => ({ permission: 'write', role_name: 'write' }) };
   describe('given registrations of Issue #7 and #8 on main and a PR with the Run snapshot of Issue #7', () => {
     it('when the impact is loaded then the configuration has the Trusted Acceptance of Issue #7 only', () => fixture(async root => {
       await pullRequest(root);
@@ -137,7 +139,7 @@ describe('Trusted Acceptance registry of SBI Issues in CI', () => {
     it('when the SBI is rebuilt from the current Issue then it matches the snapshot', () => fixture(async root => {
       await pullRequest(root);
       const { config, files } = await loadImpact({ root, base: 'base' });
-      const source = await verifySbiSource({ root, base: 'base', files, required: [`production:${admin}`], repository: 'acme/app', config, github: { fetchIssue: async () => readyIssue } });
+      const source = await verifySbiSource({ root, base: 'base', files, required: [`production:${admin}`], repository: 'acme/app', config, github: readyGitHub });
       assert.equal(source.status, 'PASS', source.reasons.join('; '));
     }));
   });
@@ -147,7 +149,7 @@ describe('Trusted Acceptance registry of SBI Issues in CI', () => {
       await rm(join(root, acceptancePath(7)));
       await git(root, ['commit', '-am', 'drop the registration of Issue #7']);
       const { config, files } = await loadImpact({ root, base: 'base' });
-      const source = await verifySbiSource({ root, base: 'base', files, required: [`production:${admin}`], repository: 'acme/app', config, github: { fetchIssue: async () => readyIssue } });
+      const source = await verifySbiSource({ root, base: 'base', files, required: [`production:${admin}`], repository: 'acme/app', config, github: readyGitHub });
       assert.equal(source.status, 'FAIL');
       assert.match(source.reasons.join('\n'), /\.harness\/acceptance\/sbi-7\.json/);
     }));
