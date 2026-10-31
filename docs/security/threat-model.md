@@ -59,6 +59,7 @@ AI Review の adapter（#187、`tools/harness/agents/ai-review-adapter.mjs`）�
 
 - 入力は Harness が計算した head SHA・committed diff・SBI・Verifier の結果だけ。workspace は渡さない。秘密ファイルは中身を除き、prompt 全体を redaction に通す。prompt は diff をデータとして扱うよう指示する。
 - CLI は空の一時ディレクトリで、tool なし（claude）・read-only sandbox（codex）で動かす。workspace の `CLAUDE.md` / `AGENTS.md` を読ませない。
+  codex の read-only sandbox は書き込みを止めるだけで、一時ディレクトリの外（workspace やホストのファイル）の読み取りは止めない。claude の tool なしと同じ隔離にはならない。
 - 出力は Zod の strict schema（headSha・PASS/FAIL・riskLevel・reasons）で検証し、redaction を通したものだけを返す。生の応答・stdout・stderr は run 配下にもエラー文にも残さない。
 - タイムアウト・異常終了・不正な応答・別 SHA への結果は FAIL。fake adapter は fake provider（demo・テスト）だけが使い、real provider の run で fake の結果は FAIL。
 
