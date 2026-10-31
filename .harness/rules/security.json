@@ -147,7 +147,7 @@
     },
     {
       "id": "SEC-MIGRATION-001",
-      "description": "Migrationへの影響を検知し着手承認・必須検証・HIGHを強制する",
+      "description": "Migrationへの影響を検知しmigration-safetyを必須にする。破壊的migrationはmigration-safetyがexception requestと異なる2人の承認を要求し、pr-risk.jsonのdestructive_migration_operationがHIGHへ上げるので、変更しただけではMEDIUM・1人レビュー（SEC-MIGRATION-001）",
       "categories": [
         "Migration"
       ],
@@ -158,9 +158,9 @@
       "metadataPatterns": [
         "\\bmigrations?\\b|DB移行"
       ],
-      "preImplementationGate": true,
-      "minimumRiskLevel": 3,
-      "requiredHumanApprovals": 2,
+      "preImplementationGate": false,
+      "minimumRiskLevel": 2,
+      "requiredHumanApprovals": 1,
       "requiredVerifiers": [
         "migration-safety"
       ],
@@ -182,9 +182,9 @@
       "metadataPatterns": [
         "db.schema|database.schema|スキーマ変更"
       ],
-      "preImplementationGate": true,
-      "minimumRiskLevel": 3,
-      "requiredHumanApprovals": 2,
+      "preImplementationGate": false,
+      "minimumRiskLevel": 2,
+      "requiredHumanApprovals": 1,
       "requiredVerifiers": [
         "migration-safety"
       ],
@@ -221,9 +221,9 @@
         "SensitiveConfig"
       ],
       "pathPatterns": [
-        "(^|/)docs/security(/|$)|(^|/)(security|\\.harness/rules)(/|$)",
-        "(^|/)config(/|$)",
-        "(^|/)security([_./-]|$)"
+        "(^|/)docs/security(/|$)|^\\.harness/rules/",
+        "(^|/)security([_./-]|$)",
+        "(^|/)config/(database\\.ya?ml|credentials[^/]*|bundler-audit\\.ya?ml|environments/production\\.rb|initializers/(cors|content_security_policy|permissions_policy|session_store|filter_parameter_logging)\\.rb)$"
       ],
       "contentPatterns": [
         "security.rule"
@@ -231,9 +231,9 @@
       "metadataPatterns": [
         "security.config|sensitive.config|security.rule"
       ],
-      "preImplementationGate": true,
-      "minimumRiskLevel": 3,
-      "requiredHumanApprovals": 2,
+      "preImplementationGate": false,
+      "minimumRiskLevel": 2,
+      "requiredHumanApprovals": 1,
       "requiredVerifiers": [
         "forbidden-pattern-check"
       ],
@@ -252,9 +252,9 @@
       "metadataPatterns": [
         "ci/cd|cicd|deploy.workflow|release.workflow"
       ],
-      "preImplementationGate": true,
-      "minimumRiskLevel": 3,
-      "requiredHumanApprovals": 2,
+      "preImplementationGate": false,
+      "minimumRiskLevel": 2,
+      "requiredHumanApprovals": 1,
       "requiredVerifiers": [
         "forbidden-pattern-check"
       ],
@@ -262,16 +262,59 @@
     },
     {
       "id": "SEC-INFRA-001",
-      "description": "InfrastructureSecurityへの影響を検知し着手承認・必須検証・HIGHを強制する",
+      "description": "通常のInfrastructureSecurityへの影響を検知し、必須検証と最低LEVEL 2・1人承認を強制する。本番と危険方向の変更はSEC-PRODINFRA-001（#157）",
       "categories": [
         "InfrastructureSecurity"
       ],
       "pathPatterns": [
-        "(^|/)(infra|infrastructure|terraform|k8s|helm)(/|$)|\\.tf$"
+        "(^|/)(infra|infrastructure|terraform|terragrunt|k8s|kubernetes|helm|charts?|deploy|deployment|live|cdk|pulumi|cloudformation|cfn)(/|$)|(^|/)(?<!(^|/)config/)(environments?|envs)/|\\.(tf|tfvars|hcl)$|\\.tf\\.json$"
       ],
       "contentPatterns": [],
       "metadataPatterns": [
         "infrastructure|インフラ"
+      ],
+      "preImplementationGate": false,
+      "minimumRiskLevel": 2,
+      "requiredHumanApprovals": 1,
+      "requiredVerifiers": [
+        "forbidden-pattern-check"
+      ],
+      "policyDocument": "docs/security/threat-model.md"
+    },
+    {
+      "id": "SEC-PRODINFRA-001",
+      "description": "本番のInfrastructure・Deploymentへの変更と、保護の解除・権限の拡大・公開範囲の拡大のように危険な方向への変更を検知し、LEVEL 3・2人承認を強制する。危険方向は追加行だけで判定する（#157）",
+      "categories": [
+        "ProductionInfrastructure"
+      ],
+      "pathPatterns": [
+        "^(?=.*?(?:(^|/)(infra|infrastructure|terraform|terragrunt|k8s|kubernetes|helm|charts?|deploy|deployment|live|cdk|pulumi|cloudformation|cfn)(/|$)|(^|/)(?<!(^|/)config/)(environments?|envs)/|\\.(tf|tfvars|hcl)$|\\.tf\\.json$))(?=.*?(^|[/._-])(?<!non[-_])(?<!pre[-_])(prod|prd|production)([/._-]|$))",
+        "(^|/)\\.github/workflows/[^/]*(prod|prd|production)[^/]*\\.ya?ml$"
+      ],
+      "contentPatterns": [],
+      "addedContent": {
+        "pathPatterns": [
+          "(^|/)(infra|infrastructure|terraform|terragrunt|k8s|kubernetes|helm|charts?|deploy|deployment|live|cdk|pulumi|cloudformation|cfn)(/|$)|(^|/)(?<!(^|/)config/)(environments?|envs)/|\\.(tf|tfvars|hcl)$|\\.tf\\.json$"
+        ],
+        "patterns": [
+          "\\bprevent_destroy\\s*=\\s*false\\b",
+          "\\bdeletion_?protection(_enabled)?\"?\\s*[:=]\\s*\"?false\\b",
+          "\\bforce_destroy\\s*=\\s*true\\b",
+          "\\bskip_final_snapshot\\s*=\\s*true\\b",
+          "(^|[\\[,:\\s-])[\"']\\*[\"']\\s*(,|\\]|$)",
+          "\\b0\\.0\\.0\\.0/0\\b",
+          "(^|[^0-9a-f:])::/0\\b"
+        ],
+        "ignoredPatterns": [
+          "^\\s*egress\\s*\\{[^}]*\\}"
+        ],
+        "removedPatterns": [
+          "\\bprevent_destroy\\s*=\\s*true\\b",
+          "\\bdeletion_?protection(_enabled)?\"?\\s*[:=]\\s*\"?true\\b"
+        ]
+      },
+      "metadataPatterns": [
+        "production[ _-]?(infrastructure|deployment)|本番インフラ|本番環境へのデプロイ"
       ],
       "preImplementationGate": true,
       "minimumRiskLevel": 3,
@@ -366,9 +409,9 @@
       "metadataPatterns": [
         "security.design|重要Security設計"
       ],
-      "preImplementationGate": true,
-      "minimumRiskLevel": 3,
-      "requiredHumanApprovals": 2,
+      "preImplementationGate": false,
+      "minimumRiskLevel": 2,
+      "requiredHumanApprovals": 1,
       "requiredVerifiers": [
         "forbidden-pattern-check"
       ],

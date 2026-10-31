@@ -33,19 +33,54 @@ describe('Security Impact Classifier', () => {
   describe('given security rules with stable IDs', () => {
     for (const [path, impact] of [
       ['apps/api/security/rls.sql', 'RLS'], ['apps/api/auth/login.rb', 'AuthN'], ['apps/api/authz/check.rb', 'AuthZ'],
-      ['apps/api/pii/access.rb', 'PII'], ['.upload-access-key', 'Secret'], ['apps/api/db/migrate/001.rb', 'Migration'],
-      ['apps/api/db/schema.rb', 'DBSchema'], ['apps/api/roles/model.rb', 'RolePermission'],
-      ['.github/workflows/deploy.yml', 'CICDSecurity'], ['infra/main.tf', 'InfrastructureSecurity'],
-      ['docs/security/authorization.md', 'SecurityConfig'],
+      ['apps/api/pii/access.rb', 'PII'], ['.upload-access-key', 'Secret'], ['apps/api/roles/model.rb', 'RolePermission'],
+      ['infra/production/main.tf', 'ProductionInfrastructure'],
     ]) {
       it(`when ${impact} changes then requires an implementation gate and minimum risk 3`, () => {
         const result = assess([{ path, status: 'M' }]);
         assert.ok(result.impacts.includes(impact));
         assert.equal(result.requiresPreImplementationGate, true);
         assert.equal(result.minimumRiskLevel, 3);
+        assert.equal(result.requiredHumanApprovals, 2);
         assert.ok(result.matchedRules.length);
       });
     }
+    // #157: these categories are detected and still select their Verifier, but the change alone asks for one review instead of a gate and two humans.
+    for (const [path, impact, verifier] of [
+      ['apps/api/db/migrate/001.rb', 'Migration', 'migration-safety'],
+      ['apps/api/db/schema.rb', 'DBSchema', 'migration-safety'],
+      ['.github/workflows/deploy.yml', 'CICDSecurity', 'forbidden-pattern-check'],
+      ['docs/security/threat-model.md', 'SecurityConfig', 'forbidden-pattern-check'],
+      ['docs/adr/0001-example.md', 'SecurityDesign', 'forbidden-pattern-check'],
+      ['infra/main.tf', 'InfrastructureSecurity', 'forbidden-pattern-check'],
+    ]) {
+      it(`when ${impact} changes then requires its Verifier with one review and no implementation gate`, () => {
+        const result = assess([{ path, status: 'M' }]);
+        assert.ok(result.impacts.includes(impact));
+        assert.equal(result.requiresPreImplementationGate, false);
+        assert.equal(result.minimumRiskLevel, 2);
+        assert.equal(result.requiredHumanApprovals, 1);
+        assert.ok(result.requiredVerifiers.includes(verifier));
+      });
+    }
+    // The light content checks run on every change, so an ordinary Production change needs no heavy Security Verifier at all (#157).
+    it('when an ordinary Production file changes then only the always required content checks are selected', () => {
+      const result = assess([{ path: 'apps/api/app/controllers/courses_controller.rb', status: 'M', added: 'before_action :authenticate_user!' }]);
+      assert.deepEqual(result.matchedRules, []);
+      assert.equal(result.securitySensitive, false);
+      assert.deepEqual(result.requiredVerifiers, ['secret-scan', 'forbidden-pattern-check']);
+      assert.equal(result.requiresPreImplementationGate, false);
+    });
+    it('when ordinary Rails configuration changes then SEC-CONFIG-001 does not match it', () => {
+      for (const path of ['apps/api/config/routes.rb', 'apps/api/config/puma.rb', 'apps/admin/src/shared/config/env.ts']) {
+        assert.deepEqual(assess([{ path, status: 'M' }]).matchedRules, [], path);
+      }
+    });
+    it('when security relevant Rails configuration changes then SEC-CONFIG-001 still matches it', () => {
+      for (const path of ['apps/api/config/database.yml', 'apps/api/config/initializers/cors.rb', 'apps/api/config/initializers/filter_parameter_logging.rb']) {
+        assert.ok(assess([{ path, status: 'M' }]).matchedRules.includes('SEC-CONFIG-001'), path);
+      }
+    });
     it('when logging contains PII then requires the PII log check', () => {
       const result = assess([{ path: 'apps/api/logger.rb', added: 'logger.info(user.email)' }]);
       assert.ok(result.impacts.includes('PIILogging'));
@@ -228,10 +263,13 @@ describe('Secret protection and review export', () => {
 
 describe('Security rule and evidence boundaries', () => {
   describe('given a change outside the approved security scope', () => {
+    // The forbidden pattern check reports the finding as a violation, so the merge is blocked whatever the Risk Level is.
     it('when unsafe TLS settings are proposed then classifies them as security sensitive', () => {
       const result = assess([{path:'apps/admin/client.js',added:'process.env.NODE_TLS_REJECT_UNAUTHORIZED = 0'}]);
-      assert.equal(result.minimumRiskLevel,3);
+      assert.equal(result.securitySensitive,true);
+      assert.equal(result.minimumRiskLevel,2);
       assert.ok(result.matchedRules.includes('SEC-CONFIG-001'));
+      assert.ok(result.requiredVerifiers.includes('forbidden-pattern-check'));
     });
     it('when agent introduces PII in an approved RLS-only SBI then stops before applying it', () => fixture(async root => {
       await update(root,'.harness/state/sample-sbi.json',s=>s.securityImpact=['RLS']);
