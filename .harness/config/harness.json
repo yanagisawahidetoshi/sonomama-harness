@@ -60,6 +60,8 @@
           "--rm",
           "-e",
           "RAILS_ENV=test",
+          "-e",
+          "API_CONTRACT_COVERAGE=required",
           "api",
           "bundle",
           "exec",
