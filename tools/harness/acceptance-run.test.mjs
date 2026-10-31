@@ -1,6 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { acceptanceCommands, parseRspecJson, judgeDetection, judgeAcceptance } from './acceptance-run.mjs';
+import { mkdtemp, writeFile, chmod, readFile, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { parse as parseYaml } from 'yaml';
+import { acceptanceCommands, parseRspecJson, judgeDetection, judgeAcceptance, runGeneratedAcceptance } from './acceptance-run.mjs';
 
 const path = 'apps/api/spec/acceptance/sbi_7/courses_spec.rb';
 const registration = {
@@ -89,5 +93,27 @@ describe('Acceptance (I): the generated specs run after the implementation', () 
   it('when the report is missing then the check fails and meets nothing', () => {
     const result = judgeAcceptance({ registration, report: parseRspecJson('') });
     assert.deepEqual([result.status, result.acceptance], ['FAIL', []]);
+  });
+});
+
+// ADR-0005: the generated specs and every controlled violation are PR code, so they run with Compose networks that reach no outside host.
+describe('Network of the generated acceptance run', () => {
+  it('when the generated specs run then every Compose command loads a Harness override that makes the networks internal', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'harness-acceptance-network-'));
+    try {
+      const docker = join(dir, 'docker'), log = join(dir, 'overrides.jsonl');
+      // Records the Harness override each Compose command loads (the file after the second -f).
+      await writeFile(docker, `#!${process.execPath}
+const fs = require('node:fs'), args = process.argv.slice(2);
+const files = args.flatMap((a, i) => args[i - 1] === '-f' ? [a] : []);
+if (args[0] === 'compose') fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ sub: args.find(a => ['build', 'run', 'down'].includes(a)), override: files[1] ? fs.readFileSync(files[1], 'utf8') : null }) + '\\n');
+`);
+      await chmod(docker, 0o755);
+      await writeFile(join(dir, 'compose.yaml'), await readFile(new URL('../../compose.yaml', import.meta.url), 'utf8'));
+      await runGeneratedAcceptance({ workspace: dir, sbiIssue: 7, config: { timeoutMs: 10000, isolation: { docker } } });
+      const calls = (await readFile(log, 'utf8')).split('\n').filter(Boolean).map(line => JSON.parse(line));
+      assert.ok(calls.some(c => c.sub === 'run'));
+      for (const call of calls) assert.deepEqual(parseYaml(call.override).networks, { default: { internal: true } }, call.sub);
+    } finally { await rm(dir, { recursive: true, force: true }); }
   });
 });
