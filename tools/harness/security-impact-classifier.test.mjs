@@ -379,6 +379,10 @@ describe('Security Impact Classifier on an SBI that states no authentication is 
     for (const [name, spec] of [
       ['making an existing endpoint public', sbi('既存の GET /api/v1/courses を認証不要にする。')],
       ['blocking unauthenticated users', sbi('未認証ユーザーは 401 を返す。')],
+      ['letting unauthenticated clients call an existing endpoint', sbi('既存の GET /api/v1/courses を未認証クライアントでも呼べるようにする。')],
+      ['making an endpoint reachable by unauthenticated clients', sbi('既存の GET /api/v1/courses を未認証クライアントでもアクセス可能にする。')],
+      ['letting requests through without authentication', sbi('既存の GET /api/v1/courses に認証なしでアクセスできるようにする。')],
+      ['changing it to accept requests without an authentication header', sbi('課金 API を変更する。', '認証ヘッダも Cookie も付けないリクエストでも 200 を返すように変更する')],
       ['adding authentication', sbi('ログインに認証を追加する。')],
       ['an English change that adds authentication', sbi('Add authentication to the courses API.')],
     ]) {
