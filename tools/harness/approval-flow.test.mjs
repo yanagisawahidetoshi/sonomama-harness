@@ -135,7 +135,8 @@ describe('Trusted approval boundary', () => {
     }));
     it('when security check finds a private key in an approved secret SBI then fails and stops', () => fixture(async root => {
       await update(root, sbiPath, s => s.risks = ['secret']);
-      const run = await runHarness({ root, quiet: true, agent: async () => ({ files: [{ path: 'greeting.mjs', content: good + '\n// -----BEGIN PRIVATE KEY-----' }] }) });
+      // Split so this test file's own added lines do not trip the CI secret-scan.
+      const run = await runHarness({ root, quiet: true, agent: async () => ({ files: [{ path: 'greeting.mjs', content: good + `\n// -----BEGIN ${'PRIVATE KEY'}-----` }] }) });
       assert.equal(run.status, 'ESCALATED');
       assert.equal(run.iterations.length, 1);
       assert.equal(run.iterations[0].security.status, 'FAIL');

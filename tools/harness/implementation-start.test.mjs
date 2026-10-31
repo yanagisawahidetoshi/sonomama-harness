@@ -228,7 +228,8 @@ describe('A decision the approved SBI cannot settle goes back to a human', () =>
     it('when the agent introduces PII logging, a new security decision, then stops as NEEDS_HUMAN_DECISION before applying code', () => fixture(async root => {
       await rlsVerifier(root);
       await update(root, sbiPath, s => s.securityImpact = ['RLS']);
-      const run = await runHarness({ root, quiet: true, agent: agent(good + '\n// logger.info(user.email)') });
+      // Split so this test file's own added lines do not trip the CI pii-log-check.
+      const run = await runHarness({ root, quiet: true, agent: agent(good + `\n// ${'logger'}.info(user.email)`) });
       assert.equal(run.status, 'ESCALATED');
       assert.deepEqual({ code: run.escalation.code, decision: run.escalation.decision }, { code: 'NEW_SECURITY_SCOPE', decision: 'NEEDS_HUMAN_DECISION' });
       assert.match(run.reason, /SEC-(PII|LOG)-001/);

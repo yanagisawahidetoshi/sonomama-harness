@@ -235,7 +235,8 @@ describe('Security rule and evidence boundaries', () => {
     });
     it('when agent introduces PII in an approved RLS-only SBI then stops before applying it', () => fixture(async root => {
       await update(root,'.harness/state/sample-sbi.json',s=>s.securityImpact=['RLS']);
-      const resumed=await runHarness({root,quiet:true,agent:async()=>({files:[{path:'greeting.mjs',content:good+'\n// logger.info(user.email)'}]})});
+      // Split so this test file's own added lines do not trip the CI pii-log-check.
+      const resumed=await runHarness({root,quiet:true,agent:async()=>({files:[{path:'greeting.mjs',content:good+`\n// ${'logger'}.info(user.email)`}]})});
       assert.equal(resumed.status,'ESCALATED');
       assert.match(resumed.reason,/security scope/);
       assert.equal(resumed.headSha,resumed.baselineSha);
