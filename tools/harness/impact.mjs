@@ -12,11 +12,17 @@ import { judgeMaestro, maestroLanes, readMaestroResults } from './maestro.mjs';
 import { configSchema, dependencyBotPolicySchema, securityPolicySchema } from './schemas.mjs';
 import { classifySecurity, combineSecurity, securityPassed, verifySecurity } from './security-enforcement.mjs';
 import { checksPassed, verify } from './verifier.mjs';
-import { withAcceptance } from './acceptance-registry.mjs';
+import { readAcceptance, withAcceptance } from './acceptance-registry.mjs';
+import { isGeneratedRegistrationPath } from './acceptance-generation.mjs';
+import { judgeAcceptance, readAcceptanceResult, runGeneratedAcceptance, writeAcceptanceResult } from './acceptance-run.mjs';
+import { specDigest } from './spec-approval.mjs';
 import { changedFiles as diffFiles, git } from './workspace.mjs';
 // SBI Impact Analysis for CI scheduling. harness.json stays the single definition of verifiers; this only decides which of them a change needs.
 const sorted = values => [...new Set(values)].sort();
 const applicationVerifiers = config => config.verifiers.filter(v => (v.trust || 'application') === 'application');
+const generatedId = /^generated-acceptance-sbi-([1-9]\d*)$/;
+// The verifier matrix leaves the generated acceptance reports here; the workflow uploads and downloads this directory.
+export const acceptanceResultsDirectory = '.acceptance-ci/results';
 const firstMatch = (patterns = [], files) => files.find(f => patterns.some(p => new RegExp(p).test(f.path)))?.path;
 
 export function analyzeImpact({ config, sbis = [], runSbis = [], files = [], all = false }) {
@@ -33,6 +39,8 @@ export function analyzeImpact({ config, sbis = [], runSbis = [], files = [], all
   for (const s of sbis) {
     for (const id of s.requiredVerifiers ?? []) select(id, `sbi:${s.id} requiredVerifiers`, true);
     for (const area of s.affectedAreas ?? []) for (const v of apps.filter(v => v.areas?.includes(area))) select(v.id, `sbi:${s.id} affectedAreas:${area}`, true);
+    // Generated Trusted Acceptance runs PR code (#147), so its specs run in the verifier matrix and the Completion Judge only reads the report.
+    for (const id of new Set(s.acceptanceCriteria.map(a => a.verifier).filter(id => generatedId.test(id)))) select(id, `sbi:${s.id} generated acceptance`, true);
   }
   const fromSbi = new Set(verifiers.keys());
   for (const v of apps) {
@@ -149,10 +157,22 @@ export async function loadImpact({ root, base, all = false }) {
 }
 
 // The matrix job: one verifier, mandatory only when an SBI asked for it, so a cross-layer contract without a document stays a placeholder SKIP.
-export async function runVerifier({ root, base, all = false, id }) {
+export async function runVerifier({ root, base, all = false, id, acceptanceResults = join(root, acceptanceResultsDirectory), acceptanceRunner = runGeneratedAcceptance }) {
   const { config, files, impact } = await loadImpact({ root, base, all });
   const entry = impact.verifiers.find(v => v.id === id);
   const mandatory = entry?.mandatory ?? false;
+  // The leg passes when the specs pass; the Completion Judge decides acceptance from the report against the current SBI Issue.
+  const generated = generatedId.exec(id);
+  if (generated) {
+    const sbiIssue = Number(generated[1]), headSha = (await git(root, ['rev-parse', 'HEAD'])).stdout.trim();
+    const registration = await readAcceptance(root, sbiIssue).catch(() => null);
+    if (registration?.version !== 2) return { impact, result: { checks: [{ id, required: true, selectionReasons: [mandatory ? 'impact-required' : 'requested', 'generated-acceptance'], status: 'FAIL', reason: `generated registration of SBI #${sbiIssue} is missing` }] }, passed: false };
+    const report = await acceptanceRunner({ workspace: root, sbiIssue, config });
+    await writeAcceptanceResult({ dir: acceptanceResults, sbiIssue, headSha, report });
+    const judged = judgeAcceptance({ registration, report });
+    const checks = [{ id, required: true, trust: 'acceptance', selectionReasons: [mandatory ? 'impact-required' : 'requested', 'generated-acceptance'], status: judged.status, ...(judged.reasons.length ? { reason: judged.reasons.join('; ') } : {}) }];
+    return { impact, result: { checks }, passed: judged.status === 'PASS' };
+  }
   // A Security Verifier connected in harness.json runs the same way as in the Harness run; without commands it stays NOT_CONFIGURED and fails.
   if (config.securityVerifiers.some(v => v.id === id)) {
     const policy = securityPolicySchema.parse(await readJson(join(root, '.harness/rules/security.json')));
@@ -180,11 +200,28 @@ async function changedContent(root, files) {
 // Completion Judge: trusted acceptance of every changed SBI and the Harness Security Policy run here. An ambiguous Production diff must be backed
 // by a ready SBI Run snapshot; an engineering diff needs none (ADR-0006).
 // expectedHeadSha is the head the workflow checked out; the CLI always passes it, so a missing value fails there.
-export async function runCompletionJudge({ root, base, all = false, needs, repository = process.env.GITHUB_REPOSITORY, pullNumber, github = githubCli, githubPr, maestroResults, expectedHeadSha }) {
+export async function runCompletionJudge({ root, base, all = false, needs, repository = process.env.GITHUB_REPOSITORY, pullNumber, github = githubCli, githubPr, maestroResults, expectedHeadSha, acceptanceResults = join(root, acceptanceResultsDirectory) }) {
   const { config, files, sbis, snapshots, impact } = await loadImpact({ root, base, all });
+  const headSha = (await git(root, ['rev-parse', 'HEAD'])).stdout.trim();
+  // The Issue is read once for the generated acceptance and the SBI source check, so both judge the same Issue.
+  const issues = new Map();
+  const issueGithub = { ...github, fetchIssue: ref => {
+    const key = `${ref.owner}/${ref.repo}#${ref.number}`;
+    if (!issues.has(key)) issues.set(key, github.fetchIssue(ref));
+    return issues.get(key);
+  } };
   const missing = [], checks = [];
   for (const sbi of sbis) {
-    const result = await verify({ root, workspace: root, config, sbi, files, only: new Set(sbi.acceptanceCriteria.map(a => a.verifier)) });
+    // Generated Trusted Acceptance (#147) is checked against the current SBI Issue and judged from the report the verifier matrix left.
+    const snapshot = snapshots.find(s => s.snapshot.sbi === sbi)?.snapshot;
+    let generatedSpecDigest = null, generatedSpecError = null;
+    if (snapshot && sbi.acceptanceCriteria.some(a => generatedId.test(a.verifier))) {
+      const [owner, repo] = snapshot.source.repo.split('/');
+      try { generatedSpecDigest = specDigest((await issueGithub.fetchIssue({ owner, repo, number: snapshot.source.number })).body); }
+      catch (error) { generatedSpecError = `SBI Issue ${snapshot.source.url} could not be read, so the spec digest cannot be checked (${error.message})`; }
+    }
+    const result = await verify({ root, workspace: root, config, sbi, files, only: new Set(sbi.acceptanceCriteria.map(a => a.verifier)), generatedSpecDigest, generatedSpecError,
+      acceptanceRunner: ({ sbiIssue }) => readAcceptanceResult({ dir: acceptanceResults, sbiIssue, headSha }) });
     checks.push(...result.checks);
     missing.push(...sbi.acceptanceCriteria.filter(a => !result.acceptance.includes(a.id)).map(a => a.id));
   }
@@ -193,7 +230,6 @@ export async function runCompletionJudge({ root, base, all = false, needs, repos
   const assessment = combineSecurity(classifySecurity({ files }, policy), ...sbis.map(sbi => classifySecurity({ files, sbi }, policy)));
   // Application verifiers an SBI requires ran in the matrix job, which succeeds only when every one of them passed.
   const matrix = impact.requiredVerifiers.map(id => ({ id, status: needs.verifiers?.result === 'success' ? 'PASS' : 'FAIL', reason: `verifier matrix: ${needs.verifiers?.result ?? 'missing'}` }));
-  const headSha = (await git(root, ['rev-parse', 'HEAD'])).stdout.trim();
   const security = await verifySecurity({ workspace: root, sbi: {}, assessment, policy, config, headSha, verification: { checks: [...checks, ...matrix] }, changed: await changedContent(root, files) });
   // A trusted bot's dependency PR lifts the source requirement only; everything above and judgeCi stay as they are.
   const exemption = impact.sbiRequired && pullNumber !== undefined
@@ -203,13 +239,13 @@ export async function runCompletionJudge({ root, base, all = false, needs, repos
   // while the Run trailers alone are no source and never change the change type.
   const snapshotChanged = files.some(f => sbiFilePattern.test(f.path));
   const required = exemption?.exempt ? [] : impact.sbiRequiredReasons.length ? impact.sbiRequiredReasons : snapshotChanged ? ['sbi-snapshot'] : [];
-  const verified = await verifySbiSource({ root, base, files, required, config, repository, github });
+  const verified = await verifySbiSource({ root, base, files, required, config, repository, github: issueGithub });
   const source = { ...verified, ...(exemption ? { exemption } : {}) };
   // A destructive migration that migration-safety let through as an exception request still needs two reviews on headSha.
   const migrationExceptions = all ? { status: 'PASS', exceptions: [], reasons: [] }
     : await verifyMigrationExceptions({ root, base, files, headSha, repository, pullNumber, ...(githubPr ? { githubPr } : {}) });
-  // The Run snapshot is in every Harness PR, so only the files the implementation changed count against the SBI Issue's estimate.
-  const changedPaths = files.map(f => f.path).filter(path => !snapshotFilePattern.test(path));
+  // The Run snapshot and the generated Trusted Acceptance are in the Harness PR, so only the files the implementation changed count against the SBI Issue's estimate.
+  const changedPaths = files.map(f => f.path).filter(path => !snapshotFilePattern.test(path) && !snapshots.some(s => isGeneratedRegistrationPath(path, s.snapshot.sbi)));
   const granularity = snapshots.filter(s => s.snapshot.sbi.kind === 'implementation')
     .map(s => ({ sbi: s.snapshot.source.url, ...judgeChangedFileCount({ estimatedFiles: s.snapshot.sbi.estimatedFiles, changedPaths }) }));
   // The maestro job uploads one result file per lane; the workflow downloads them into maestroResults before the Judge runs.

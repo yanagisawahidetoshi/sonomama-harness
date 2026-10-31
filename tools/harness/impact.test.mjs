@@ -637,8 +637,18 @@ describe('CI workflow setup', () => {
       assert.deepEqual(harness('impact'), ['pnpm harness:check', 'pnpm harness:impact $HARNESS_SCOPE']);
       assert.deepEqual(harness('verifiers'), ['pnpm harness:verify --verifier ${{ matrix.verifier }} $HARNESS_SCOPE']);
       assert.deepEqual(harness('harness-test'), ['pnpm harness:test']);
-      assert.deepEqual(harness('harness-demo'), ['pnpm harness:demo --full']);
+      assert.deepEqual(harness('harness-demo'), ['pnpm harness:demo $HARNESS_DEMO_SCOPE']);
       assert.deepEqual(harness('harness'), ['pnpm harness:judge $HARNESS_SCOPE']);
+    });
+  });
+
+  // The self-repair demo was the longest job of a pull request run: every real application verifier ran a second time inside its run
+  // worktree, about 7 minutes of an 8 minute run (#192). The loop itself needs no verifier, so a pull request proves the loop and a
+  // push to main keeps proving it against the real verifiers.
+  describe('given the self-repair demo', () => {
+    it('when a pull request runs the Full Gate then the demo adds the real application verifiers only outside a pull request', () => {
+      assert.equal(workflow.env.HARNESS_DEMO_SCOPE, "${{ github.event_name != 'pull_request' && '--full' || '' }}");
+      assert.doesNotMatch(JSON.stringify(workflow.jobs['harness-demo']), /--full/);
     });
   });
 

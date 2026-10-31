@@ -8,6 +8,8 @@ permissions:
 env:
   # Pull requests are verified against their base branch; a push to main runs every verifier and the Full Gate.
   HARNESS_SCOPE: ${{ github.event_name == 'pull_request' && format('--base origin/{0}', github.base_ref) || '--all' }}
+  # The self-repair demo needs no verifier to prove its loop, so a pull request runs it without the real application verifiers (#192).
+  HARNESS_DEMO_SCOPE: ${{ github.event_name != 'pull_request' && '--full' || '' }}
 jobs:
   impact:
     runs-on: ubuntu-latest
@@ -64,6 +66,16 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm harness:verify --verifier ${{ matrix.verifier }} $HARNESS_SCOPE
+        env:
+          # A generated Trusted Acceptance leg (#147) leaves its RSpec report here, outside the checkout so a report committed in the PR is never read.
+          HARNESS_ACCEPTANCE_RESULTS: ${{ runner.temp }}/acceptance-results
+      # One artifact per leg; a failed leg still uploads its report so the Completion Judge names the failing examples.
+      - if: always() && startsWith(matrix.verifier, 'generated-acceptance-')
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: acceptance-results-${{ matrix.verifier }}
+          path: ${{ runner.temp }}/acceptance-results
+          if-no-files-found: ignore
   harness-test:
     needs: impact
     if: needs.impact.outputs.full_gate == 'true'
@@ -97,7 +109,7 @@ jobs:
           node-version-file: .node-version
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm harness:demo --full
+      - run: pnpm harness:demo $HARNESS_DEMO_SCOPE
   # Completion Judge. The job id stays "harness" because it is the required status check.
   # Mobile E2E (#68, #145): only for mobile SBIs that ask for E2E (impact maestro lanes), plus a push to main that keeps the APK cache.
   # It builds the Development Build and runs Metro and the Emulator on the runner itself, outside the Docker isolation of the other
@@ -205,10 +217,19 @@ jobs:
         with:
           name: maestro-results
           path: .maestro-ci/results
+      # The generated acceptance reports of the verifier matrix; a missing report is judged as a failure, not skipped.
+      - if: contains(needs.impact.outputs.required_verifiers, 'generated-acceptance-')
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: acceptance-results-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/acceptance-results
       - run: pnpm harness:judge $HARNESS_SCOPE
         env:
           HARNESS_NEEDS: ${{ toJson(needs) }}
           HARNESS_MAESTRO_RESULTS: .maestro-ci/results
+          HARNESS_ACCEPTANCE_RESULTS: ${{ runner.temp }}/acceptance-results
           HARNESS_PULL_REQUEST: ${{ github.event.pull_request.number }}
           HARNESS_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           GH_TOKEN: ${{ github.token }}

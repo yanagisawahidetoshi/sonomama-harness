@@ -17,6 +17,7 @@ import { postSpecApproval } from './spec-approval.mjs';
 import { githubCli } from './planner-github.mjs';
 import { git } from './workspace.mjs';
 import { appendFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 // The normal flow is planner:sbi → harness:run → (only at a Human Gate) harness:approve. The rest serves CI, recovery and Harness maintenance.
@@ -48,8 +49,10 @@ Internal/Maintenance (CI・障害復旧・Harness保守用):
   pnpm harness:export --run RUN_ID [--out PATH] | pnpm harness:cleanup --run RUN_ID | pnpm planner:api-schema-status ISSUE_URL
   node tools/harness/cli.mjs api-schema ISSUE_URL | node tools/harness/cli.mjs api-schema-approve ISSUE_URL（旧API Schema Planner。内部機能）`;
 const printPullRequest = run => { if (run.pullRequest) console.log(`Pull request: ${run.pullRequest.url} (tested SHA ${run.headSha})`); };
+// The generated acceptance reports the verifier matrix leaves for the Completion Judge (#147); unset uses the default directory.
+const acceptanceResults = () => process.env.HARNESS_ACCEPTANCE_RESULTS ? { acceptanceResults: resolve(root, process.env.HARNESS_ACCEPTANCE_RESULTS) } : {};
 async function printVerifier({ root: workspace = root, base, all, id }) {
-  const { impact, result, passed } = await runVerifier({ root: workspace, base, all, id });
+  const { impact, result, passed } = await runVerifier({ root: workspace, base, all, id, ...acceptanceResults() });
   const selection = impact.verifiers.find(v => v.id === id);
   console.log(redactText(`Selected by: ${selection ? selection.reasons.join(', ') : '(not selected by impact)'}`));
   for (const c of result.checks) {
@@ -154,7 +157,7 @@ try {
     } else {
       const needs = JSON.parse(process.env.HARNESS_NEEDS || '{}');
       // Set only on pull_request events; a trusted dependency bot PR is read from GitHub by this number.
-      const judged = await runCompletionJudge({ root, base, all, needs, pullNumber: process.env.HARNESS_PULL_REQUEST || undefined, maestroResults: process.env.HARNESS_MAESTRO_RESULTS || undefined, expectedHeadSha: process.env.HARNESS_HEAD_SHA ?? '' });
+      const judged = await runCompletionJudge({ root, base, all, needs, pullNumber: process.env.HARNESS_PULL_REQUEST || undefined, maestroResults: process.env.HARNESS_MAESTRO_RESULTS || undefined, expectedHeadSha: process.env.HARNESS_HEAD_SHA ?? '', ...acceptanceResults() });
       for (const line of describeImpact(judged.impact)) console.log(redactText(line));
       for (const line of describeSbiSource(judged.source)) console.log(redactText(line));
       for (const c of [...judged.checks, ...judged.security.checks.filter(c => c.required)]) console.log(redactText(`${c.id}: ${c.status}${c.reason ? ` (${c.reason})` : ''}`));

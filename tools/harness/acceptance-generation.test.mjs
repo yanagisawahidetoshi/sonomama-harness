@@ -190,10 +190,12 @@ describe('Reading a generated registration with the existing loader', () => {
     const read = await readAcceptance(root, 7);
     assert.equal(read.version, 2);
   }));
-  it('when withAcceptance builds the verifiers then a version 2 registration adds no hand-written verifier', () => workspace(async root => {
+  it('when withAcceptance builds the verifiers then a version 2 registration adds no hand-written verifier, only the generated one', () => workspace(async root => {
     await generate(root, answer());
     const config = await withAcceptance(root, configSchema.parse(JSON.parse(await readFile(new URL('../../.harness/config/harness.json', import.meta.url), 'utf8'))), [7]);
-    assert.equal(config.verifiers.some(v => v.sbiIssue === 7), false);
+    const own = config.verifiers.filter(v => v.sbiIssue === 7);
+    assert.equal(own.some(v => v.trustedScript), false);
+    assert.deepEqual(own.map(v => v.generated), [true]);
   }));
 });
 

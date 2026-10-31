@@ -1,0 +1,24 @@
+# A contract whose schema value breaks the OpenAPI 3.1 schema dialect. Loading it must fail instead of validating nothing.
+openapi: 3.1.0
+info:
+  title: Invalid schema fixture
+  version: "1"
+paths:
+  /students/{studentId}:
+    get:
+      parameters:
+        - name: studentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Student
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  studentId:
+                    type: strng
