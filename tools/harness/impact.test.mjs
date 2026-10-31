@@ -709,3 +709,43 @@ describe('CI workflow setup', () => {
     });
   });
 });
+
+describe('CI Completion Judge for a legacy hand-written SBI (#217)', () => {
+  const needs = { impact: { result: 'success' }, verifiers: { result: 'success' }, 'harness-test': { result: 'skipped' }, 'harness-demo': { result: 'skipped' } };
+  const legacy = async root => ({ ...await readJson(join(root, '.harness/state/sample-sbi.json')), id: 'SBI-API-ENV', description: '認証Providerの決定とProvider固有実装を分ける' });
+  // Commits the SBI file on main, then edits its description on a feature branch, so the PR only changes that file.
+  const edit = async (root, path) => {
+    const sbi = await legacy(root);
+    await writeFile(join(root, path), `${JSON.stringify(sbi, null, 2)}\n`);
+    await git(root, ['add', '--all']);
+    await git(root, ['commit', '-m', 'add the SBI']);
+    await git(root, ['switch', '-c', 'feature']);
+    await writeFile(join(root, path), `${JSON.stringify({ ...sbi, description: `${sbi.description}。JWT / Cognito等の認証実装をしていない` }, null, 2)}\n`);
+    await git(root, ['add', '--all']);
+    await git(root, ['commit', '-m', 'docs: edit the SBI']);
+  };
+
+  describe('given a PR that only edits a legacy SBI, whose name is not an Issue number', () => {
+    it('when judged then no SBI source is required and the source check passes, because a legacy SBI is not a Run snapshot', async () => fixture(async root => {
+      await edit(root, '.harness/state/sbi-api-env.json');
+      const result = await runCompletionJudge({ root, base: 'main', needs });
+      assert.deepEqual(result.source.required, []);
+      assert.equal(result.source.status, 'PASS', result.source.reasons.join('; '));
+    }));
+
+    it('when its words mention 認証 and JWT then the Security check does not require the authentication test', async () => fixture(async root => {
+      await edit(root, '.harness/state/sbi-api-env.json');
+      const result = await runCompletionJudge({ root, base: 'main', needs });
+      assert.equal(result.security.requiredVerifiers.includes('authn-test'), false, JSON.stringify(result.security.reasons ?? result.security));
+    }));
+  });
+
+  describe('given a PR that edits a file named like a Run snapshot', () => {
+    it('when judged then the SBI source is still required and fails, because a broken or hand-made snapshot is not a legacy SBI', async () => fixture(async root => {
+      await edit(root, '.harness/state/sbi-12.json');
+      const result = await runCompletionJudge({ root, base: 'main', needs });
+      assert.deepEqual(result.source.required, ['sbi-snapshot']);
+      assert.equal(result.source.status, 'FAIL');
+    }));
+  });
+});
