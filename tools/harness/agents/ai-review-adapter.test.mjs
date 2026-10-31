@@ -51,9 +51,31 @@ describe('Real AI Review adapter', () => {
       assert.equal(call.command, 'claude');
       assert.deepEqual(call.args.slice(call.args.indexOf('--tools'), call.args.indexOf('--tools') + 2), ['--tools', '']);
       assert.deepEqual(JSON.parse(call.args[call.args.indexOf('--settings') + 1]), { advisorModel: '' });
+      assert.deepEqual(call.args.slice(call.args.indexOf('--disallowedTools'), call.args.indexOf('--disallowedTools') + 2), ['--disallowedTools', 'mcp__*']);
       assert.notEqual(call.options.cwd, '/nonexistent/workspace');
       assert.ok(call.options.cwd);
       assert.equal(call.options.timeoutMs, 3000);
+    });
+    it('when it runs the CLI then loads none of the user customizations and passes only the environment the CLI needs', async () => {
+      const { run, calls } = cli(verdict());
+      process.env.HARNESS_REVIEW_PROBE = 'must-not-reach-the-reviewer';
+      try { await providerAiReviewer({ run })(input()); } finally { delete process.env.HARNESS_REVIEW_PROBE; }
+      const [call] = calls;
+      assert.ok(call.args.includes('--safe-mode'));
+      assert.ok(call.args.includes('--strict-mcp-config'));
+      assert.ok(Object.keys(call.options.env).every(key => ['HOME', 'PATH', 'USER', 'LANG', 'TMPDIR'].includes(key)));
+      assert.equal(Object.values(call.options.env).includes('must-not-reach-the-reviewer'), false);
+    });
+    it('when it asks for the answer then the JSON schema has the same limits as the parser', async () => {
+      const { run, calls } = cli(verdict());
+      await providerAiReviewer({ run })(input());
+      const schema = JSON.parse(calls[0].args[calls[0].args.indexOf('--json-schema') + 1]);
+      assert.equal(schema.properties.reasons.maxItems, 20);
+      assert.equal(schema.properties.reasons.items.maxLength, 500);
+    });
+    it('when Claude puts the answer in result instead of structured_output then reads it from there', async () => {
+      const { run } = cli(() => ({ ok: true, code: 0, stdout: JSON.stringify({ is_error: false, result: JSON.stringify(verdict()) }), stderr: '' }));
+      assert.equal((await providerAiReviewer({ run })(input())).status, 'PASS');
     });
     it('when it builds the prompt then gives the head SHA and the diff as data', async () => {
       const { run, calls } = cli(verdict());
@@ -62,6 +84,7 @@ describe('Real AI Review adapter', () => {
       assert.match(prompt, new RegExp(head));
       assert.match(prompt, /greeting\.mjs/);
       assert.match(prompt, /export const greet/);
+      assert.equal(prompt.includes('/nonexistent/workspace'), false);
     });
   });
 
@@ -89,13 +112,17 @@ describe('Real AI Review adapter', () => {
       ['the response has no head SHA', (({ headSha, ...rest }) => rest)(verdict())],
       ['the status is neither PASS nor FAIL', verdict({ status: 'MAYBE' })],
       ['the risk level is out of range', verdict({ riskLevel: 0 })],
-      ['the response is not JSON', 'looks good to me'],
+      ['the structured output is a sentence, not an object', 'looks good to me'],
     ]) {
       it(`when ${name} then rejects the review`, async () => {
         const { run } = cli(answer);
         await assert.rejects(providerAiReviewer({ run })(input()));
       });
     }
+    it('when the CLI prints something that is not JSON then rejects the review', async () => {
+      const { run } = cli(() => ({ ok: true, code: 0, stdout: 'looks good to me', stderr: '' }));
+      await assert.rejects(providerAiReviewer({ run })(input()), /no AI Review answer/);
+    });
     it('when the CLI times out then rejects the review', async () => {
       const { run } = cli(() => ({ ok: false, timedOut: true, code: null, stdout: '', stderr: '' }));
       await assert.rejects(providerAiReviewer({ run })(input()), /timeout/);
