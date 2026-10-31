@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readExistingSchema } from './api-schema-reader.mjs';
-import { externalRefs, mockHost, mockSchemaPath } from './api-mock.mjs';
+import { externalRefs, mockHost, mockSchemaPath, stopApiMock, waitForApiMock } from './api-mock.mjs';
 // Part of the api-contract Verifier for a Schema SBI: Prism must start from the OpenAPI of the run workspace (not an approved proposal),
 // and every GET it can call without inventing a credential must answer its first documented 2xx status with parseable JSON.
 // Path and required query parameters take their value from the OpenAPI (example, enum, default, then type); one that cannot be made is not called.
@@ -79,16 +79,9 @@ export async function checkApiMock({ root, timeoutMs = 30000 }) {
   if (remote.length) { result.errors.push(`ローカル以外の$refを参照しています（${remote.join(', ')}）。Prismを起動しません`); return result; }
   const port = await freePort();
   const child = spawn(process.execPath, [prismScript(), 'mock', resolve(root, mockSchemaPath), '-h', mockHost, '-p', String(port)], { cwd: root, env: mockEnvironment(process.env), stdio: ['ignore', 'pipe', 'pipe'] });
-  let output = '', exited = null;
-  child.stdout.on('data', chunk => { output += chunk; }); child.stderr.on('data', chunk => { output += chunk; });
-  child.on('exit', code => { exited = code ?? 1; });
   const base = `http://${mockHost}:${port}`;
   try {
-    for (const started = Date.now(); ; await new Promise(r => setTimeout(r, 200))) {
-      if (exited !== null) { result.errors.push(`Prismが起動できません（exit ${exited}）: ${output.slice(-2000)}`); return result; }
-      if (Date.now() - started > timeoutMs) { result.errors.push(`Prismが${timeoutMs}ms以内に起動しません`); return result; }
-      try { await fetch(base); break; } catch { /* not listening yet */ }
-    }
+    try { await waitForApiMock({ url: base, child, timeoutMs, intervalMs: 200 }); } catch (error) { result.errors.push(error.message); return result; }
     for (const operation of operations(schema.document)) {
       const name = operation.endpoint;
       if (operation.skip) { result.skipped.push({ endpoint: name, reason: operation.skip }); continue; }
@@ -103,7 +96,7 @@ export async function checkApiMock({ root, timeoutMs = 30000 }) {
     if (!result.checked.length && !result.errors.length) result.errors.push('Prismへrequestしたendpointが1件もありません。呼び出せるGETがなければ想定responseを確認できません');
     result.status = result.errors.length ? 'FAIL' : 'PASS';
     return result;
-  } finally { child.kill(); }
+  } finally { await stopApiMock(child); }
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
