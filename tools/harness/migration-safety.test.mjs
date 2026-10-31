@@ -134,12 +134,14 @@ describe('migration-safety Security Verifier configuration', () => {
     });
   });
   describe('given a change to a Rails migration', () => {
-    it('when classified then SEC-MIGRATION-001 still requires the gate, LEVEL 3, two approvals and migration-safety', () => {
+    // #157: an additive migration asks for one review and no implementation gate; migration-safety is required either way,
+    // and a destructive operation still needs the exception request with two different reviewers.
+    it('when classified then SEC-MIGRATION-001 requires migration-safety with one review and no gate', () => {
       const result = classifySecurity({ files: [{ path: migrationPath, status: 'A', added: safe }], sbi: { risks: [], acceptanceCriteria: [] } }, policy);
       assert.ok(result.matchedRules.includes('SEC-MIGRATION-001'));
-      assert.equal(result.requiresPreImplementationGate, true);
-      assert.equal(result.minimumRiskLevel, 3);
-      assert.equal(result.requiredHumanApprovals, 2);
+      assert.equal(result.requiresPreImplementationGate, false);
+      assert.equal(result.minimumRiskLevel, 2);
+      assert.equal(result.requiredHumanApprovals, 1);
       assert.ok(result.requiredVerifiers.includes('migration-safety'));
     });
   });
@@ -148,7 +150,8 @@ describe('migration-safety Security Verifier configuration', () => {
 describe('migration-safety in the execution loop', () => {
   // The database commands need Docker; the loop is exercised with the static step so harness:test stays hermetic.
   const prepare = async (root, content) => {
-    await update(root, '.harness/state/sample-sbi.json', s => { s.allowedFiles.push(migrationPath); s.securityImpact = ['Migration']; });
+    // An SBI Issue that declares a securityImpact is built with minimumRiskLevel 3 (sbi-issue.mjs), so the hand-written SBI declares the same.
+    await update(root, '.harness/state/sample-sbi.json', s => { s.allowedFiles.push(migrationPath); s.securityImpact = ['Migration']; s.minimumRiskLevel = 3; });
     await update(root, '.harness/config/harness.json', c => {
       // Verifier commands run in a container (or, for Harness scripts, as a trusted host process); the host node path does not exist there.
       Object.assign(c.verifiers.find(v => v.id === 'rails'), { isolation: 'container', commands: [['node', '-e', 'process.exit(0)']] });

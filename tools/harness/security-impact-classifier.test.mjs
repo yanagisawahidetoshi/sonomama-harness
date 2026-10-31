@@ -77,7 +77,6 @@ describe('Security Impact Classifier on the scope of application security verifi
       ['SEC-AUTHZ-001', 'rails-authz-test', 'This endpoint requires authorization.'],
       ['SEC-RLS-001', 'rails-rls-test', 'Tenants are isolated with ROW LEVEL SECURITY.'],
       ['SEC-ROLE-001', 'rails-authz-test', 'Each member has a role_id.'],
-      ['SEC-SCHEMA-001', 'migration-safety', 'We will CREATE TABLE invitations.'],
       ['SEC-LIFECYCLE-001', 'data-lifecycle-test', 'Invitations follow the retention policy.'],
       ['SEC-DESTRUCTIVE-001', 'data-lifecycle-test', '招待は本番APIで発行する。'],
     ]) {
@@ -91,6 +90,16 @@ describe('Security Impact Classifier on the scope of application security verifi
         assert.equal(result.requiredVerifiers.includes(verifier), false);
       });
     }
+    // An ordinary schema change is detected and asks for one review; only a destructive operation reaches LEVEL 3 (#157).
+    it('when SEC-SCHEMA-001 matches the prose then asks for one review without requiring migration-safety', () => {
+      const result = assess([{ path: 'docs/adr/0002-foo.md', status: 'A', added: 'We will CREATE TABLE invitations.' }]);
+      assert.ok(detected(result, 'SEC-SCHEMA-001'));
+      assert.equal(result.securitySensitive, true);
+      assert.equal(result.requiresPreImplementationGate, false);
+      assert.equal(result.minimumRiskLevel, 2);
+      assert.equal(result.requiredHumanApprovals, 1);
+      assert.equal(result.requiredVerifiers.includes('migration-safety'), false);
+    });
     it('when it changes then still requires secret-scan and forbidden-pattern-check', () => {
       const result = assess([{ path: 'docs/adr/0002-foo.md', status: 'A', added: 'This endpoint requires authorization.' }]);
       assert.ok(result.requiredVerifiers.includes('secret-scan'));
@@ -220,12 +229,17 @@ describe('Security Impact Classifier on OpenAPI structure names in the API contr
     });
   });
   describe('given the security policy', () => {
-    it('when it is read then only SEC-AUTH-001 ignores content, only the securitySchemes name in the contract test support and only the known Harness contexts (#177)', () => {
+    it('when it is read then only SEC-AUTH-001 has content exceptions: the securitySchemes name in the contract test support, its words in legacy SBIs and Trusted Acceptance, and only the known Harness contexts (#177)', () => {
       for (const rule of policy.rules.filter(r => r.id !== 'SEC-AUTH-001')) assert.equal(rule.contentExceptions, undefined, rule.id);
-      assert.deepEqual(policy.rules.find(r => r.id === 'SEC-AUTH-001').contentExceptions, [
+      const auth = policy.rules.find(r => r.id === 'SEC-AUTH-001');
+      assert.deepEqual(auth.contentExceptions, [
         { pathPatterns: ['^apps/api/spec/support/api_contract/[^/]+\\.rb$'], ignoredPatterns: ['\\bsecuritySchemes\\b'] },
+        { pathPatterns: ['^\\.harness/state/sbi-(?!\\d+\\.json$)[^/]+\\.json$', '^\\.harness/verification/(lib/)?[^/]+\\.mjs$'], ignoredPatterns: auth.contentPatterns },
         { pathPatterns: ['^tools/harness/[^/]+\\.mjs$'], ignoredPatterns: harnessContexts },
       ]);
+    });
+    it('when it is read then only SEC-AUTH-001 ignores the words of a legacy SBI', () => {
+      for (const rule of policy.rules) assert.equal(rule.ignoreLegacySbiMetadata, rule.id === 'SEC-AUTH-001' ? true : undefined, rule.id);
     });
     for (const [field, pattern] of [['ignoredPatterns', '[\\s\\S]*'], ['ignoredPatterns', ''], ['pathPatterns', '^'], ['pathPatterns', '.*']]) {
       it(`when a content exception has ${field} ${JSON.stringify(pattern)} that matches empty text then rejects the policy`, () => {
@@ -348,5 +362,114 @@ describe('Security Impact Classifier on the security requirement of an OpenAPI d
     it('when ApiKey is renamed to PartnerKey then does not match SEC-AUTH-001 until #218 compares the parsed documents', () => {
       assert.equal(detected(assess([{ path: openapi, status: 'M', deleted: `        - ${otherScheme}: []`, added: '        - PartnerKey: []' }]), 'SEC-AUTH-001'), false);
     });
+  });
+});
+
+describe('Security Impact Classifier on a legacy SBI and Trusted Acceptance that only describe authentication (#217)', () => {
+  const legacy = { id: 'SBI-API-ENV', title: 'API開発環境', description: '認証Providerの決定とProvider固有実装を分ける', risks: [],
+    acceptanceCriteria: [{ id: 'API-AC-18', description: 'JWT / Cognito / Firebase等の認証実装をしていない', verifier: 'api-acceptance' }] };
+  const classify = (sbi, legacySbi, files = []) => classifySecurity({ files, sbi, legacySbi }, policy);
+  describe('given a legacy hand-written SBI whose words mention 認証', () => {
+    it('when it is classified as a legacy SBI then does not match SEC-AUTH-001 or require the authentication test', () => {
+      const result = classify(legacy, true);
+      assert.equal(detected(result, 'SEC-AUTH-001'), false);
+      assert.equal(result.requiredVerifiers.includes('authn-test'), false);
+    });
+    it('when the same SBI is not a legacy SBI then still matches SEC-AUTH-001 by its words', () => {
+      assert.ok(detected(classify(legacy, false), 'SEC-AUTH-001'));
+    });
+    it('when the legacy SBI declares SEC-AUTH-001 then still matches it and requires the authentication test', () => {
+      const result = classify({ ...legacy, requiredSecurityRules: ['SEC-AUTH-001'] }, true);
+      assert.ok(detected(result, 'SEC-AUTH-001'));
+      assert.ok(result.requiredVerifiers.includes('authn-test'));
+    });
+    it('when the legacy SBI declares the AuthN impact then still matches SEC-AUTH-001', () => {
+      assert.ok(detected(classify({ ...legacy, securityImpact: ['AuthN'] }, true), 'SEC-AUTH-001'));
+    });
+    it('when its words mention 権限 then still matches SEC-AUTHZ-001, because only SEC-AUTH-001 ignores the words of a legacy SBI', () => {
+      assert.ok(detected(classify({ ...legacy, description: '権限を確認する' }, true), 'SEC-AUTHZ-001'));
+    });
+  });
+  describe('given a legacy SBI or Trusted Acceptance adds authentication words', () => {
+    for (const path of ['.harness/state/sbi-api-env.json', '.harness/verification/api-env.mjs', '.harness/verification/lib/readme.mjs']) {
+      for (const added of ['"description": "JWT / Cognito / Firebase等の認証実装をしていない"', "'Then no JWT, Cognito or Firebase authentication is implemented'", 'bearerAuth oauth2 sign_in authenticate']) {
+        it(`when ${path} adds ${added} then does not match SEC-AUTH-001`, () => {
+          assert.equal(detected(assess([{ path, status: 'M', added }]), 'SEC-AUTH-001'), false);
+        });
+      }
+    }
+    it('when they add authorization then still matches SEC-AUTHZ-001', () => {
+      assert.ok(detected(assess([{ path: '.harness/verification/api-env.mjs', status: 'M', added: '// requires authorization' }]), 'SEC-AUTHZ-001'));
+    });
+    it('when a Trusted Acceptance file is named after authentication then still matches SEC-AUTH-001 by its path', () => {
+      assert.ok(detected(assess([{ path: '.harness/verification/auth-env.mjs', status: 'A', added: 'export {};' }]), 'SEC-AUTH-001'));
+    });
+  });
+  describe('given the same words outside legacy SBIs and Trusted Acceptance', () => {
+    for (const path of ['.harness/state/sbi-12.json', '.harness/verification/fixtures/api-env.mjs', 'apps/api/app/controllers/application_controller.rb', 'tools/harness/api-env.mjs']) {
+      for (const added of ['JWT', 'authentication']) {
+        it(`when ${path} adds ${added} then still matches SEC-AUTH-001`, () => {
+          assert.ok(detected(assess([{ path, status: 'M', added }]), 'SEC-AUTH-001'));
+        });
+      }
+    }
+    it('when a file moves out of Trusted Acceptance with the words then still matches SEC-AUTH-001', () => {
+      const moved = [{ path: 'apps/api/app/lib/auth_words.rb', previousPath: '.harness/verification/api-env.mjs', status: 'R', added: 'authentication', deleted: 'authentication' }];
+      assert.ok(detected(assess(moved), 'SEC-AUTH-001'));
+    });
+  });
+});
+
+// #157: ordinary infrastructure needs one review; only production infrastructure and a change that turns infrastructure more
+// dangerous need two. Only added lines count as the dangerous direction, so narrowing an existing setting stays ordinary.
+describe('Security Impact Classifier on infrastructure', () => {
+  const infra = (path, added, extra = {}) => assess([{ path, status: 'M', added, deleted: '', ...extra }]);
+  const ordinary = result => detected(result, 'SEC-INFRA-001') && !detected(result, 'SEC-PRODINFRA-001') && result.minimumRiskLevel === 2 && result.requiredHumanApprovals === 1;
+  const critical = result => detected(result, 'SEC-PRODINFRA-001') && result.minimumRiskLevel === 3 && result.requiredHumanApprovals === 2;
+  describe('given an infrastructure change outside production that adds nothing dangerous', () => {
+    for (const path of ['live/staging/terragrunt.hcl', 'charts/api/values.yaml', 'cdk/lib/stack.ts', 'infra/staging/main.tf.json', 'environments/staging/main.tf']) {
+      it(`when ${path} changes then it is ordinary infrastructure, not level 1`, () => assert.ok(ordinary(infra(path, 'replicas = 2'))));
+    }
+    it('when the Rails production environment config changes then it is not infrastructure', () => assert.equal(detected(infra('apps/api/config/environments/production.rb', 'config.log_level = :info'), 'SEC-PRODINFRA-001'), false));
+    it('when a module is added in staging then it is ordinary infrastructure at level 2 with one review', () => assert.ok(ordinary(infra('infra/staging/network.tf', 'module "vpc" { source = "./vpc" }'))));
+    it('when tags change then it is ordinary infrastructure', () => assert.ok(ordinary(infra('terraform/modules/db/main.tf', 'tags = { team = "core" }'))));
+    it('when an existing open ingress is narrowed then it stays ordinary', () => assert.ok(ordinary(infra('infra/staging/sg.tf', 'cidr_blocks = ["10.0.0.0/16"]', { deleted: 'cidr_blocks = ["0.0.0.0/0"]' }))));
+    it('when an egress rule opens to everywhere then it stays ordinary', () => assert.ok(ordinary(infra('infra/staging/sg.tf', 'egress {\n  from_port = 0\n  cidr_blocks = ["0.0.0.0/0"]\n}'))));
+    it('when a non-production directory is named non-prod then it stays ordinary', () => assert.ok(ordinary(infra('infra/non-prod/main.tf', 'replicas = 1'))));
+    it('when an ingress description names an egress block then the open ingress is still critical', () => assert.ok(critical(infra('infra/staging/sg.tf', 'ingress {\n  description = "allow egress {"\n  cidr_blocks = ["0.0.0.0/0"]\n}'))));
+    it('when a document only mentions a dangerous setting then it is not infrastructure at all', () => assert.equal(detected(infra('docs/product/notes.md', 'Never set force_destroy = true.'), 'SEC-PRODINFRA-001'), false));
+  });
+  describe('given a change to production infrastructure', () => {
+    for (const path of ['infra/production/main.tf', 'terraform/envs/prod/main.tf', 'terraform/envs/prod.tfvars', 'k8s/overlays/production/deployment.yaml', 'deploy/prod/app.yaml',
+      'environments/prod/main.tf', 'infra/prd/main.tf', 'live/prod/terragrunt.hcl', 'charts/api/values-production.yaml', '.github/workflows/deploy-production.yml']) {
+      it(`when ${path} changes then it is critical at level 3 with two reviews`, () => assert.ok(critical(infra(path, 'replicas = 3'))));
+    }
+  });
+  describe('given an infrastructure change that turns a setting dangerous', () => {
+    for (const [name, added] of [
+      ['destroy protection is turned off', 'lifecycle { prevent_destroy = false }'],
+      ['deletion protection is turned off', 'deletion_protection = false'],
+      ['force destroy is turned on', 'force_destroy = true'],
+      ['the final snapshot is skipped', 'skip_final_snapshot = true'],
+      ['an IAM policy allows every action', 'actions = ["*"]'],
+      ['an IAM policy statement allows every resource', '"Resource": "*"'],
+      ['an ingress opens to every IPv4 address', 'ingress {\n  from_port = 22\n  cidr_blocks = ["0.0.0.0/0"]\n}'],
+      ['an ingress opens to every IPv6 address', 'ipv6_cidr_blocks = ["::/0"]'],
+      ['one element of a multi-line IAM list becomes every action', '    "*",'],
+      ['an IAM list gains every action after another one', 'actions = ["s3:GetObject", "*"]'],
+      ['a YAML policy allows every resource', "Resource: '*'"],
+      ['a Kubernetes role allows every resource', 'resources:\n  - "*"'],
+      ['CloudFormation turns deletion protection off', 'DeletionProtection: false'],
+    ]) {
+      it(`when ${name} outside production then it is critical`, () => assert.ok(critical(infra('infra/staging/main.tf', added))));
+    }
+    for (const [name, deleted] of [
+      ['destroy protection is removed', 'lifecycle { prevent_destroy = true }'],
+      ['deletion protection is removed', 'deletion_protection = true'],
+    ]) {
+      it(`when ${name} outside production then it is critical`, () => assert.ok(critical(infra('infra/staging/main.tf', '', { deleted }))));
+    }
+    it('when deletion protection is turned on then it stays ordinary', () => assert.ok(ordinary(infra('infra/staging/main.tf', 'deletion_protection = true', { deleted: 'deletion_protection = false' }))));
+    it('when an infrastructure file is binary then it cannot be inspected and is critical', () => assert.ok(critical(infra('infra/staging/state.bin', '', { binary: true }))));
   });
 });
