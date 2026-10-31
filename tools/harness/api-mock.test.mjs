@@ -12,7 +12,7 @@ import { planApiSchema, approvedLabel } from './api-schema-planner.mjs';
 import { recordApiSchemaDecision } from './api-schema-approval.mjs';
 import { githubCli } from './planner-github.mjs';
 import { parseIssueUrl } from './planner.mjs';
-import { startApiMock, mockSchemaPath } from './api-mock.mjs';
+import { startApiMock, mockSchemaPath, waitForApiMock, stopApiMock } from './api-mock.mjs';
 import { checkApiMock, dummyBearer, mockEnvironment } from './api-mock-check.mjs';
 
 const issueUrl = 'https://github.com/acme/app/issues/12';
@@ -163,19 +163,16 @@ describe('API Mock Server', () => {
 
   describe('given Prism serving an approved OpenAPI', () => {
     const freePort = () => new Promise(resolve => { const server = createServer().listen(0, '127.0.0.1', () => { const { port } = server.address(); server.close(() => resolve(port)); }); });
+    // Assertions start only once Prism answers HTTP, and the next test starts only after this Prism has exited.
     async function serving(root, test) {
       await approved(root);
       const port = await freePort();
-      let child;
-      const spawner = (command, args, options) => { child = spawn(command, args, { ...options, stdio: 'ignore' }); return child; };
-      await startApiMock({ root, issueUrl, spawner, port });
-      const base = `http://127.0.0.1:${port}`;
+      const spawner = (command, args, options) => spawn(command, args, { ...options, stdio: ['ignore', 'ignore', 'pipe'] });
+      const mock = await startApiMock({ root, issueUrl, spawner, port });
       try {
-        for (let i = 0; ; i++) {
-          try { await fetch(`${base}/api/v1/courses`); break; } catch (error) { if (i > 100) throw error; await new Promise(r => setTimeout(r, 100)); }
-        }
-        await test(base);
-      } finally { child?.kill(); }
+        await waitForApiMock(mock);
+        await test(mock.url);
+      } finally { await stopApiMock(mock.child); }
     }
     it('when a client calls the authenticated endpoint without a bearer token then responds 401 with the shared Error schema', () => fixture(root => mockGitHub({}, () => serving(root, async base => {
       const res = await fetch(`${base}/api/v1/me/profile`);
@@ -203,6 +200,73 @@ describe('API Mock Server', () => {
     it('when a client calls a path outside the OpenAPI then responds 404', () => fixture(root => mockGitHub({}, () => serving(root, async base => {
       assert.equal((await fetch(`${base}/api/v1/unknown`)).status, 404);
     }))));
+  });
+});
+
+// #203: a Prism that dies, hangs or is still stopping must surface as such, never as a bare "fetch failed" of a later request.
+describe('Prism lifecycle', () => {
+  const node = (script, stdio = ['ignore', 'ignore', 'pipe']) => spawn(process.execPath, ['-e', script], { stdio });
+  const closedPort = () => new Promise(resolve => { const server = createServer().listen(0, '127.0.0.1', () => { const { port } = server.address(); server.close(() => resolve(port)); }); });
+  describe('given a Prism that exits before it listens', () => {
+    it('when waiting for it then rejects at once with the exit code and its stderr instead of fetch failed', async () => {
+      const child = node('console.error("listen EADDRINUSE: address already in use"); process.exit(3)');
+      const started = Date.now();
+      await assert.rejects(waitForApiMock({ url: `http://127.0.0.1:${await closedPort()}`, child, timeoutMs: 20000 }), error => {
+        assert.match(error.message, /ready前に終了/);
+        assert.match(error.message, /exit 3/);
+        assert.match(error.message, /EADDRINUSE/);
+        assert.doesNotMatch(error.message, /fetch failed/);
+        return true;
+      });
+      assert.ok(Date.now() - started < 10000, 'does not wait for the timeout');
+    });
+  });
+  describe('given a Prism command that cannot be spawned', () => {
+    it('when waiting for it then rejects with the spawn error', async () => {
+      const child = spawn('/nonexistent/prism', [], { stdio: ['ignore', 'ignore', 'pipe'] });
+      await assert.rejects(waitForApiMock({ url: `http://127.0.0.1:${await closedPort()}`, child, timeoutMs: 20000 }), /Prismを起動できません[\s\S]*ENOENT/);
+    });
+  });
+  describe('given a Prism that keeps running without listening', () => {
+    it('when the ready timeout passes then rejects naming the timeout, the URL and its stderr', async () => {
+      const child = node('console.error("still loading the OpenAPI"); setInterval(() => {}, 1000)');
+      const url = `http://127.0.0.1:${await closedPort()}`;
+      try {
+        await assert.rejects(waitForApiMock({ url, child, timeoutMs: 500 }), error => {
+          assert.match(error.message, /500ms以内にreadyになりません/);
+          assert.ok(error.message.includes(url));
+          assert.match(error.message, /still loading the OpenAPI/);
+          return true;
+        });
+      } finally { await stopApiMock(child); }
+    });
+  });
+  describe('given a Prism that answers HTTP', () => {
+    it('when waiting for it then resolves once it listens', async () => {
+      const port = await closedPort();
+      const child = node(`setTimeout(() => require('node:http').createServer((q, s) => s.end()).listen(${port}, '127.0.0.1'), 300)`);
+      try { await waitForApiMock({ url: `http://127.0.0.1:${port}`, child, timeoutMs: 20000 }); }
+      finally { await stopApiMock(child); }
+    });
+  });
+  describe('given a running Prism', () => {
+    it('when it is stopped then resolves only after the process has exited', async () => {
+      const child = node('setInterval(() => {}, 1000)');
+      await new Promise(resolve => child.once('spawn', resolve));
+      await stopApiMock(child);
+      assert.ok(child.exitCode !== null || child.signalCode !== null);
+    });
+    it('when it ignores SIGTERM then it is killed with SIGKILL and stop still resolves', async () => {
+      const child = node('process.on("SIGTERM", () => {}); console.error("ready"); setInterval(() => {}, 1000)', ['ignore', 'ignore', 'pipe']);
+      await new Promise(resolve => child.stderr.once('data', resolve));
+      await stopApiMock(child, { graceMs: 300 });
+      assert.equal(child.signalCode, 'SIGKILL');
+    });
+    it('when it has already exited then resolves at once', async () => {
+      const child = node('process.exit(0)');
+      await new Promise(resolve => child.once('close', resolve));
+      await stopApiMock(child);
+    });
   });
 });
 
