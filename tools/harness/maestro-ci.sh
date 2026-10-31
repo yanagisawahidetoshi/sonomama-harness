@@ -2,13 +2,15 @@
 # Runs the Maestro lanes inside the CI Android Emulator (called by the maestro job in .github/workflows/harness.yml).
 # Usage: tools/harness/maestro-ci.sh <apk> <head sha> <lane>...
 # mock: Prism serves the approved packages/api-schema/openapi.yaml. real: Rails and the database run from compose.yaml.
-# Each lane writes .maestro-ci/results/<lane>.json (the Completion Judge reads it) and keeps the JUnit report, logs and screenshots
-# under .maestro-ci/evidence/<lane>. Any lane that cannot start or fails makes the script exit non-zero; its result file still says why.
+# Each lane writes $MAESTRO_CI_OUT/results/<lane>.json (the Completion Judge reads it) and keeps the JUnit report, logs and screenshots
+# under $MAESTRO_CI_OUT/evidence/<lane>. CI points MAESTRO_CI_OUT outside the checkout (#188); locally it defaults to .maestro-ci. Any lane that cannot start or fails makes the script exit non-zero; its result file still says why.
 set -uo pipefail
 apk=$1 head=$2
 shift 2
-out=.maestro-ci
+out=${MAESTRO_CI_OUT:-.maestro-ci}
 mkdir -p "$out/results" "$out/evidence"
+# Absolute, so the Metro log path stays right after cd apps/mobile.
+out=$(cd "$out" && pwd)
 status=0
 adb install -r "$apk" || exit 1
 
@@ -41,7 +43,7 @@ for lane in "$@"; do
   esac
   if $started; then
     # Metro serves the JavaScript of this commit; the API base URL is read at bundle time, so each lane gets its own Metro.
-    (cd apps/mobile && CI=1 EXPO_PUBLIC_API_BASE_URL=$api npx expo start --dev-client --port 8081 > "../../$evidence/metro.log" 2>&1) &
+    (cd apps/mobile && CI=1 EXPO_PUBLIC_API_BASE_URL=$api npx expo start --dev-client --port 8081 > "$evidence/metro.log" 2>&1) &
     metro=$!
     wait_for http://127.0.0.1:8081/status 90 || started=false
   fi

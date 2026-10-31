@@ -5,7 +5,7 @@ import { exportRun } from './review-export.mjs';
 import { planIssue } from './planner.mjs';
 import { planApiSchema } from './api-schema-planner.mjs';
 import { recordApiSchemaDecision, apiSchemaApprovalStatus } from './api-schema-approval.mjs';
-import { startApiMock } from './api-mock.mjs';
+import { startApiMock, waitForApiMock } from './api-mock.mjs';
 import { startApiDocs } from './api-docs.mjs';
 import { relativePath } from './schemas.mjs';
 import { describeImpact, describeJudge, loadImpact, runCompletionJudge, runVerifier } from './impact.mjs';
@@ -137,6 +137,7 @@ try {
   } else if (command === 'api-mock') {
     if (!positional) throw new Error('api-mock requires a GitHub Issue URL: api-mock https://github.com/<owner>/<repo>/issues/<number>');
     const mock = await startApiMock({ root, issueUrl: positional, dynamic: options['--dynamic'] === true });
+    await waitForApiMock(mock);
     console.log(`API Mock: ${mock.url} (${mock.schemaPath} digest=${mock.digest})`);
     process.exitCode = await new Promise(resolve => mock.child.on('exit', code => resolve(code ?? 0)).on('error', () => resolve(1)));
   } else if (command === 'api-docs') {
