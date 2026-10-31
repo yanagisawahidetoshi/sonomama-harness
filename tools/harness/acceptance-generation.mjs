@@ -33,7 +33,7 @@ const answerSchema = z.strictObject({
 });
 export const generationResponseSchema = z.toJSONSchema(answerSchema);
 
-function prompt(spec) {
+function prompt(spec, feedback = []) {
   return [
     'あなたはTrusted Acceptance（受け入れ判定用のテスト）の生成担当です。実装はしません。ファイルは書かず、JSONだけを返してください。',
     `対象: SBI Issue #${spec.sbiIssue} ${spec.title}（Rails の request spec）`,
@@ -42,6 +42,8 @@ function prompt(spec) {
     'Gherkin:', spec.gherkin,
     '規則: 全てのACと全てのScenarioを、実在するexampleに対応させる。各exampleはThenの期待結果をexpectで確かめる。skip・pending・focus・定数どうしのexpect・検証対象（Policy・Controller等）のstubは使わない。',
     '仕様が曖昧で判定できない場合は、files と mapping を空にし、escalation に理由を書く。',
+    // A regeneration after detection (G) failed: the approved spec stays the source of truth; the reasons only say what was not proven.
+    ...(feedback.length ? ['前回生成したテストは検出（G）を満たしませんでした。上の承認済み仕様を正本として、テストを作り直してください。assertionの削除・期待値の緩和・skip・固定値化はしない。', ...feedback.map(f => `- ${f}`)] : []),
   ].join('\n');
 }
 
@@ -68,13 +70,13 @@ async function throughSymlink(root, path) {
   return false;
 }
 
-export async function generateAcceptance({ workspace, issue, provider, runId, agent }) {
+export async function generateAcceptance({ workspace, issue, provider, runId, agent, feedback = [] }) {
   const spec = approvedSpec(issue);
   const reject = findings => ({ status: 'REJECTED', findings });
   if (!spec.digest || !spec.acceptanceCriteria.length || !spec.scenarios.length) return reject([{ path: '(spec)', message: 'the approved spec has no spec digest, acceptance criteria or Scenario the Harness can read; fix the SBI Issue format before generating' }]);
   const existing = await readFile(join(workspace, acceptancePath(spec.sbiIssue)), 'utf8').catch(() => null);
   if (existing !== null && JSON.parse(existing)?.version !== 2) return reject([{ path: acceptancePath(spec.sbiIssue), message: 'a hand-written version 1 registration exists; generation does not overwrite it' }]);
-  const parsed = answerSchema.safeParse(await agent({ prompt: prompt(spec), schema: generationResponseSchema }));
+  const parsed = answerSchema.safeParse(await agent({ prompt: prompt(spec, feedback), schema: generationResponseSchema }));
   if (!parsed.success) return reject([{ path: '(answer)', message: `the generation agent answer does not match the schema: ${parsed.error.issues.map(i => `${i.path.join('.')} ${i.message}`).join(', ')}` }]);
   const reply = parsed.data;
   if (reply.escalation) return { status: 'ESCALATED', reason: reply.escalation };
