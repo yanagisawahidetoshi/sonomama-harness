@@ -7,13 +7,16 @@ import { resumeRun, judge } from './index.mjs';
 import { recordDecision } from './human-approvals.mjs';
 import { mergeDecision } from './merge-policy.mjs';
 import { readJson } from './io.mjs';
+import { runAiReview } from './ai-review.mjs';
+import { providerAiReviewer } from './agents/ai-review-adapter.mjs';
 // #175: a human approved the SBI (its Risk, Security Impact and scope), so the Harness implements it without another Human Gate.
 // Humans come back only after implementation (merge review by Risk) or when a new decision the SBI cannot settle appears.
 const sbiPath = '.harness/state/sample-sbi.json';
 const good = 'export function greet(name) { return `こんにちは、${name?.trim() || "ゲスト"}さん`; }';
 const agent = (content = good) => async () => ({ files: [{ path: 'greeting.mjs', content }] });
 const rlsVerifier = root => update(root, '.harness/config/harness.json', c => c.securityVerifiers = [{ id: 'rails-rls-test', directory: 'apps/api', commands: [['node', '-e', 'require("node:assert/strict").ok(true)']] }]);
-const review = (result, name = 'test-adapter') => async () => ({ adapter: name, ...result });
+// A connected adapter reviews the SHA it is given (#187).
+const review = (result, name = 'test-adapter') => async ({ headSha }) => ({ adapter: name, headSha, ...result });
 const docsSbi = async root => {
   await update(root, sbiPath, s => {
     // #157: LEVEL 1 is the default and an SBI declares its own level; there is no docs-only safe rule any more.
@@ -272,6 +275,57 @@ describe('A decision the approved SBI cannot settle goes back to a human', () =>
       assert.equal(resumed.status, 'ESCALATED');
       assert.equal(resumed.iterations.length, run.iterations.length);
       assert.equal(called, false);
+    }));
+  });
+});
+
+describe('AI Review result bound to the reviewed SHA (#187)', () => {
+  const head = 'a'.repeat(40);
+  const reviewed = { headSha: head };
+  describe('given a connected adapter', () => {
+    it('when its review is for another SHA then AI Review fails', async () => {
+      const result = await runAiReview({ provider: 'codex', semanticReviewer: async () => ({ adapter: 'codex', headSha: 'c'.repeat(40), status: 'PASS', reasons: [] }), input: reviewed });
+      assert.equal(result.status, 'FAIL');
+    });
+    it('when its review names no SHA then AI Review fails', async () => {
+      const result = await runAiReview({ provider: 'codex', semanticReviewer: async () => ({ adapter: 'codex', status: 'PASS', reasons: [] }), input: reviewed });
+      assert.equal(result.status, 'FAIL');
+    });
+    it('when a real provider run gets a review from the fake adapter then AI Review fails', async () => {
+      const result = await runAiReview({ provider: 'claude', semanticReviewer: async () => ({ adapter: 'fake', headSha: head, status: 'PASS', reasons: [] }), input: reviewed });
+      assert.equal(result.status, 'FAIL');
+    });
+  });
+  describe('given the real adapter over a provider CLI that passes the head SHA it was shown', () => {
+    const answering = sha => providerAiReviewer({ run: async (_command, _args, { input }) => ({ ok: true, code: 0, stderr: '',
+      stdout: JSON.stringify({ is_error: false, structured_output: { headSha: sha ?? input.match(/"headSha": "([0-9a-f]{40})"/)[1], status: 'PASS', riskLevel: 1, reasons: ['matches the SBI'] } }) }) });
+    it('when an approved level 1 SBI passes every required check then the run is auto merge eligible', () => fixture(async root => {
+      const docs = await docsSbi(root);
+      const run = await runHarness({ root, quiet: true, provider: 'claude', agent: docs, semanticReviewer: answering() });
+      assert.equal(run.iterations.at(-1).semanticReview.adapter, 'claude');
+      assert.equal(run.risk.level, 1);
+      assert.equal(run.status, 'MERGE_ALLOWED');
+      assert.equal(run.merge.autoMergeEligible, true);
+    }));
+    it('when the CLI answers for another SHA then the run is never DONE nor auto merge eligible', () => fixture(async root => {
+      const docs = await docsSbi(root);
+      const run = await runHarness({ root, quiet: true, provider: 'claude', agent: docs, semanticReviewer: answering('c'.repeat(40)) });
+      assert.notEqual(run.executionStatus, 'DONE');
+      assert.equal(run.merge.autoMergeEligible, false);
+    }));
+    it('when Codex implemented the run then Claude reviews it and the run is auto merge eligible', () => fixture(async root => {
+      const docs = await docsSbi(root);
+      const run = await runHarness({ root, quiet: true, provider: 'codex', agent: docs, semanticReviewer: answering() });
+      assert.equal(run.iterations.at(-1).semanticReview.adapter, 'claude');
+      assert.equal(run.merge.autoMergeEligible, true);
+    }));
+    it('when the run uses the fake provider then the fake adapter reviews it and no CLI runs', () => fixture(async root => {
+      let called = 0;
+      const real = providerAiReviewer({ run: async () => { called++; throw new Error('no CLI in a fake run'); } });
+      const run = await runHarness({ root, quiet: true, agent: agent(), semanticReviewer: real });
+      assert.equal(called, 0);
+      assert.equal(run.iterations.at(-1).semanticReview.adapter, 'fake');
+      assert.equal(run.iterations.at(-1).semanticReview.status, 'PASS');
     }));
   });
 });

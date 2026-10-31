@@ -182,7 +182,8 @@ async function verifyHead({ root, summary, inputs, result, iterDir, iteration, r
     await transition('REVIEWING', `iteration ${iteration}`);
     result.review = redact(await reviewer({ root, workspace, sbi, rules, verification: result.verification, files }));
     await json(join(iterDir, 'review.json'), result.review);
-    result.semanticReview = redact(await runAiReview({ provider: summary.provider, semanticReviewer, input: { root, workspace, sbi, verification: result.verification } }));
+    result.semanticReview = redact(await runAiReview({ provider: summary.provider, semanticReviewer, input: { root, workspace, sbi, verification: result.verification, provider: summary.provider,
+      headSha: summary.headSha, baselineSha: summary.baselineSha, files, timeoutMs: config.timeoutMs } }));
     await json(join(iterDir, 'semantic-review.json'), result.semanticReview);
     await transition('JUDGING', `iteration ${iteration}`);
     result.completion = judge(result, sbi);

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { startsWith } from './lib/commands.mjs';
+import { assertAuthSection } from './lib/readme.mjs';
 // Trusted acceptance for SBI-API-ENV (#21). Reads the worktree only; the rails application verifier runs Docker.
 const root = process.argv[2];
 const app = join(root, 'apps/api');
@@ -120,7 +121,8 @@ try {
       const readme = read('apps/api/README.md');
       for (const term of ['Ruby 3.4', 'Rails 8.1', 'PostgreSQL', 'docker compose build api', 'docker compose up api db', 'docker compose up -d db',
         'db:prepare', 'bundle exec rspec', 'bundle exec rubocop', 'bundle exec brakeman', 'bundler-audit', 'bash', 'down -v',
-        'packages/api-schema/openapi.yaml', '未決定', 'committee-rails', 'OpenAPI 3.1']) assert.ok(readme.includes(term), term);
+        'packages/api-schema/openapi.yaml', 'committee-rails', 'OpenAPI 3.1']) assert.ok(readme.includes(term), term);
+      assertAuthSection(readme);
       assert.ok(existsSync(join(root, '.env.example')) || existsSync(join(app, '.env.example')), '.env.example');
     }],
   ];
