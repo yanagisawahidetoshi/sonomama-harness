@@ -148,11 +148,13 @@ export async function changedSbis(root, files) {
   return (await readSbiFiles(root, files)).sbis;
 }
 
-export async function loadImpact({ root, base, all = false }) {
-  const files = all ? [] : await changedFiles(root, base);
-  const { sbis, snapshots } = await readSbiFiles(root, files);
+// The config and rules come from root; the diff and the SBI JSON from workspace. They are one tree except in the trusted Judge (ADR-0008),
+// where root is main and workspace the PR head read as data.
+export async function loadImpact({ root, workspace = root, base, all = false }) {
+  const files = all ? [] : await changedFiles(workspace, base);
+  const { sbis, snapshots } = await readSbiFiles(workspace, files);
   // Each Run snapshot brings the Trusted Acceptance of its own SBI Issue only (.harness/acceptance/sbi-<N>.json).
-  const config = await withAcceptance(root, configSchema.parse(await readJson(join(root, '.harness/config/harness.json'))), snapshots.map(s => s.snapshot.source.number));
+  const config = await withAcceptance(root, configSchema.parse(await readJson(join(root, '.harness/config/harness.json'))), snapshots.map(s => s.snapshot.source.number), workspace);
   return { config, files, sbis, snapshots, impact: analyzeImpact({ config, sbis, runSbis: snapshots.map(s => s.snapshot.sbi), files, all }) };
 }
 
@@ -200,9 +202,9 @@ async function changedContent(root, files) {
 // Completion Judge: trusted acceptance of every changed SBI and the Harness Security Policy run here. An ambiguous Production diff must be backed
 // by a ready SBI Run snapshot; an engineering diff needs none (ADR-0006).
 // expectedHeadSha is the head the workflow checked out; the CLI always passes it, so a missing value fails there.
-export async function runCompletionJudge({ root, base, all = false, needs, repository = process.env.GITHUB_REPOSITORY, pullNumber, github = githubCli, githubPr, maestroResults, expectedHeadSha, acceptanceResults = join(root, acceptanceResultsDirectory) }) {
-  const { config, files, sbis, snapshots, impact } = await loadImpact({ root, base, all });
-  const headSha = (await git(root, ['rev-parse', 'HEAD'])).stdout.trim();
+export async function runCompletionJudge({ root, workspace = root, base, all = false, needs, repository = process.env.GITHUB_REPOSITORY, pullNumber, github = githubCli, githubPr, maestroResults, expectedHeadSha, acceptanceResults = join(root, acceptanceResultsDirectory) }) {
+  const { config, files, sbis, snapshots, impact } = await loadImpact({ root, workspace, base, all });
+  const headSha = (await git(workspace, ['rev-parse', 'HEAD'])).stdout.trim();
   // The Issue is read once for the generated acceptance and the SBI source check, so both judge the same Issue.
   const issues = new Map();
   const issueGithub = { ...github, fetchIssue: ref => {
@@ -220,7 +222,7 @@ export async function runCompletionJudge({ root, base, all = false, needs, repos
       try { generatedSpecDigest = specDigest(await issueGithub.fetchIssue({ owner, repo, number: snapshot.source.number })); }
       catch (error) { generatedSpecError = `SBI Issue ${snapshot.source.url} could not be read, so the spec digest cannot be checked (${error.message})`; }
     }
-    const result = await verify({ root, workspace: root, config, sbi, files, only: new Set(sbi.acceptanceCriteria.map(a => a.verifier)), generatedSpecDigest, generatedSpecError,
+    const result = await verify({ root, workspace, config, sbi, files, only: new Set(sbi.acceptanceCriteria.map(a => a.verifier)), generatedSpecDigest, generatedSpecError,
       acceptanceRunner: ({ sbiIssue }) => readAcceptanceResult({ dir: acceptanceResults, sbiIssue, headSha }) });
     checks.push(...result.checks);
     missing.push(...sbi.acceptanceCriteria.filter(a => !result.acceptance.includes(a.id)).map(a => a.id));
@@ -231,7 +233,7 @@ export async function runCompletionJudge({ root, base, all = false, needs, repos
   const assessment = combineSecurity(classifySecurity({ files }, policy), ...sbis.map(sbi => classifySecurity({ files, sbi, legacySbi: !snapshots.some(s => s.snapshot.sbi === sbi) }, policy)));
   // Application verifiers an SBI requires ran in the matrix job, which succeeds only when every one of them passed.
   const matrix = impact.requiredVerifiers.map(id => ({ id, status: needs.verifiers?.result === 'success' ? 'PASS' : 'FAIL', reason: `verifier matrix: ${needs.verifiers?.result ?? 'missing'}` }));
-  const security = await verifySecurity({ workspace: root, sbi: {}, assessment, policy, config, headSha, verification: { checks: [...checks, ...matrix] }, changed: await changedContent(root, files) });
+  const security = await verifySecurity({ workspace, sbi: {}, assessment, policy, config, headSha, verification: { checks: [...checks, ...matrix] }, changed: await changedContent(workspace, files) });
   // A trusted bot's dependency PR lifts the source requirement only; everything above and judgeCi stay as they are.
   const exemption = impact.sbiRequired && pullNumber !== undefined
     ? await dependencyBotExemption({ policy: dependencyBotPolicySchema.parse(await readJson(join(root, '.harness/rules/dependency-bots.json'))), files, headSha, repository, pullNumber, github })
@@ -240,11 +242,11 @@ export async function runCompletionJudge({ root, base, all = false, needs, repos
   // while the Run trailers alone are no source and never change the change type. A legacy hand-written SBI is not a snapshot (#217).
   const snapshotChanged = files.some(f => snapshotFilePattern.test(f.path));
   const required = exemption?.exempt ? [] : impact.sbiRequiredReasons.length ? impact.sbiRequiredReasons : snapshotChanged ? ['sbi-snapshot'] : [];
-  const verified = await verifySbiSource({ root, base, files, required, config, repository, github: issueGithub });
+  const verified = await verifySbiSource({ root: workspace, base, files, required, config, repository, github: issueGithub });
   const source = { ...verified, ...(exemption ? { exemption } : {}) };
   // A destructive migration that migration-safety let through as an exception request still needs two reviews on headSha.
   const migrationExceptions = all ? { status: 'PASS', exceptions: [], reasons: [] }
-    : await verifyMigrationExceptions({ root, base, files, headSha, repository, pullNumber, ...(githubPr ? { githubPr } : {}) });
+    : await verifyMigrationExceptions({ root: workspace, base, files, headSha, repository, pullNumber, ...(githubPr ? { githubPr } : {}) });
   // The Run snapshot and the generated Trusted Acceptance are in the Harness PR, so only the files the implementation changed count against the SBI Issue's estimate.
   const changedPaths = files.map(f => f.path).filter(path => !snapshotFilePattern.test(path) && !snapshots.some(s => isGeneratedRegistrationPath(path, s.snapshot.sbi)));
   const granularity = snapshots.filter(s => s.snapshot.sbi.kind === 'implementation')
