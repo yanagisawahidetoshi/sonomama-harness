@@ -651,6 +651,27 @@ describe('CI workflow setup', () => {
     });
   });
 
+  // harness:test became the longest job of a Full Gate run once the demo was scoped down (#192): 446 of its 470 seconds were the test
+  // run itself. node --test parallelises over files, never inside one, and two files hold 440 of the 1135 seconds the files sum to, so
+  // one runner cannot finish faster than its longest file. The files are split over runners, and the shards together run the suite once.
+  describe('given the Harness test suite on the critical path of the Full Gate', () => {
+    it('when the Full Gate runs then the test files are split over runners that each run the whole command', () => {
+      const job = workflow.jobs['harness-test'];
+      assert.equal(job.strategy['fail-fast'], false);
+      assert.deepEqual(job.strategy.matrix.shard, [1, 2, 3]);
+      assert.equal(job.env.HARNESS_TEST_SHARD, '${{ matrix.shard }}/${{ strategy.job-total }}');
+      assert.deepEqual(runs('harness-test').filter(r => r.startsWith('pnpm harness:')), ['pnpm harness:test']);
+    });
+
+    it('when harness:test runs without a shard then it runs every test file, so the push gate and a local run are unchanged', async () => {
+      const { scripts } = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
+      assert.match(scripts['harness:test'], /^node --test \$\{HARNESS_TEST_SHARD:\+--test-shard=\$HARNESS_TEST_SHARD\} /);
+      for (const glob of ['tools/harness/*.test.mjs', 'tools/harness/agents/*.test.mjs', '.harness/verification/*.test.mjs', '.harness/verification/lib/*.test.mjs']) {
+        assert.ok(scripts['harness:test'].includes(glob), glob);
+      }
+    });
+  });
+
   // A pull_request run reads this workflow from the merge ref but checks out the Harness of the PR head. In runs 40984230168 and
   // 40985538230 (#163) the head was branched before the maestro job existed: its impact reported no maestro output, the job still ran
   // and failed, and the head's Judge, which did not know the job, passed.

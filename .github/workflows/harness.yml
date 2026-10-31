@@ -76,11 +76,18 @@ jobs:
           name: acceptance-results-${{ matrix.verifier }}
           path: ${{ runner.temp }}/acceptance-results
           if-no-files-found: ignore
+  # node --test parallelises over files, so the two longest files set the floor of a single runner (#197). The files are split over runners instead.
   harness-test:
     needs: impact
     if: needs.impact.outputs.full_gate == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    env:
+      HARNESS_TEST_SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
