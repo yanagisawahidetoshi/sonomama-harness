@@ -1,16 +1,18 @@
 import { createHash } from 'node:crypto';
 import { sections } from './sbi-issue.mjs';
-import { parseIssueUrl } from './planner.mjs';
+import { parseIssueUrl, markerPattern } from './planner.mjs';
 import { commentApprovals } from './github-approval-records.mjs';
 // #147: a human confirms the specification of an SBI Issue by posting `harness-spec: <spec digest>` on the Issue. This is the source of truth;
 // the spec-approved label is only a projection. The digest covers what decides the tests and, since #194, everything the run gives the Agent or
-// uses for Risk and Security (the title, 目的, 種類, 想定変更ファイル数, 検証方法), so editing any of it voids earlier approvals; ticking a checkbox does not.
-const specSections = ['目的', '種類', '受け入れ要件', 'Gherkin', '想定変更範囲', '想定変更ファイル数', 'Risk / Security Impact', '検証方法'];
+// uses for Risk, Security, its scope and its start (the title, the Planner marker, 目的, 種類, 依存SBI, 想定変更ファイル数, 検証方法), so editing any
+// of it voids earlier approvals; ticking a checkbox does not. ADR-0005 lists the same items (specDigestItems).
+const specSections = ['目的', '種類', '受け入れ要件', 'Gherkin', '依存SBI', '想定変更範囲', '想定変更ファイル数', '検証方法', 'Risk / Security Impact'];
+export const specDigestItems = ['title', 'Planner marker', ...specSections];
 
 export function specDigest({ title, body }) {
   const parts = sections(body);
   if (!parts.has('Gherkin') || typeof title !== 'string') return null;
-  const normalized = [`# ${title.trim()}`, ...specSections.map(name => {
+  const normalized = [`# ${title.trim()}`, markerPattern.exec(String(body ?? ''))?.[0] ?? '', ...specSections.map(name => {
     const lines = (parts.get(name) ?? []).map(l => l.replace(/\s+$/, '').replace(/^(\s*- )\[[xX]\]/, '$1[ ]'));
     while (lines.length && !lines[0]) lines.shift();
     while (lines.length && !lines.at(-1)) lines.pop();

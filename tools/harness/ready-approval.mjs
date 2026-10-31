@@ -23,6 +23,12 @@ export function readyBinding({ url, issue, timeline, history }) {
   const ready = latestReady(timeline);
   if (!ready) return [`${url} has no dated labeled event for ready, so the content ready approved is unknown`];
   const readyAt = time(ready.created_at), since = new Date(readyAt).toISOString(), reasons = [], { lastEditedAt, edits } = history;
+  // The ready the Issue carries now must be the one the latest labeled event added: not removed since (the same second counts as after),
+  // still on the Issue, and not another label renamed to ready (GitHub records no event for a rename; the color is the trace it leaves).
+  const current = (issue.labels ?? []).find(l => l.name === 'ready');
+  if (timeline.some(e => e.event === 'unlabeled' && e.label?.name === 'ready' && after(e.created_at, readyAt))) reasons.push(`${url} ready was removed after it was added at ${since}; add ready again`);
+  if (!current) reasons.push(`${url} has no ready label now, so the labeled event at ${since} approves nothing`);
+  else if (current.color && ready.label?.color && current.color !== ready.label.color) reasons.push(`${url} ready label is not the one added at ${since} (color ${ready.label.color} → ${current.color}); add ready again`);
   // An empty connection is "never edited" only when GitHub also reports no last edit; a permission problem can return it empty.
   if (lastEditedAt != null && !edits.length) reasons.push(`${url} edit history is empty although GitHub reports an edit at ${lastEditedAt}; review the Issue and add ready again`);
   if (edits.some(e => after(e.editedAt, readyAt)) || (lastEditedAt != null && after(lastEditedAt, readyAt))) reasons.push(`${url} body was edited after ready was added at ${since}; review the Issue and add ready again`);
