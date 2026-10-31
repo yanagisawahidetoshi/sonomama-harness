@@ -128,7 +128,7 @@ export const aiReviewJsonSchema = {
   type: 'object', additionalProperties: false, required: ['headSha', 'status', 'riskLevel', 'reasons'],
   properties: {
     headSha: { type: 'string' }, status: { type: 'string', enum: ['PASS', 'FAIL'] }, riskLevel: { type: 'integer', enum: [1, 2, 3] },
-    reasons: { type: 'array', items: { type: 'string' } },
+    reasons: { type: 'array', maxItems: 20, items: { type: 'string', maxLength: 500 } },
   },
 };
 
