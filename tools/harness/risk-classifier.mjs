@@ -1,7 +1,7 @@
 import { riskPolicySchema } from './schemas.mjs';
 
 // LEVEL 1 is the default (#157). Rules only raise the level, and the highest floor any of them sets wins.
-export function assessRisk({ files = [], metadata = {}, humanGate = false, aiRisk = null, securityAssessment = null, lane = null }, rawPolicy) {
+export function assessRisk({ files = [], metadata = {}, humanGate = false, aiRisk = null, securityAssessment = null, }, rawPolicy) {
   const policy = riskPolicySchema.parse(rawPolicy);
   const reasons = [], matches = [];
   let floor = 0;
@@ -41,6 +41,6 @@ export function assessRisk({ files = [], metadata = {}, humanGate = false, aiRis
   }
   return { level, label: ['LOW', 'MEDIUM', 'HIGH'][level - 1], reasons: [...new Set(reasons)], matches,
     requiredHumanApprovals: Math.max(policy.levels[level].requiredHumanApprovals, securityAssessment?.requiredHumanApprovals || 0),
-    autoMergeAllowed: lane?.name !== 'prototype' && level === 1 && !humanGate && !securityAssessment?.securitySensitive && policy.levels[level].autoMerge,
+    autoMergeAllowed: level === 1 && !humanGate && !securityAssessment?.securitySensitive && policy.levels[level].autoMerge,
     humanGate, defaultLevel: policy.defaultLevel };
 }

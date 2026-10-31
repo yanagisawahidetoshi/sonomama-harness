@@ -75,7 +75,7 @@ Risk Levelを下げても、この経路は変わらない。
 
 - LEVEL 1の変更は人間の目を通らずにmergeされうる。品質の最後の砦は`policy-review`（空ファイル・サイズ上限・`TODO|FIXME`の決定的検査）とTrusted Acceptanceになる。この2つを弱めてはいけない。
 - 検知の取りこぼしが、以前は「人1人のレビュー」で拾えていたのが拾えなくなる。検知パターンの不足は、見つけたら`pr-risk.json`・`security.json`に足す。
-- `safeRules`を削るので、prototype laneの明示的なLEVEL 1候補という概念はなくなる。prototypeも既定のLEVEL 1に落ちる（`autoMergeEligible`はprototypeでは従来どおりfalse）。
+- `safeRules`を削るので、prototype laneの明示的なLEVEL 1候補という概念はなくなる。prototypeも既定のLEVEL 1に落ち、Productionと同じ条件で`autoMergeEligible`になる。
 
 ## 実装・運用への影響
 

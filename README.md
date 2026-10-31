@@ -257,7 +257,7 @@ export時にも再検査し、旧run内の秘密ファイルから伏せるべ�
 
 | LEVEL | 必要な実装後Human Approval | autoMergeEligible |
 | --- | --- | --- |
-| 1 / LOW | 0人 | 必須チェックとAI ReviewがtestedSHAでPASS、Human Gate riskなし、Prototype以外の場合のみtrue |
+| 1 / LOW | 0人 | 必須チェックとAI ReviewがtestedSHAでPASSし、Human Gate riskがなければtrue（Prototypeも同じ条件） |
 | 2 / MEDIUM | 1人 | false |
 | 3 / HIGH | 異なる2人以上 | false |
 
@@ -532,7 +532,7 @@ prototypeのpackage.jsonにはこの4スクリプトを用意する。mobileのb
 統合テスト・E2E・Maestro・VRT・本番向けSecurityコマンドは通常は必須にしない。
 ただしACの独立検証と軽量の禁止パターン検査は行う。Riskの既定はLEVEL 1で、通常の試作もそこに落ちる。
 保護ルールやAIによる引き上げは常に優先する。LEVEL 1=0人、LEVEL 2=1人、LEVEL 3=異なる2人以上という承認契約は共通。
-PrototypeはLEVEL 1でMERGE_ALLOWEDになってもautoMergeEligibleはfalseで、merge実行はしない。
+PrototypeもLEVEL 1ならProductionと同じ条件でautoMergeEligibleになる（#157）。Harnessはmergeを実行しない。
 
 認証・権限・PII・Secret/Credential・本番データ/API・Cognito User Pool・機密設定への影響は
 試作でもProduction/Securityへ昇格し、LEVEL 3・必須Security検証・実装後の2人以上のReviewを強制する。
