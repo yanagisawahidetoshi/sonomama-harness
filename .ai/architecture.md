@@ -31,9 +31,9 @@ Local modeは独立したローカルGit workspaceと人間用CLIの署名台帳
 - verifierRegistry: verifier IDと、信頼するコマンド・AC IDの登録。
 - recordDecisionのidentityProvider: 信頼する認証経路からid / kind=human / sourceを返す。
 - authenticatedRecords: purpose、SHA、context、取り消しを含む署名済み承認履歴。
-- assessRisk: 差分、SBI/AC、Human Gate、AIの上方リスク提案を入力にRulesを評価する。
+- assessRisk: 差分、SBI/AC、Human Gate risk、AIの上方リスク提案を入力にRulesを評価する。
 - mergeDecision: 必須チェック、Risk、認証済み承認を入力に可否だけを返す。
-- runHarness/resumeRunのsemanticReviewer: 有効時の意味レビュー。PASS/FAILと任意のriskLevelを返す。
+- runHarness/resumeRunのsemanticReviewer: AI Review（全LEVELで必須）のadapter接続点（本物は#187）。PASS/FAILと任意のriskLevelを返す。未接続はNOT_CONFIGURED、fake providerだけfake adapter（ai-review.mjs）。
 
 ### GitHub PR Adapterが保証すること
 

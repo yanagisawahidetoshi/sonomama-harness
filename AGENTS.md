@@ -18,7 +18,9 @@ docs/は人間向け。ADRや人間の設計判断を確認するときだけ参
 - 自動mergeはLEVEL 1だけ許可する。必須チェックがすべてPASSし、autoMergeEligibleがtrueのときに限る。LEVEL 2・3の最終mergeは人間が行う。
 - AI自己申告は採用せずVerifier・Reviewer・Completion Judgeが完了判定する。
 - 3回連続失敗、仕様曖昧、重要設計判断で停止する。
-- AuthN/AuthZ/RLS/PII/Migration/ADR変更はHuman Gate。人間が判断をSBI/ADRに残す。AIはRiskを下げられない。
+- AuthN/AuthZ/RLS/PII/Migration/ADR変更はHuman Gate。人間はSBI承認でその判断をSBI/ADRに残し、実装前に別のGateは置かない。LEVEL 3と実装後の異なる2人以上のReviewは必ず残す。AIはRiskを下げられない。
+- 承認済みSBIで決められない判断（範囲外の変更、新しいSecurity・Architecture判断、ADR変更、Design・API契約との矛盾）が出たら、ESCALATED / NEEDS_HUMAN_DECISIONで止まる。人間がSBIを更新・再承認し、新しいrunで再開する。
+- AI Review（Semantic Review）は全Risk Levelで必須。人間の承認人数には数えない。
 - .harness/verification/**、tools/harness/**、AGENTS.md、.ai/**、.github/**、.githooks/**はAgentの書込禁止。Agentの許可ファイルにTrusted Acceptance・設定・ルール・証跡を含めない。
 - 秘密値をログ・会話・Gitへ出さない。
 - 読み取り・通常編集・テスト・型確認・lint・format・通常add/commit/push・PR作成は確認不要。
