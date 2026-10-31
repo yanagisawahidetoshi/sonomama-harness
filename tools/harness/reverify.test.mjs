@@ -18,7 +18,7 @@ import { renderSbiBody } from './planner.mjs';
 // Issue #144: after main moves, the finished implementation of a PR is merged with the new main and re-verified by a new run,
 // without the implementation agent, and the same PR is updated by a normal push. A and B start from the same main; A is merged first.
 // These runs stand for the production path, so they connect a trusted AI Review adapter as #187 will (#175).
-const aiReview = async () => ({ adapter: 'test-adapter', status: 'PASS', reasons: [] });
+const aiReview = async ({ headSha }) => ({ adapter: 'test-adapter', headSha, status: 'PASS', reasons: [] });
 const withAiReview = fn => options => fn({ semanticReviewer: aiReview, ...options });
 const runHarness = withAiReview(harness.runHarness), resumeRun = withAiReview(harness.resumeRun), approveRun = withAiReview(harness.approveRun), reverifyPullRequest = withAiReview(harness.reverifyPullRequest);
 const issueUrl = 'https://github.com/acme/app/issues/7';

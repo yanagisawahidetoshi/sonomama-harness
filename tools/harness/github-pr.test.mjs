@@ -18,7 +18,7 @@ import { loadImpact } from './impact.mjs';
 
 const head = 'a'.repeat(40), old = 'b'.repeat(40), base = 'd'.repeat(40);
 // A pull request is the production path, where the fake AI Review of the demo never counts (#175). These runs connect a trusted adapter as #187 will.
-const aiReview = async () => ({ adapter: 'test-adapter', status: 'PASS', reasons: [] });
+const aiReview = async ({ headSha }) => ({ adapter: 'test-adapter', headSha, status: 'PASS', reasons: [] });
 const runHarness = options => runFixture({ semanticReviewer: aiReview, ...options });
 const startRun = options => harnessRun({ semanticReviewer: aiReview, ...options });
 let nextId = 1;
