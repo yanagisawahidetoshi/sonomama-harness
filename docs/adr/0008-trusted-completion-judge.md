@@ -57,12 +57,12 @@
   - 同じ head SHA・event が `pull_request`・workflow が `harness.yml` の run を探し、完了まで poll する（maestro の上限に合わせて timeout を決める）。同じ PR の古い judge は `concurrency` で取り消す。取り消されて check が出なくても BLOCKED なので fail-closed。
   - impact は main のコードで PR の差分から計算し直す。要求した verifier ごとに、その run の jobs API で `verifiers (<name>)` の success を求める。head SHA の check run の一覧は使わない（同じ名前の check を別の workflow から出せるため）。PR 側の impact が verifier を減らしても、要求は減らない。
   - artifact（`acceptance-results-*`、`maestro-results`）はその run から API で取り、Zod の schema と head SHA の照合を通す。欠落・schema の不一致・head SHA の不一致・要求したのに skipped は FAIL。
-  - PR の差分は API か `git fetch` でデータとして読む。fork からの PR は、checkout v7 が `pull_request_target` で fork の fetch を既定で拒否するので judge が出ず、BLOCKED になる。
+  - PR の差分は API か `git fetch` でデータとして読む。fork からの PR は判定しない（`trustedScript` の sandbox で fork のコードが動くのを避ける）。check run は failure になり、BLOCKED のまま。
 - **証拠の作り手（producer）を変えた PR は、自分の証拠だけでは PASS しない。** producer は、実行の workflow が読んで動かすもの: `.github/**`、`tools/harness/**`、`.harness/**`、root の `package.json`・`pnpm-lock.yaml`・`pnpm-workspace.yaml`・`.node-version`・`.npmrc`。lockfile を外すと、依存を差し替えて `harness:verify` を乗っ取れる。ただし、judge が main のコードでデータとして検査するもの（SBI の JSON `.harness/state/sbi-*.json` と、生成した Trusted Acceptance の登録 `.harness/acceptance/sbi-<N>.json`）は除く。除かないと、SBI の PR がすべて自動で PASS しなくなる。判定は main のコードで差分のパスを見て行い、producer の変更があれば、すべての job が success でも Completion Judge は理由のコードを付けて failure にする。
   - Team / Production では、producer を変えた PR の PASS 条件を「同じ head SHA への、ADR-0001 の GitHub Review が L3 の人数（異なる2人以上）」にする。
   - Bootstrap では PR の作成者しかおらず、自分の PR は承認できない。ruleset に repo admin の bypass（pull request 経由だけ）を置き、producer を変えた PR は repo owner が内容を確かめて bypass で merge する。
 - **judge の結果は、専用 GitHub App の check run `Completion Judge` として出す。** ruleset の必須チェックをこの App の integration_id に固定し、`harness`@15368 は外す。
-  - App の権限は checks: write、pull_requests: read、contents: read、actions: read（run・jobs・artifact の読み取り）、issues: read（承認コメントの読み取り）だけ。
+  - App の権限は checks: write だけ。run・jobs・artifact・Issue の読み取りは、判定する job の読み取り専用の `GITHUB_TOKEN` で行う。
   - 秘密鍵は environment secret に置き、environment の deployment branch を main に限る。
 - **判定コードを変える PR**: 合否は main の判定コードで出す。PR 側の `tools/harness` は harness-test（実行）で検証する。PR の `.harness/rules` の変更は merge 後に効く。main 側のルールが要求する検証を PR が消しても、その PR では要求され続ける。
 - **版ずれ**: impact と judge を同じ main のコードで動かすので、要求する verifier と判定の版ずれは起きない。実行の run が古い workflow で動いて job が足りなければ FAIL にする。
