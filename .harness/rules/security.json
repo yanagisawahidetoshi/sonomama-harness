@@ -256,7 +256,7 @@
         "InfrastructureSecurity"
       ],
       "pathPatterns": [
-        "(^|/)(infra|infrastructure|terraform|k8s|helm|deploy|deployment)(/|$)|\\.(tf|tfvars)$"
+        "(^|/)(infra|infrastructure|terraform|terragrunt|k8s|kubernetes|helm|charts?|deploy|deployment|live|cdk|pulumi|cloudformation|cfn)(/|$)|(^|/)(?<!(^|/)config/)(environments?|envs)/|\\.(tf|tfvars|hcl)$|\\.tf\\.json$"
       ],
       "contentPatterns": [],
       "metadataPatterns": [
@@ -277,25 +277,29 @@
         "ProductionInfrastructure"
       ],
       "pathPatterns": [
-        "(^|/)(infra|infrastructure|terraform|k8s|helm|deploy|deployment)/(.*/)?([^/]*[._-])?(prod|production)([/._-]|$)",
-        "(^|/)([^/]*[._-])?(prod|production)([._-][^/]*)?\\.(tf|tfvars)$"
+        "^(?=.*?(?:(^|/)(infra|infrastructure|terraform|terragrunt|k8s|kubernetes|helm|charts?|deploy|deployment|live|cdk|pulumi|cloudformation|cfn)(/|$)|(^|/)(?<!(^|/)config/)(environments?|envs)/|\\.(tf|tfvars|hcl)$|\\.tf\\.json$))(?=.*?(^|[/._-])(?<!non[-_])(?<!pre[-_])(prod|prd|production)([/._-]|$))",
+        "(^|/)\\.github/workflows/[^/]*(prod|prd|production)[^/]*\\.ya?ml$"
       ],
       "contentPatterns": [],
       "addedContent": {
         "pathPatterns": [
-          "(^|/)(infra|infrastructure|terraform|k8s|helm|deploy|deployment)(/|$)|\\.(tf|tfvars)$"
+          "(^|/)(infra|infrastructure|terraform|terragrunt|k8s|kubernetes|helm|charts?|deploy|deployment|live|cdk|pulumi|cloudformation|cfn)(/|$)|(^|/)(?<!(^|/)config/)(environments?|envs)/|\\.(tf|tfvars|hcl)$|\\.tf\\.json$"
         ],
         "patterns": [
           "\\bprevent_destroy\\s*=\\s*false\\b",
-          "\\bdeletion_protection(_enabled)?\\s*=\\s*false\\b",
+          "\\bdeletion_?protection(_enabled)?\"?\\s*[:=]\\s*\"?false\\b",
           "\\bforce_destroy\\s*=\\s*true\\b",
           "\\bskip_final_snapshot\\s*=\\s*true\\b",
-          "\\b(not_)?(actions?|resources?)\\b\"?\\s*[:=]\\s*\\[?\\s*\"\\*\"",
+          "(^|[\\[,:\\s-])[\"']\\*[\"']\\s*(,|\\]|$)",
           "\\b0\\.0\\.0\\.0/0\\b",
           "(^|[^0-9a-f:])::/0\\b"
         ],
         "ignoredPatterns": [
-          "\\begress\\s*\\{[^}]*\\}"
+          "^\\s*egress\\s*\\{[^}]*\\}"
+        ],
+        "removedPatterns": [
+          "\\bprevent_destroy\\s*=\\s*true\\b",
+          "\\bdeletion_?protection(_enabled)?\"?\\s*[:=]\\s*\"?true\\b"
         ]
       },
       "metadataPatterns": [

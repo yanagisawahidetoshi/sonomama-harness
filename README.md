@@ -220,6 +220,7 @@ Security / Human Gate riskの強制 → minimumRiskLevel → protected path → 
 いちばん高い水準を採用する。DefaultはLEVEL 1で、どのルールにも当たらない変更がそこに落ちる。
 Security ruleは一律でLEVEL 3を強制せず、rule自身の`minimumRiskLevel`（2または3）まで上げる。
 `docs/security`はLEVEL 3、`docs/adr`はLEVEL 1に落ちずLEVEL 2。
+テストの追加はLEVEL 1だが、テストファイルの削除、skip・pending・focus化、assertionを含む行の削除はLEVEL 2（ADR-0006の`testProtection`）。
 
 ## Secret保護とレビューZIP
 

@@ -33,6 +33,7 @@
 
 - Default Risk Levelは1。ルールは水準を上げるだけで、下げる仕組みは持たない。通常のUI / API / test / refactor / docsはLEVEL 1。
 - LEVEL 2は通常のMigration・schema・OpenAPI・CI / GitHub Actions・Dockerfile・ADR・Harness実装。LEVEL 3は重大な影響に限る（AuthN / AuthZ / RLS / PII、権限モデル、Secret / Credential、docs/security、本番Infrastructure / Deployment、破壊的・不可逆なデータ / schema操作、`.harness/rules/`・`.harness/state/`・`.github/rulesets/`・`.githooks/`）。
+- テストの追加はLEVEL 1。テストファイルの削除、skip・pending・focus化、assertionを含む行の削除はLEVEL 2（ADR-0006、`pr-risk.json`の`testProtection`）。
 - ポリシー自身（`.harness/rules/`等）はLEVEL 3のまま据え置く。自分の承認要件を下げたPRが、その緩めたルールで自分をmergeする経路を作らない。
 - 最低ルールとHuman Gate riskは常に優先する。AIはRiskを下げられない。
 - 変更内容、検証対象、レビュー対象、SHAは同じrun workspaceに固定する。

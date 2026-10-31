@@ -239,6 +239,9 @@ export const riskPolicySchema = z.strictObject({
   }),
   pathRules: z.array(z.strictObject({ id: text, pattern: text, minimumLevel: z.union([z.literal(2), z.literal(3)]) })).min(1),
   metadataRules: z.array(z.strictObject({ id: text, pattern: text, minimumLevel: z.union([z.literal(2), z.literal(3)]) })).min(1),
+  // ADR-0006: a deleted test file, a skipped or focused test and a removed assertion never merge automatically. A test file is pathPattern;
+  // weakeningPattern reads its added lines and assertionPattern its removed lines.
+  testProtection: z.strictObject({ pathPattern: text, weakeningPattern: text, assertionPattern: text, minimumLevel: z.literal(2) }),
 });
 export const approvalRecordSchema = z.strictObject({
   id: text, runId: text, purpose: z.enum(['implementation-gate', 'merge']),
@@ -288,7 +291,9 @@ export const securityPolicySchema = z.strictObject({
     contentExceptions: z.array(z.strictObject({ pathPatterns: z.array(narrowPattern).min(1), ignoredPatterns: z.array(narrowPattern).min(1) })).optional(),
     // Only the added lines of a file under pathPatterns count, so a change that turns a setting dangerous matches and one that narrows it does not.
     // ignoredPatterns drop safe forms (an egress block) first; a binary file there cannot be read and matches (#157).
-    addedContent: z.strictObject({ pathPatterns: z.array(narrowPattern).min(1), patterns: z.array(narrowPattern).min(1), ignoredPatterns: z.array(narrowPattern).default([]) }).optional(),
+    addedContent: z.strictObject({ pathPatterns: z.array(narrowPattern).min(1), patterns: z.array(narrowPattern).min(1), ignoredPatterns: z.array(narrowPattern).default([]),
+      // A removed line that kept a protection on (prevent_destroy = true) turns it off as surely as an added line that sets it false.
+      removedPatterns: z.array(narrowPattern).default([]) }).optional(),
     // A rule carries the Human Gate and two reviews only when its impact is severe; an ordinary one asks for a single review (#157).
     preImplementationGate: z.boolean(), minimumRiskLevel: z.union([z.literal(2), z.literal(3)]),
     requiredHumanApprovals: z.number().int().min(1), requiredVerifiers: z.array(text).min(1), policyDocument: relativePath,

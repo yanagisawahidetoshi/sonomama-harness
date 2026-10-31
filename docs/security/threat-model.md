@@ -19,7 +19,7 @@
 | SEC-DESTRUCTIVE-001 | 破壊的な操作、本番データ | データの保存と削除のテスト（data-lifecycle-test） | 必要 | レベル3 |
 | SEC-DESIGN-001 | セキュリティに関わる重要な設計、ADR | 禁止パターンの検査（forbidden-pattern-check） | 不要 | レベル2 |
 
-SEC-PRODINFRA-001は、`infra`・`terraform`・`k8s`・`helm`・`deploy`配下で`prod`・`production`を含むパスと、インフラのファイルの追加行に次の設定が入った変更を対象にする。削除保護・破壊防止の解除（`prevent_destroy = false`・`deletion_protection = false`・`force_destroy = true`・`skip_final_snapshot = true`）、IAMの全権限（`actions`・`resources`が`"*"`）、すべての送信元へのingress（`0.0.0.0/0`・`::/0`。egressブロックは除く）。危険な方向かどうかは追加行だけで判定するので、既存の設定を狭める変更はレベル2のままになる。中身を読めないバイナリのインフラファイルはレベル3にする。誤検知の多い条件は増やさず、必要になったら別のIssueで足す。
+SEC-PRODINFRA-001は、Infrastructureのパス（`infra`・`terraform`・`terragrunt`・`k8s`・`helm`・`charts`・`deploy`・`live`・`cdk`・`pulumi`・`cloudformation`・`environments`配下、`.tf`・`.tfvars`・`.hcl`・`.tf.json`）のうち`prod`・`prd`・`production`を含むもの（`non-prod`・`pre-prod`は除く）、`prod`を名前に含むGitHub Actionsのworkflow、インフラのファイルの追加行に次の設定が入った変更を対象にする。削除保護・破壊防止の解除（`prevent_destroy = false`・`deletion_protection = false`・`force_destroy = true`・`skip_final_snapshot = true`）、IAMの全権限（`"*"`・`'*'`の要素）、すべての送信元へのingress（`0.0.0.0/0`・`::/0`。行頭から始まるHCLのegressブロックは除く）。保護をオンにしていた行（`prevent_destroy = true`・`deletion_protection = true`）の削除も同じ扱いにする。危険な方向かどうかは追加行だけで判定するので、既存の設定を狭める変更はレベル2のままになる。中身を読めないバイナリのインフラファイルはレベル3にする。この「追加行だけ」の判定はPRの差分（CI）に対するもの。`harness:run`の実装前の確認ではファイル全体を追加行として読むので、既存の公開設定を含むファイルを触るとレベル3として止まる（fail-closed）。KubernetesのYAMLのegressも除外しないのでレベル3になる。誤検知の多い条件は増やさず、必要になったら別のIssueで足す。
 
 マイグレーション、スキーマ、CI/CD、ADRをレベル2にしているのは、ファイルの種類だけで一律に2人の承認を求めないためで、検知と検証はそのまま続ける。
 破壊的・不可逆な操作（`drop_table`・`remove_column`・`DROP TABLE`・`delete_all`等）は変更内容から検知してレベル3へ上げ、破壊的マイグレーションはそれとは別に例外承認（異なる2人）を必要とする。

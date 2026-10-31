@@ -25,6 +25,12 @@ export function assessRisk({ files = [], metadata = {}, humanGate = false, aiRis
         if (new RegExp(rule.pattern, 'i').test(path)) match(rule.minimumLevel, rule.id, 'path', path);
       }
     }
+    const tests = policy.testProtection;
+    if ([file.path, file.previousPath].filter(Boolean).some(path => new RegExp(tests.pathPattern, 'i').test(path))) {
+      if (file.status === 'D') match(tests.minimumLevel, 'test_deleted', 'test-protection', file.path);
+      if (new RegExp(tests.weakeningPattern, 'm').test(file.added || '')) match(tests.minimumLevel, 'test_skipped_or_focused', 'test-protection', file.path);
+      if (new RegExp(tests.assertionPattern, 'm').test(file.deleted || '')) match(tests.minimumLevel, 'test_assertion_removed', 'test-protection', file.path);
+    }
     // Inspect changed lines, including removals. An unknown semantic effect stays at the default level.
     const text = `${file.added || ''}\n${file.deleted || ''}`;
     for (const rule of policy.metadataRules) {

@@ -40,7 +40,7 @@ export function classifySecurity({ files = [], sbi = {} }, rawPolicy) {
       const inAddedScope = rule.addedContent && [f.path, f.previousPath].filter(Boolean).some(path => rule.addedContent.pathPatterns.some(p => new RegExp(p,'i').test(path)));
       if (inAddedScope && !classifierSource(f)) {
         const added = rule.addedContent.ignoredPatterns.reduce((text, p) => text.replace(new RegExp(p, 'gim'), ''), f.added || '');
-        if (f.binary || rule.addedContent.patterns.some(p => new RegExp(p,'im').test(added))) matches.push({ source: 'added-content', ...at });
+        if (f.binary || rule.addedContent.patterns.some(p => new RegExp(p,'im').test(added)) || rule.addedContent.removedPatterns.some(p => new RegExp(p,'im').test(f.deleted || ''))) matches.push({ source: 'added-content', ...at });
       }
       if (!classifierSource(f) && rule.contentPatterns.some(p => new RegExp(p,'im').test(contentFor(rule, f, citationFree(f.path, `${f.added || ''}\n${f.deleted || ''}`))))) matches.push({ source: 'changed-content', ...at });
     }

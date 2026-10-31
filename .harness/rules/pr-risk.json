@@ -48,12 +48,12 @@
     },
     {
       "id": "production_infrastructure",
-      "pattern": "(^|/)(infra|infrastructure|terraform|k8s|helm|deploy|deployment)/(.*/)?([^/]*[._-])?(prod|production)([/._-]|$)|(^|/)([^/]*[._-])?(prod|production)([._-][^/]*)?\\.(tf|tfvars)$",
+      "pattern": "^(?=.*?(?:(^|/)(infra|infrastructure|terraform|terragrunt|k8s|kubernetes|helm|charts?|deploy|deployment|live|cdk|pulumi|cloudformation|cfn)(/|$)|(^|/)(?<!(^|/)config/)(environments?|envs)/|\\.(tf|tfvars|hcl)$|\\.tf\\.json$))(?=.*?(^|[/._-])(?<!non[-_])(?<!pre[-_])(prod|prd|production)([/._-]|$))|(^|/)\\.github/workflows/[^/]*(prod|prd|production)[^/]*\\.ya?ml$",
       "minimumLevel": 3
     },
     {
       "id": "infrastructure",
-      "pattern": "(^|/)(infra|infrastructure|terraform|deploy|deployment|release|k8s|helm)(/|\\.|$)|\\.(tf|tfvars)$",
+      "pattern": "(^|/)(infra|infrastructure|terraform|terragrunt|k8s|kubernetes|helm|charts?|deploy|deployment|live|cdk|pulumi|cloudformation|cfn)(/|$)|(^|/)(?<!(^|/)config/)(environments?|envs)/|\\.(tf|tfvars|hcl)$|\\.tf\\.json$|(^|/)release(/|\\.|$)",
       "minimumLevel": 2
     },
     {
@@ -193,5 +193,11 @@
       "pattern": "breaking.api|API互換性",
       "minimumLevel": 2
     }
-  ]
+  ],
+  "testProtection": {
+    "pathPattern": "(^|/)(spec|specs|test|tests|__tests__|e2e|\\.maestro)/|\\.(test|spec)\\.[cm]?[jt]sx?$|_(spec|test)\\.rb$",
+    "weakeningPattern": "\\.(only|skip)\\s*\\(|\\b(xit|xdescribe|xcontext|xtest|fit|fdescribe|fcontext)\\s*\\(|\\b(it|test|describe)\\.todo\\b|:focus\\b|\\bfocus:\\s*true\\b|^\\s*(skip|pending)\\b",
+    "assertionPattern": "\\bexpect\\s*[({]|\\bassert(\\.\\w+)?\\s*\\(|\\bassert_\\w+|\\.should\\b|\\bis_expected\\b|\\bt\\.(is|deepEqual|true|false)\\s*\\(",
+    "minimumLevel": 2
+  }
 }
