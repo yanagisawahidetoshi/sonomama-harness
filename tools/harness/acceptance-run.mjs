@@ -76,8 +76,9 @@ export function judgeAcceptance({ registration, report }) {
 }
 
 // The default runner: the generated specs of one SBI through the compose isolation, read back as the RSpec report.
+// They are PR code (and, for a controlled violation, an AI-proposed change), so they run without an outside network (ADR-0005).
 export async function runGeneratedAcceptance({ workspace, sbiIssue, config, examples }) {
-  const adapter = { id: `generated-acceptance-sbi-${sbiIssue}`, isolation: 'compose', network: true, commands: acceptanceCommands(sbiIssue, { examples }) };
+  const adapter = { id: `generated-acceptance-sbi-${sbiIssue}`, isolation: 'compose', network: false, commands: acceptanceCommands(sbiIssue, { examples }) };
   const result = await runIsolated({ workspace, adapter, config, cwd: workspace });
   const report = parseRspecJson(result.processes?.[2]?.stdout);
   return result.reason && report.error ? { ...report, error: `${report.error} (${result.reason})` } : report;
