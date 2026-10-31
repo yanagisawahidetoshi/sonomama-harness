@@ -13,8 +13,9 @@ export function assessRisk({ files = [], metadata = {}, humanGate = false, aiRis
   if (securityAssessment?.securitySensitive || securityAssessment?.minimumRiskLevel === 3) match(Math.max(2, securityAssessment.minimumRiskLevel || 2), 'security_rule_minimum', 'security-enforcement');
   if (metadata.minimumRiskLevel > 1) match(metadata.minimumRiskLevel, 'sbi_minimum', 'sbi-metadata');
   const metadataText = JSON.stringify(metadata);
+  const unless = (rule, text) => (rule.ignoredPatterns || []).reduce((rest, p) => rest.replace(new RegExp(p, 'gi'), ''), text);
   for (const rule of policy.metadataRules) {
-    if (new RegExp(rule.pattern, 'i').test(metadataText)) match(rule.minimumLevel, rule.id, 'sbi-metadata');
+    if (new RegExp(rule.pattern, 'i').test(unless(rule, metadataText))) match(rule.minimumLevel, rule.id, 'sbi-metadata');
   }
   for (const file of files) {
     for (const path of [file.path, file.previousPath].filter(Boolean)) {
@@ -34,7 +35,7 @@ export function assessRisk({ files = [], metadata = {}, humanGate = false, aiRis
     // Inspect changed lines, including removals. An unknown semantic effect stays at the default level.
     const text = `${file.added || ''}\n${file.deleted || ''}`;
     for (const rule of policy.metadataRules) {
-      if (new RegExp(rule.pattern, 'i').test(text)) match(rule.minimumLevel, rule.id, 'changed-content', file.path);
+      if (new RegExp(rule.pattern, 'i').test(unless(rule, text))) match(rule.minimumLevel, rule.id, 'changed-content', file.path);
     }
   }
   let level = Math.max(policy.defaultLevel, floor);
