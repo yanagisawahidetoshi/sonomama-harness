@@ -184,17 +184,20 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
           disable-animations: true
           script: bash tools/harness/maestro-ci.sh "$APK" "${{ github.event.pull_request.head.sha || github.sha }}" ${{ join(fromJson(needs.impact.outputs.maestro), ' ') }}
+        env:
+          # Outside the checkout, so a result file committed in the PR is never uploaded as the lane result (#188).
+          MAESTRO_CI_OUT: ${{ runner.temp }}/maestro-ci
       - if: always() && needs.impact.outputs.maestro != '[]'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: maestro-results
-          path: .maestro-ci/results/
+          path: ${{ runner.temp }}/maestro-ci/results/
           if-no-files-found: ignore
       - if: always() && needs.impact.outputs.maestro != '[]'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: maestro-evidence
-          path: .maestro-ci/evidence/
+          path: ${{ runner.temp }}/maestro-ci/evidence/
           if-no-files-found: ignore
   harness:
     needs: [impact, verifiers, harness-test, harness-demo, maestro]
@@ -217,13 +220,13 @@ jobs:
         with:
           node-version-file: .node-version
       - run: pnpm install --frozen-lockfile --prod --ignore-workspace
-      # The maestro job's result files; a missing artifact is judged as a missing result, not skipped.
+      # The maestro job's result files, outside the checkout (#188); a missing artifact is judged as a missing result, not skipped.
       - if: needs.impact.outputs.maestro != '[]'
         continue-on-error: true
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: maestro-results
-          path: .maestro-ci/results
+          path: ${{ runner.temp }}/maestro-ci/results
       # The generated acceptance reports of the verifier matrix; a missing report is judged as a failure, not skipped.
       - if: contains(needs.impact.outputs.required_verifiers, 'generated-acceptance-')
         continue-on-error: true
@@ -235,7 +238,7 @@ jobs:
       - run: pnpm harness:judge $HARNESS_SCOPE
         env:
           HARNESS_NEEDS: ${{ toJson(needs) }}
-          HARNESS_MAESTRO_RESULTS: .maestro-ci/results
+          HARNESS_MAESTRO_RESULTS: ${{ runner.temp }}/maestro-ci/results
           HARNESS_ACCEPTANCE_RESULTS: ${{ runner.temp }}/acceptance-results
           HARNESS_PULL_REQUEST: ${{ github.event.pull_request.number }}
           HARNESS_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}

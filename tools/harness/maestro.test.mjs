@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { renderSbiBody } from './planner.mjs';
@@ -8,6 +9,7 @@ import { sbiFromIssue } from './sbi-issue.mjs';
 import { analyzeImpact, judgeCi } from './impact.mjs';
 import { maestroLanes, judgeMaestro, maestroResultFromJunit, readMaestroResults } from './maestro.mjs';
 import { execute } from './io.mjs';
+import { parse } from 'yaml';
 
 const ref = { owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' };
 const pbi = { owner: 'acme', repo: 'app', number: 3, url: 'https://github.com/acme/app/issues/3', title: '受講生のホーム' };
@@ -133,5 +135,30 @@ describe('maestro-result CLI', () => {
       assert.equal(run.code, 0, run.stderr);
       assert.equal(JSON.parse(await readFile(out, 'utf8')).status, 'PASS');
     } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+});
+
+// #188: the maestro job writes and the Completion Judge reads the lane results outside the checkout, so a result file committed in the PR
+// is never uploaded or read in place of one the emulator run produced.
+describe('Maestro result files outside the checkout', () => {
+  const workflow = parse(readFileSync(new URL('../../.github/workflows/harness.yml', import.meta.url), 'utf8'));
+  const outside = '${{ runner.temp }}/maestro-ci';
+  const steps = job => workflow.jobs[job].steps;
+  it('when the maestro job runs the lanes then the script writes under the runner temp directory and the artifacts are uploaded from there', () => {
+    const run = steps('maestro').find(s => s.with?.script?.startsWith('bash tools/harness/maestro-ci.sh'));
+    assert.equal(run.env.MAESTRO_CI_OUT, outside);
+    const uploads = Object.fromEntries(steps('maestro').filter(s => s.uses?.startsWith('actions/upload-artifact@')).map(s => [s.with.name, s.with.path]));
+    assert.deepEqual(uploads, { 'maestro-results': `${outside}/results/`, 'maestro-evidence': `${outside}/evidence/` });
+  });
+  it('when the Completion Judge runs then it downloads the results outside the checkout and reads them from there', () => {
+    const download = steps('harness').find(s => s.with?.name === 'maestro-results');
+    assert.equal(download.with.path, `${outside}/results`);
+    assert.equal(steps('harness').find(s => s.run?.startsWith('pnpm harness:judge')).env.HARNESS_MAESTRO_RESULTS, `${outside}/results`);
+  });
+  it('when the lane script starts then it takes its output directory from MAESTRO_CI_OUT and writes every file by an absolute path', () => {
+    const script = readFileSync(new URL('./maestro-ci.sh', import.meta.url), 'utf8');
+    assert.match(script, /^out=\$\{MAESTRO_CI_OUT:-\.maestro-ci\}$/m);
+    assert.match(script, /out=\$\(cd "\$out" && pwd\)/);
+    assert.doesNotMatch(script, /\.\.\/\.\.\/\$evidence/);
   });
 });
