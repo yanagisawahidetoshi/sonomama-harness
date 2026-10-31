@@ -1,9 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, writeFile, mkdir, readdir, lstat } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, readdir, lstat, chmod } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fixture, update, human, runFixture as runHarness } from './test-fixture.mjs';
-import { classifySecurity, verifySecurity, securityPassed, securityTargets } from './security-enforcement.mjs';
+import { classifySecurity, verifySecurity, securityPassed, securityTargets, localTargets } from './security-enforcement.mjs';
+import { runCompletionJudge } from './impact.mjs';
+import { changedFiles, git } from './workspace.mjs';
 import { withEvidenceProtection, redact, isSecretPath } from './evidence-protection.mjs';
 import { exportRun } from './review-export.mjs';
 import { resumeRun, judge } from './index.mjs';
@@ -403,27 +405,6 @@ describe('Security content targets (#184)', () => {
     });
   });
 
-  describe('given entries whose content cannot be inspected', () => {
-    it('when only a file mode changes then it is uninspectable, not scanned, and does not fail on that alone', async () => {
-      const c = check(await scan([{ path: 'bin/run.sh', status: 'M', added: '', deleted: '', modeChanged: true }]));
-      assert.equal(c.status, 'PASS');
-      assert.deepEqual(c.scanned, []);
-      assert.deepEqual(c.uninspectable, ['bin/run.sh']);
-    });
-    it('when a binary file is added next to a text file then only the text file counts as scanned', async () => {
-      const c = check(await scan([{ path: 'docs/logo.png', status: 'A', added: '', deleted: '', binary: true }, safe]));
-      assert.equal(c.status, 'PASS');
-      assert.deepEqual(c.scanned, [safe.path]);
-      assert.deepEqual(c.uninspectable, ['docs/logo.png']);
-    });
-    it('when a binary file is added at a secret path then the path check still fails', async () => {
-      const evidence = await scan([{ path: 'tls/server.pem', status: 'A', added: '', deleted: '', binary: true }]);
-      assert.deepEqual(evidence.violations.map(v => [v.code, v.path]), [['prohibited_secret_path', 'tls/server.pem']]);
-      assert.deepEqual(check(evidence).secretPaths, ['tls/server.pem']);
-      assert.equal(securityPassed(evidence), false);
-    });
-  });
-
   describe('given entries that are not accounted for', () => {
     it('when a changed file that is not deleted cannot be read then fails instead of dropping it', async () => {
       const evidence = await verifySecurity({ workspace: '.', assessment: contentChecks, policy, config: { securityVerifiers: [] }, headSha: 'a'.repeat(40),
@@ -471,4 +452,106 @@ describe('Security content targets (#184)', () => {
       assert.equal(check(await scan([{ path: excepted, status: 'M', added: `process.env.${unsafe} = '0';` }])).status, 'FAIL');
     });
   });
+});
+
+// #184 review: the same committed diff, read by git, is judged by the Harness run (localTargets, whole files) and by the CI Judge (added lines).
+// Neither the diff text nor a .gitattributes of the PR decides what is binary, and an uninspectable file is still read by secret-scan.
+describe('Security content targets from a real git diff (#184)', () => {
+  const needs = { impact: { result: 'success' }, verifiers: { result: 'success' }, 'harness-test': { result: 'skipped' }, 'harness-demo': { result: 'skipped' } };
+  const contentChecks = { requiredVerifiers: ['secret-scan', 'forbidden-pattern-check'] };
+  const token = 'AKIA' + 'Q'.repeat(16);
+  const commit = async (root, message) => { await git(root, ['add', '--all']); await git(root, ['commit', '-q', '-m', message]); };
+  const pick = evidence => Object.fromEntries(contentChecks.requiredVerifiers.map(id => [id, evidence.checks.find(c => c.id === id)]));
+  const judgeBoth = async (root, change) => {
+    await git(root, ['switch', '-q', '-c', 'feature']);
+    await change(root);
+    await commit(root, 'feature');
+    const files = await changedFiles(root, 'main', 'HEAD');
+    const local = await verifySecurity({ workspace: root, assessment: contentChecks, policy, config: { securityVerifiers: [] }, headSha: 'x', changed: localTargets(files, []), entries: files.length });
+    const ci = (await runCompletionJudge({ root, base: 'main', needs })).security;
+    return { files, local: pick(local), ci: pick(ci), localEvidence: local, ciEvidence: ci };
+  };
+  const agree = ({ local, ci }) => { for (const id of contentChecks.requiredVerifiers) assert.equal(local[id].status, ci[id].status, `${id}: the run and CI disagree`); };
+
+  it('when an added text line spells "Binary files" then the file is still text and its credential fails in the run and in CI', () => fixture(async root => {
+    const judged = await judgeBoth(root, root => writeFile(join(root, 'docs/b1.txt'), `Binary files a/x and b/x differ ${token}\n`));
+    assert.equal(judged.files[0].binary, false);
+    agree(judged);
+    assert.equal(judged.ci['secret-scan'].status, 'FAIL');
+    assert.deepEqual(judged.ci['secret-scan'].scanned, ['docs/b1.txt']);
+  }));
+
+  it('when the PR adds a .gitattributes that marks its files -diff then they stay text and their credential fails in the run and in CI', () => fixture(async root => {
+    const judged = await judgeBoth(root, async root => {
+      await writeFile(join(root, '.gitattributes'), '*.txt -diff\n');
+      await writeFile(join(root, 'docs/b2.txt'), `${token}\n`);
+    });
+    assert.equal(judged.files.find(f => f.path === 'docs/b2.txt').binary, false);
+    agree(judged);
+    assert.equal(judged.ci['secret-scan'].status, 'FAIL');
+    assert.deepEqual(judged.ci['secret-scan'].uninspectable, []);
+  }));
+
+  it('when an added line starts with "++" then it is an added line, not a deletion-only change, in the run and in CI', () => fixture(async root => {
+    const judged = await judgeBoth(root, root => writeFile(join(root, 'docs/b3.txt'), `++ ${token}\n`));
+    assert.match(judged.files[0].added, /^\+\+ AKIA/);
+    agree(judged);
+    assert.equal(judged.ci['secret-scan'].status, 'FAIL');
+    assert.notEqual(judged.ci['secret-scan'].reason, 'deletion-only');
+  }));
+
+  it('when a text file holds one NUL byte then it is uninspectable and secret-scan still finds its credential in the run and in CI', () => fixture(async root => {
+    const judged = await judgeBoth(root, root => writeFile(join(root, 'docs/b4.txt'), Buffer.from(`hello\0 ${token}\n`, 'latin1')));
+    assert.equal(judged.files[0].binary, true);
+    agree(judged);
+    assert.equal(judged.ci['secret-scan'].status, 'FAIL');
+    assert.deepEqual(judged.ci['secret-scan'].uninspectable, ['docs/b4.txt']);
+    assert.deepEqual(judged.ci['secret-scan'].scanned, []);
+    assert.deepEqual(judged.ciEvidence.violations.map(v => [v.verifier, v.path]), [['secret-scan', 'docs/b4.txt']]);
+  }));
+
+  it('when main tracks a text file with one NUL byte and a credential then --all fails on secret-scan', () => fixture(async root => {
+    await writeFile(join(root, 'docs/b4.txt'), Buffer.from(`hello\0 ${token}\n`, 'latin1'));
+    await commit(root, 'nul');
+    const all = pick((await runCompletionJudge({ root, all: true, needs })).security);
+    assert.equal(all['secret-scan'].status, 'FAIL');
+    assert.ok(all['secret-scan'].uninspectable.includes('docs/b4.txt'));
+  }));
+
+  it('when a binary file without a credential is added then it is uninspectable, not scanned, and passes in the run and in CI', () => fixture(async root => {
+    const judged = await judgeBoth(root, root => writeFile(join(root, 'docs/logo.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1, 2, 0])));
+    agree(judged);
+    for (const id of contentChecks.requiredVerifiers) {
+      assert.equal(judged.ci[id].status, 'PASS', id);
+      assert.deepEqual(judged.ci[id].scanned, [], id);
+      assert.deepEqual(judged.ci[id].uninspectable, ['docs/logo.png'], id);
+    }
+  }));
+
+  it('when a binary file is added at a secret path then the path check fails in the run and in CI', () => fixture(async root => {
+    const judged = await judgeBoth(root, async root => { await mkdir(join(root, 'tls')); await writeFile(join(root, 'tls/server.pem'), Buffer.from([0, 1, 2, 3])); await git(root, ['add', '-f', 'tls/server.pem']); });
+    agree(judged);
+    for (const evidence of [judged.localEvidence, judged.ciEvidence]) assert.ok(evidence.violations.some(v => v.code === 'prohibited_secret_path' && v.path === 'tls/server.pem'));
+  }));
+
+  it('when only the mode of a tracked file changes then it is uninspectable and passes, not as deletion-only, in the run and in CI', () => fixture(async root => {
+    const judged = await judgeBoth(root, root => chmod(join(root, 'tools/harness/sample-bdd.mjs'), 0o755));
+    assert.equal(judged.files[0].modeChanged, true);
+    agree(judged);
+    assert.equal(judged.ci['forbidden-pattern-check'].status, 'PASS');
+    assert.deepEqual(judged.ci['forbidden-pattern-check'].uninspectable, ['tools/harness/sample-bdd.mjs']);
+    assert.notEqual(judged.ci['forbidden-pattern-check'].reason, 'deletion-only');
+  }));
+
+  it('when the only change adds one blank line then it is not recorded as deletion-only in the run or in CI', () => fixture(async root => {
+    const judged = await judgeBoth(root, async root => writeFile(join(root, 'AGENTS.md'), `${await readFile(join(root, 'AGENTS.md'), 'utf8')}\n`));
+    agree(judged);
+    for (const checks of [judged.local, judged.ci]) assert.notEqual(checks['forbidden-pattern-check'].reason, 'deletion-only');
+  }));
+
+  it('when the change only deletes a file then both judge it deletion-only', () => fixture(async root => {
+    const judged = await judgeBoth(root, root => git(root, ['rm', '-q', 'tools/harness/sample-bdd.mjs']));
+    agree(judged);
+    for (const checks of [judged.local, judged.ci]) assert.equal(checks['forbidden-pattern-check'].reason, 'deletion-only');
+  }));
 });

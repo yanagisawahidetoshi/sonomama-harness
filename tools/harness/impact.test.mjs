@@ -835,6 +835,12 @@ describe('CI Security content targets (#184)', () => {
       assert.deepEqual(c.exceptions.map(e => e.path), ['tools/harness/security-enforcement.test.mjs']);
     }));
 
+    it('when a tracked fixture spells out a forbidden pattern then the policy exception is recorded with its path and reason', () => fixture(async root => {
+      const c = check(await runCompletionJudge({ root, all: true, needs }));
+      const policy = await readJson(join(root, '.harness/rules/security.json'));
+      assert.deepEqual(c.exceptions, policy.contentScanExceptions.map(e => ({ path: e.path, reason: e.reason })));
+    }));
+
     it('when a tracked file at HEAD holds a forbidden pattern then fails even though the working tree no longer has it', () => fixture(async root => {
       await writeFile(join(root, 'docs/unsafe-184.mjs'), `process.env.${unsafe} = 0;\n`);
       await commit(root, 'unsafe');
