@@ -5,7 +5,12 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fixture, update, human, commitFixture } from './test-fixture.mjs';
 import { githubMock } from './test-github.mjs';
-import { runHarness, resumeRun, approveRun, openPullRequest, reverifyPullRequest } from './index.mjs';
+import * as harness from './index.mjs';
+import { openPullRequest } from './index.mjs';
+// These runs stand for the production path, so they connect a trusted AI Review adapter as #187 will (#175).
+const aiReview = async () => ({ adapter: 'test-adapter', status: 'PASS', reasons: [] });
+const withAiReview = fn => options => fn({ semanticReviewer: aiReview, ...options });
+const runHarness = withAiReview(harness.runHarness), resumeRun = withAiReview(harness.resumeRun), approveRun = withAiReview(harness.approveRun), reverifyPullRequest = withAiReview(harness.reverifyPullRequest);
 import { githubPrCli } from './github-pr.mjs';
 import { readRunState, saveRun } from './run-store.mjs';
 import { review } from './reviewer.mjs';
