@@ -16,7 +16,7 @@ export function verifierRegistry(config) {
   ]);
 }
 // only limits the run to the named verifiers; selected maps an Impact Analysis selection to whether it is mandatory.
-export async function verify({ root, workspace, config, sbi, files = sbi.allowedFiles?.map(path=>({path})) ?? [], requiredVerifiers = [], full = false, lane = classifyLane(files,sbi), only = null, selected = new Map(), acceptanceRunner = runGeneratedAcceptance, generatedSpecDigest = null }) {
+export async function verify({ root, workspace, config, sbi, files = sbi.allowedFiles?.map(path=>({path})) ?? [], requiredVerifiers = [], full = false, lane = classifyLane(files,sbi), only = null, selected = new Map(), acceptanceRunner = runGeneratedAcceptance, generatedSpecDigest = null, generatedSpecError = null }) {
   const registry = new Map([...verifierRegistry(config)].filter(([id]) => !only || only.has(id)));
   // A run generates its Trusted Acceptance in the workspace (#147), so the root config does not know it yet; the workspace registration does.
   for (const id of new Set(sbi.acceptanceCriteria.map(a => a.verifier))) {
@@ -52,7 +52,8 @@ export async function verify({ root, workspace, config, sbi, files = sbi.allowed
     // Generated Trusted Acceptance: re-verify the registration (spec, tests, spec support), then run the generated specs isolated (I).
     if (adapter.generated) {
       const registration = await readAcceptance(workspace, adapter.sbiIssue).catch(error => ({ error: error.message }));
-      const reasons = registration?.version === 2
+      // CI checks against the current SBI Issue; an Issue it could not read leaves nothing to check the spec digest against.
+      const reasons = generatedSpecError ? [generatedSpecError] : registration?.version === 2
         ? await verifyGeneratedRegistration({ root: workspace, registration, ...(generatedSpecDigest ? { specDigest: generatedSpecDigest, sbiIssue: adapter.sbiIssue } : {}) })
         : [registration?.error ?? `generated registration of SBI #${adapter.sbiIssue} is missing`];
       if (reasons.length) { checks.push({ ...base, required: true, status: 'FAIL', reason: reasons.join('; ') }); continue; }

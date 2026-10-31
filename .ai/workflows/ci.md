@@ -57,10 +57,10 @@ Completion Judge（`harness` job）が次をすべて確かめ、1つでも欠�
 | 確認 | 内容 |
 | --- | --- |
 | snapshot | PRで追加・変更された `.harness/state/sbi-<Issue番号>.json` が `sbiSnapshotSchema` を満たす。source Issue（repo / number / url）、Run開始時のtitle / body digest、Run ID、RunのSBIを持つ |
-| source Issue | GitHub APIで読んだ現在のIssueが、このリポジトリのもので、open・`sbi`・`ready`あり・`needs-review`なし。読めなければFAIL |
+| source Issue | GitHub APIで読んだ現在のIssueが、このリポジトリのもので、open・`sbi`・`ready`あり・`needs-review`なし。読めなければFAIL。生成したTrusted Acceptance（version 2の登録）のPRでは、`ready`の代わりに現在のspec digestへの`harness-spec`承認（write以上・未編集）を求める。`ready`だけでは通らない |
 | 現在のIssueとの一致 | 現在のIssue本文と、そのIssueのTrusted Acceptance登録（`.harness/acceptance/sbi-<番号>.json`）からSBIを組み立て直し、snapshotのSBIと完全に一致する。title / body digestも現在のIssueから計算し直して一致する。組み立てられない・1項目でも違えばFAILし、違う項目名を出す |
 | Run の紐付け | PRのcommitのどれかが、snapshotと同じ値の `Harness-Run: <Run ID>` と `SBI-Issue: <Issue URL>` trailerを持つ |
-| 変更ファイル数 | 実装SBI（`kind: implementation`）のPRは、snapshotを除いた変更ファイル数（削除を含む）が、目安10ファイルとIssueの `## 想定変更ファイル数` の両方を超えたらFAIL。想定が書かれていないIssueもFAIL。最終確認SBIは数えない。通すにはPRを分けるか、Issueの想定を直して新しいRunを始める |
+| 変更ファイル数 | 実装SBI（`kind: implementation`）のPRは、snapshotと生成したTrusted Acceptance（登録とテスト）を除いた変更ファイル数（削除を含む）が、目安10ファイルとIssueの `## 想定変更ファイル数` の両方を超えたらFAIL。想定が書かれていないIssueもFAIL。最終確認SBIは数えない。通すにはPRを分けるか、Issueの想定を直して新しいRunを始める |
 
 snapshotとtrailerはHarnessがRunとPR作成のときに書く。人間はSBI JSONを書かない。snapshotのSBIは手書きのSBI JSONと同じくImpact AnalysisとTrusted Acceptanceに使う。Issue本文からSBIへの組み立ては `tools/harness/sbi-issue.mjs` の `sbiFromIssue` で、Runの開始とCIで同じ処理を使う。
 保証するのは「CIを実行した時点で、PRのsnapshotが承認済みSBI Issueの現在の内容と完全に一致し、snapshotが改変されていない」こと。Run開始後にIssueを編集した（チェックボックスを付けただけでも）PRはFAILする。編集を残すなら、そのIssueから新しいRunを始める。
@@ -94,9 +94,10 @@ mainへのpushでは全Verifierを実行し、Full Gateも実行する。
 | 区分 | 内容 |
 | --- | --- |
 | Application | `verifiers` matrixと、Full Gateなら`harness-test` / `harness-demo`のjob結果 |
-| Acceptance | 変更されたSBIのTrusted Acceptance（`trust: acceptance`）をjudge内で実行した結果 |
+| Acceptance | 変更されたSBIのTrusted Acceptance（`trust: acceptance`）をjudge内で実行した結果。生成したTrusted Acceptanceは下記 |
 | Security | `classifySecurity()`がdiffとSBIから決めたrequired verifierを`verifySecurity()`で評価した結果。`alwaysRequiredVerifiers`（secret-scan・forbidden-pattern-check）は常に含む。`appliesTo`を持つ実装Verifierは、ルールに一致したファイルがその範囲に入るときだけ含む |
 
+- 生成したTrusted Acceptance（#147）はPRのコードを動かすため、judgeでは実行しない。Impact Analysisが`generated-acceptance-sbi-<番号>`を必須の`verifiers` matrixに入れ、そのlegが生成specをDocker Compose経由で実行して、RSpecの結果を`HARNESS_ACCEPTANCE_RESULTS/sbi-<番号>.json`（head SHA付き）に残し、`acceptance-results-<verifier>` artifactにする。judgeはそれをダウンロードし、現在のIssueのspec digest・生成テストとspec supportのdigestを登録と照合してから、結果ファイルでACを判定する。結果ファイルが無い・形が違う・別SHA・Issueを読めない、のどれもFAIL。実装前の検出（G）のCIでの再検証はまだ無い（#168まではL3のまま）。
 - SecurityはFAIL・NOT_CONFIGURED・SKIP・未実行をPASS扱いしない。Security ruleが追加したverifierのコマンドが未設定なら、そのPRはFAILする。
 - SBIの`requiredVerifiers`にあるapplication verifierは、matrix jobの結果をSecurityの判定にも使う。
 - secret-scanとforbidden-pattern-checkは、変更ファイルの追加行を検査する。`tools/harness/*.test.mjs`はredactionのfixtureを含むため、Harness worktree作成時と同じくcredential形式の値だけを秘密値とみなす。
