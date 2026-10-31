@@ -197,20 +197,21 @@ describe('Risk contract for prototype lanes', () => {
       assert.equal(result.requiredApprovals, 2);
       assert.equal(result.decision, 'WAITING_FOR_HUMAN_REVIEW');
     });
-    it('when level 1 applies then keeps auto merge disabled for prototypes', () => {
+    // #157: a LEVEL 1 prototype merges automatically under the same conditions as Production.
+    it('when level 1 applies then a prototype is auto merge eligible like Production', () => {
       const result = decide(1, [], { lane });
       assert.equal(result.decision, 'MERGE_ALLOWED');
-      assert.equal(result.autoMergeEligible, false);
+      assert.equal(result.autoMergeEligible, true);
     });
     it('when a promoted prototype has its merge approval then merge does not wait for any Design Approval', () => {
       const result = decide(2, [approval('A')], { lane: { name: 'production', requiresSecurityGate: false, reasons: ['prototype-promotion'] } });
       assert.notEqual(result.decision, 'WAITING_FOR_DESIGN_APPROVAL');
       assert.equal(result.reasons.includes('design_approval_not_approved'), false);
     });
-    it('when ordinary prototype content changes then the default level applies without auto merge', () => {
+    it('when ordinary prototype content changes then the default level applies and auto merge is allowed', () => {
       const result = risk([file('prototypes/web/View.tsx', 'Static dummy card')], { lane });
       assert.equal(result.level, 1);
-      assert.equal(result.autoMergeAllowed, false);
+      assert.equal(result.autoMergeAllowed, true);
       assert.ok(result.reasons.includes('default_low'));
     });
     it('when prototype content has high risk or AI raises it then never downgrades the floor', () => {
