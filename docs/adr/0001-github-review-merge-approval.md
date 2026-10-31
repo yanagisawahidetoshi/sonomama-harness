@@ -2,6 +2,7 @@
 
 - 状態: Accepted（2026-10-27、柳沢英俊がPR #18の再レビュー後に承認）
 - 日付: 2026-10-27
+- 改訂: Proposed（2026-10-31、#175・#193の決定に合わせて実装前Gateの記述を改める案。判断者が承認した時点で改訂後の本文をAcceptedとする）
 - 判断者: 柳沢英俊
 - 関連SBI: Issue #15（GitHub PR Adapter）
 
@@ -22,7 +23,7 @@
 - GitHub PR mode（`harness:pr`でPRを作ったrun）では、実装後のMerge ApprovalのSource of TruthをGitHub Reviewにする。
   `harness:approve --phase merge`は要求しない。記録しようとしても拒否する。
 - Local mode（PRを作っていないrun）では、従来のローカル台帳を使う。2つの方式を同時には要求しない。
-- API Schema Approval、Design Approval、実装前Gateは、ローカル台帳のまま変えない。
+- API Schema Approvalは、ローカル台帳のまま変えない。Design Approvalは#155で、実装前Gateは#175・#193で廃止した。
 - 承認として数えるのは、APPROVEDの対象SHA、現在のPR HEAD SHA、Harnessが検証したSHAの3つが一致するReviewだけ。
   botとPR作成者は数えない。同じuserは1人と数え、最新のReviewだけを使う。CHANGES_REQUESTEDは対象SHAにかかわらずブロックする。
 - Reviewは、GitHubと同じくリポジトリのwrite以上の権限を持つ人のものだけを数える。read以下の人のCHANGES_REQUESTEDもブロックにしない。
