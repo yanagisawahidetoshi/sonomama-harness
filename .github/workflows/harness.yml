@@ -8,6 +8,8 @@ permissions:
 env:
   # Pull requests are verified against their base branch; a push to main runs every verifier and the Full Gate.
   HARNESS_SCOPE: ${{ github.event_name == 'pull_request' && format('--base origin/{0}', github.base_ref) || '--all' }}
+  # The self-repair demo needs no verifier to prove its loop, so a pull request runs it without the real application verifiers (#192).
+  HARNESS_DEMO_SCOPE: ${{ github.event_name != 'pull_request' && '--full' || '' }}
 jobs:
   impact:
     runs-on: ubuntu-latest
@@ -79,6 +81,11 @@ jobs:
     if: needs.impact.outputs.full_gate == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # The same file list in parallel shards (#197); the Completion Judge reads the combined result of the matrix.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -91,6 +98,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm harness:test
+        env:
+          HARNESS_TEST_SHARD: ${{ matrix.shard }}/3
   harness-demo:
     needs: impact
     if: needs.impact.outputs.full_gate == 'true'
@@ -107,7 +116,7 @@ jobs:
           node-version-file: .node-version
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm harness:demo --full
+      - run: pnpm harness:demo $HARNESS_DEMO_SCOPE
   # Completion Judge. The job id stays "harness" because it is the required status check.
   # Mobile E2E (#68, #145): only for mobile SBIs that ask for E2E (impact maestro lanes), plus a push to main that keeps the APK cache.
   # It builds the Development Build and runs Metro and the Emulator on the runner itself, outside the Docker isolation of the other

@@ -315,6 +315,11 @@ export const lanePolicySchema = z.strictObject({
   prototypeGates: z.tuple([z.literal('typecheck'),z.literal('lint'),z.literal('format'),z.literal('build'),z.literal('secret-scan')]),
   productionGates: z.array(text).min(1),
 });
+// ADR-0006: only these rules can prove a Production file engineering; a file no rule proves is ambiguous.
+export const changeTypeRulesSchema = z.strictObject({
+  version: z.literal(1),
+  engineering: z.array(z.strictObject({ id: text, pattern: text, exclude: z.array(text).optional(), content: z.enum(['package-json-dependency-versions', 'gemfile-versions']).optional() })).min(1),
+}).refine(p => new Set(p.engineering.map(r => r.id)).size === p.engineering.length, 'duplicate change type rule');
 // summary.json is the signed authority for resume and merge assessment. Nested evidence stays open; the fields judges read are typed.
 const gitSha = z.string().regex(/^[0-9a-f]{40,64}$/);
 const result = z.looseObject({ status: text }).nullable();
