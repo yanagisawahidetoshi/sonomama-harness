@@ -462,7 +462,7 @@ describe('PBI Status: display', () => {
       assert.match(text, /^Status: NOT_DONE$/m);
       assert.match(text, /SBI-001 implementation .*#11.*merged.*verifier PASS.*E2E mock PASS/);
       assert.match(text, /SBI-003 validation .*#13.*E2E real PASS/);
-      assert.match(text, /PBI plan\n✅ APPROVED by alice \(digest [0-9a-f]{12}\)/);
+      assert.match(text, /PBI plan\n✅ APPROVED \(plan-approved, digest [0-9a-f]{12}\)/);
       assert.match(text, /Human Acceptance\n.*PENDING/);
       assert.match(text, new RegExp(`Evidence digest: ${acceptedDigest}`));
       assert.match(text, new RegExp(`pnpm harness:pbi-accept ${pbi.url} --evidence ${acceptedDigest}`));

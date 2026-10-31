@@ -127,7 +127,7 @@ describe('PBI → SBI Planner', () => {
         { id: 'SBI-003', number: 103, kind: 'validation', dependsOn: ['SBI-001', 'SBI-002'] },
       ]), errors: [] });
       assert.equal(result.planDigest, planDigest(parsePlan(body, pbiUrl).plan));
-      assert.match(body, /pnpm harness:pbi-plan-approve https:\/\/github\.com\/acme\/app\/issues\/8/);
+      assert.match(body, /`plan-approved` ラベルを付ける/);
     })));
     it('when a human edits the PBI body while the Planner runs then ## SBI構成 is added to the edited body instead of overwriting the edit', () => fixture(root => mockGitHub({}, async github => {
       const agent = async () => { await github.update(state => { state.issue.body += '\n\n追記: 管理者向けの表示は対象外'; }); return { sbis: validPlan(), escalation: null }; };
