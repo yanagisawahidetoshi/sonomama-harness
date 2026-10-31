@@ -650,7 +650,10 @@ describe('GitHub PR Adapter', () => {
       const cli = async (root, args, response = { files: [{ path: home, content: 'ホーム' }], escalation: null }) => {
         const bin = await mkdtemp(join(tmpdir(), 'harness-codex-'));
         try {
-          await writeFile(join(bin, 'codex'), `#!${process.execPath}\nconst fs = require('node:fs'), args = process.argv.slice(2); fs.readFileSync(0); fs.writeFileSync(args[args.indexOf('--output-last-message') + 1], process.env.CODEX_STUB_RESPONSE);\n`);
+          await writeFile(join(bin, 'codex'), `#!${process.execPath}\nconst fs = require('node:fs'), args = process.argv.slice(2), prompt = fs.readFileSync(0, 'utf8');\n`
+            // The AI Review adapter (#187) runs the same CLI; the stub passes the head SHA it was shown.
+            + `const review = prompt.includes('AI Review of the SONOMAMA Harness') && { headSha: prompt.match(/"headSha": "([0-9a-f]{40,64})"/)[1], status: 'PASS', riskLevel: 1, reasons: ['stub review'] };\n`
+            + `fs.writeFileSync(args[args.indexOf('--output-last-message') + 1], review ? JSON.stringify(review) : process.env.CODEX_STUB_RESPONSE);\n`);
           await chmod(join(bin, 'codex'), 0o755);
           const child = spawn(process.execPath, [join(root, 'tools/harness/cli.mjs'), ...args], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'],
             env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, CODEX_STUB_RESPONSE: JSON.stringify(response) } });
@@ -666,13 +669,13 @@ describe('GitHub PR Adapter', () => {
         await mkdir(join(root, '.git/info'), { recursive: true });
         await appendFile(join(root, '.git/info/exclude'), 'node_modules\n');
       };
-      // The CLI connects no AI Review adapter until #187, so the PR is opened but its merge decision stays blocked on AI Review.
-      it('when harness:run SBI_URL opens the PR without an AI Review adapter then names AI Review as the blocker and exits 2', () => fixture(root => linked(root).then(() => withIssue(root, sbiIssue(), async ({ github }) => {
+      // The CLI connects the provider's AI Review adapter (#187), so the PR waits for its human review, not for AI Review.
+      it('when harness:run SBI_URL opens the PR then the provider CLI reviews its head SHA and AI Review is not the blocker', () => fixture(root => linked(root).then(() => withIssue(root, sbiIssue(), async ({ github }) => {
         const { code, output } = await cli(root, ['run', issueUrl, '--provider', 'codex']);
-        assert.equal(code, 2, output);
+        assert.equal(code, 0, output);
         assert.equal((await github.state()).pulls.length, 1);
         assert.match(output, /Pull request: https:\/\/github.com\/acme\/app\/pull\//);
-        assert.match(output, /AI Review: NOT_CONFIGURED/);
+        assert.doesNotMatch(output, /AI Review: /);
       }))));
       it('when harness:run SBI_URL of a level 3 Issue runs then it opens the PR without stopping at a gate', () => fixture(root => linked(root).then(() => withIssue(root, sbiIssue(['sbi', 'ready'], planned({ riskCandidate: 'L3' })), async ({ github }) => {
         const started = await cli(root, ['run', issueUrl, '--provider', 'codex']);
