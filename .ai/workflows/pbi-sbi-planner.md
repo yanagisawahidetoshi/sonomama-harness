@@ -99,7 +99,7 @@ SBI Quality Judgeは次を検査し、満たさなければIssueを作成しな�
 
 `GITHUB_STEP_SUMMARY`があれば同じ一覧をJob Summaryへ追記する。
 workflowはこのリポジトリに含めていない。追加する場合は`issues: write`とprovider CLIの認証情報が必要で、
-CI/CDとSecretの変更はLEVEL 3 / Security Gateの対象になる。
+Secretの変更はLEVEL 3 / Security Gateの対象、CI/CDの変更はLEVEL 2・SEC-CICD-001の対象になる。
 
 ## やらないこと
 

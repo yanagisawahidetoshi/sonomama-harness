@@ -13,7 +13,7 @@ SBIは、PBIをAIが実装できる大きさに分けた作業単位である。
 | 受け入れ要件（acceptance criteria） | 何ができれば受け入れるか。項目ごとに一意のIDと検証方法を付ける |
 | 変更してよいファイル（allowedFiles） | AIが変更してよいファイルの相対パス。書いたファイルだけを許可する |
 | 変更してよいディレクトリ（allowedDirs） | 末尾`/`付きのディレクトリ。配下のファイルを許可する。SBI Issueの想定変更範囲から作る |
-| リスク（risks） | 認証（AuthN）、認可（AuthZ）、行単位のアクセス制御（RLS）、個人情報（PII）、マイグレーション、ADRへの影響 |
+| リスク（risks） | Human Gateの対象となる影響だけを書く。認証（AuthN）、認可（AuthZ）、行単位のアクセス制御（RLS）、個人情報（PII）。マイグレーションやADRはここではなくsecurityImpactとriskCandidateで表す |
 | あいまいさ（ambiguous / requiresDesignDecision） | 仕様があいまいか、先に設計の判断が要るか。真偽値で書く |
 
 受け入れ要件は、次の形のシナリオで書く。
@@ -34,7 +34,7 @@ Feature: [機能]
 | requiredSecurityRules | 関係するルールID（SEC-RLS-001など） |
 | requiredVerifiers | このSBIのために追加で必須にする検証 |
 | preImplementationGate | trueなら、SBI承認で人が判断した安全性に関わるSBIとして扱う。実装前には止めず、レベル3と実装後の2人以上のレビューを求める |
-| minimumRiskLevel | 2または3 |
+| minimumRiskLevel | 1・2・3のどれか（既定は1） |
 
 ここに書いた値で、docs/securityのルールを弱めることはできない。ルールが求める検証を省いても、Harnessは必ず実行する。必須の検証が用意されていなければ、そこで止まる。
 

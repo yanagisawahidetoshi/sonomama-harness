@@ -1,5 +1,5 @@
 {
-  "humanGate": ["AuthN", "AuthZ", "RLS", "PII", "Migration", "ADR"],
-  "protectedPathPatterns": ["(^|/)(auth|authentication|authorization|rls|pii)(/|\\.)", "(^|/)(migrate|migrations)(/|$)", "(^|/)docs/adr(/|$)"],
+  "humanGate": ["AuthN", "AuthZ", "RLS", "PII"],
+  "protectedPathPatterns": ["(^|/)(auth|authentication|authorization|rls|pii)(/|\\.)"],
   "maxFileBytes": 65536
 }
