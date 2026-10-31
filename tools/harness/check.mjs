@@ -24,17 +24,20 @@ export async function check(root, sbiPath, sbiValue, { sbiIssue = null } = {}) {
   const rules = rulesSchema.parse(await readJson(join(root, '.harness/rules/policy.json')));
   for (const pattern of rules.protectedPathPatterns) new RegExp(pattern);
   const riskPolicy = riskPolicySchema.parse(await readJson(join(root, '.harness/rules/pr-risk.json')));
-  for (const rule of [...riskPolicy.pathRules, ...riskPolicy.metadataRules, ...riskPolicy.safeRules]) new RegExp(rule.pattern);
+  for (const rule of [...riskPolicy.pathRules, ...riskPolicy.metadataRules]) new RegExp(rule.pattern);
+  for (const pattern of [riskPolicy.testProtection.pathPattern, riskPolicy.testProtection.weakeningPattern, riskPolicy.testProtection.assertionPattern]) new RegExp(pattern);
   const securityPolicy = securityPolicySchema.parse(await readJson(join(root, '.harness/rules/security.json')));
   const humanGates = humanGatesSchema.parse(await readJson(join(root, '.harness/rules/human-gates.json')));
   dependencyBotPolicySchema.parse(await readJson(join(root, '.harness/rules/dependency-bots.json')));
   const securityDocuments = {};
   for (const rule of securityPolicy.rules) {
-    for (const pattern of [...rule.pathPatterns, ...rule.contentPatterns, ...rule.metadataPatterns, ...(rule.contentExceptions || []).flatMap(e => [...e.pathPatterns, ...e.ignoredPatterns])]) new RegExp(pattern);
+    for (const pattern of [...rule.pathPatterns, ...rule.contentPatterns, ...rule.metadataPatterns, ...(rule.contentExceptions || []).flatMap(e => [...e.pathPatterns, ...e.ignoredPatterns]),
+      ...(rule.addedContent ? [...rule.addedContent.pathPatterns, ...rule.addedContent.patterns, ...rule.addedContent.ignoredPatterns, ...rule.addedContent.removedPatterns] : [])]) new RegExp(pattern);
     const text = await readFile(join(root, rule.policyDocument), 'utf8');
     if (!text.includes(rule.id)) throw new Error('Security policy document is missing a referenced rule ID');
     securityDocuments[rule.policyDocument] = text;
-    if (!humanGates.preImplementationRuleIds.includes(rule.id)) throw new Error('Security Human Gate rules are inconsistent');
+    // Only a rule that carries the Human Gate is listed; an ordinary rule (preImplementationGate false) must not be (#157).
+    if (rule.preImplementationGate !== humanGates.preImplementationRuleIds.includes(rule.id)) throw new Error('Security Human Gate rules are inconsistent');
   }
   for (const id of humanGates.preImplementationRuleIds) if (!securityPolicy.rules.some(r => r.id === id)) throw new Error('Unknown Human Gate security rule');
   for (const pattern of [...securityPolicy.secretPatterns, ...securityPolicy.forbiddenPatterns, ...securityPolicy.piiLogPatterns, ...securityPolicy.verifiers.flatMap(v => v.appliesTo || [])]) new RegExp(pattern);
