@@ -58,7 +58,10 @@
 - **版ずれ**: impact と judge を同じ main のコードで動かすので、producer と judge の版ずれは起きない。artifact が無い・schema に合わない・head SHA が違う・要求した verifier が skipped のときは FAIL にする。
 - **不変条件: judge の workflow・判定コード・ルールの変更は、main に merge されるまで、どの PR の判定にも影響しない。** その PR 自身の判定も、変更前の main のもので行う。
 - **Actions の event policy**: この repo は public で、2026-12-02 から event policy の無い public repo では `pull_request_target` が既定で無効になる。event policy で `pull_request_target` を許可し、対象は judge の workflow ファイルだけに限る。
-- **暫定措置**: judge が main で動き、ruleset を切り替えるまでの間、今の `harness`@15368 の偽装を補う統制を main に置く。偽装した check では merge できず、`Completion Judge` だけが必須チェックを満たすことを確かめてから、暫定措置を外すかを判断する。
+- **運用の段階（bootstrap policy）**: 今の bypass の穴は、次の段階の方針として受け入れる。一時的な例外とはしない。
+  - Personal / Bootstrap（今）: collaborator は実質1人。承認レビュー数は 0 のまま（PR の作成者は自分の PR を承認できず、作成も同じアカウントで行うため）。`.github/workflows/**` を変える PR は repo owner が目で確かめる。Completion Judge の実装を優先する。
+  - Team / Production: 承認レビュー数を 1 以上にし、L3 は異なる2人にする。CODEOWNERS と ruleset を有効にする。必須チェックは `Completion Judge`@App に固定する。admin の bypass は置かないか、break-glass として扱う。`.github/workflows/**` と Security 系の変更は高リスクとして扱う。provider の identity と権限を個人のアカウントから切り離す。
+  - 移行の条件は日付ではなくイベントにする。repository の owner / organization が変わる、collaborator が2人以上になる、外部の contributor を受け入れる、本番運用を始める、GitHub App / bot が merge の判定に加わる、のどれかが起きたら Team / Production に移る。
 
 ## 理由
 
@@ -99,6 +102,7 @@ check の出し手を、PR が token を持てない App に固定すれば、PR
 
 - GitHub が、同じ App の check を workflow ファイル単位で区別して必須にできるようになったとき
 - Actions の event policy の仕様が変わり、`pull_request_target` が使えなくなったとき
+- Team / Production への移行の条件のどれかが起きたとき（ruleset とこの ADR の段階を見直す）
 
 ## 関連資料
 
