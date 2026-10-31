@@ -6,7 +6,7 @@ import { pbiAcceptanceRecordSchema } from './schemas.mjs';
 //   validation → { e2e: { status, api }, evidenceDigest }. Missing means not run yet.
 // - evidenceDigest: without a validation SBI, the adapter's digest of the merged implementation evidence (e.g. merge commit SHAs).
 // - acceptanceRecords: PBI Human Acceptance Gate records from the identity adapter (purpose pbi-acceptance), bound to that evidence digest.
-// - blockingBugs: [{ url, state }] linked to the PBI; anything but closed blocks it.
+// - blockers: [{ url, state }] the Issues the PBI is blocked by, of any label; anything but closed blocks it.
 const e2eApis = Object.freeze({ implementation: 'mock', validation: 'real' });
 export const e2eApi = kind => e2eApis[kind];
 
@@ -34,7 +34,7 @@ function accepted(pbiUrl, evidenceDigest, records) {
   return [...latest.values()].some(r => r.decision === 'APPROVE' && r.evidenceDigest === evidenceDigest);
 }
 
-function evaluate({ pbiUrl, sbis, results = {}, evidenceDigest, acceptanceRecords = [], blockingBugs = [] }) {
+function evaluate({ pbiUrl, sbis, results = {}, evidenceDigest, acceptanceRecords = [], blockers = [] }) {
   const reasons = [], status = {};
   const of = kind => sbis.filter(s => s.kind === kind);
   for (const sbi of of('implementation')) status[sbi.id] = implementationStatus(sbi.id, results[sbi.id], reasons);
@@ -49,7 +49,7 @@ function evaluate({ pbiUrl, sbis, results = {}, evidenceDigest, acceptanceRecord
   if (ready && !/^[0-9a-f]{64}$/.test(digest ?? '')) reasons.push('PBI Human Acceptance Gateで確認するEvidence digestがありません');
   const acceptance = ready && accepted(pbiUrl, digest, acceptanceRecords) ? 'APPROVED' : 'PENDING';
   if (acceptance !== 'APPROVED') reasons.push('PBI Human Acceptance Gateに、すべてのSBI完了後のEvidenceに対する人間の承認がありません');
-  for (const bug of blockingBugs) if (bug.state !== 'closed') reasons.push(`未解決のバグ ${bug.url} がPBIをブロックしています`);
+  for (const blocker of blockers) if (blocker.state !== 'closed') reasons.push(`未解決のblocker ${blocker.url} がPBIをブロックしています`);
   return { status, acceptance, reasons };
 }
 

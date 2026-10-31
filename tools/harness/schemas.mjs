@@ -58,6 +58,14 @@ export const generatedRegistrationSchema = z.strictObject({
   protectedFiles: z.array(z.strictObject({ path: relativePath, sha256: z.string().regex(/^[0-9a-f]{64}$/) })),
   mapping: z.array(z.strictObject({ scenario: text, acceptanceIds: z.array(text).min(1), examples: z.array(z.strictObject({ path: relativePath, description: text })).min(1) })).min(1),
 });
+// The generated acceptance report one verifier matrix leg leaves for the Completion Judge (#147). It comes from a job that ran PR code.
+export const acceptanceResultSchema = z.strictObject({
+  sbiIssue: z.number().int().positive(), headSha: z.string().regex(/^[0-9a-f]{40}$/),
+  report: z.strictObject({
+    examples: z.array(z.strictObject({ description: z.string(), status: z.string(), exceptionClass: z.string().nullable(), message: z.string().nullable() })),
+    errorsOutsideOfExamples: z.number().int().min(0), error: z.string().optional(),
+  }),
+});
 export const configSchema = z.strictObject({
   version: z.literal(1), provider: z.enum(['fake', 'codex', 'claude']), sbi: relativePath,
   maxConsecutiveFailures: z.number().int().min(1).max(3), maxIterations: z.number().int().min(1).max(20),
@@ -78,6 +86,8 @@ export const configSchema = z.strictObject({
     trustedScript: relativePath.optional(),
     // Trusted Acceptance a human registered for one SBI Issue; its acceptanceIds are that Issue's acceptance criteria.
     sbiIssue: z.number().int().positive().optional(),
+    // Trusted Acceptance generated in the run from a version 2 registration (#147); it runs the generated specs, not a trustedScript.
+    generated: z.boolean().optional(),
     areas: z.array(text).default([]),
     // container: workspace-only Docker container. compose: Harness-started Compose after the file is checked.
     // harness: a Harness-owned script that only parses workspace files. network grants egress to this verifier only.
@@ -198,7 +208,7 @@ export const githubIssueListSchema = z.array(githubIssueSchema);
 export const githubTimelineSchema = z.array(z.object({ event: z.string().nullable().optional(),
   source: z.object({ issue: z.object({ number: z.number().int().positive(), html_url: z.url(), pull_request: z.unknown().optional() }).optional() }).nullable().optional() }));
 export const githubPullSchema = z.object({
-  number: z.number().int().positive(), merged_at: z.string().nullable(), base: z.object({ ref: z.string() }), body: z.string().nullable().default(null),
+  number: z.number().int().positive(), merged_at: z.string().nullable(), merge_commit_sha: z.string().nullable().optional(), base: z.object({ ref: z.string() }), body: z.string().nullable().default(null),
   user: z.object({ login: z.string(), type: z.string() }).nullable().optional(),
   head: z.object({ sha: z.string(), repo: z.object({ full_name: z.string() }).nullable() }).optional(),
 });
@@ -212,6 +222,7 @@ export const dependencyBotPolicySchema = z.strictObject({
   bots: z.array(z.strictObject({ login: text.regex(/\[bot\]$/), type: z.literal('Bot') })),
   paths: z.array(relativePath),
 });
+// user and the timestamps tell a human approval line from a bot or an edited comment (github-approval-records.mjs).
 export const githubCommentSchema = z.object({ id: z.number().int().positive(), body: z.string().nullable().default(null), html_url: z.url(),
   user: z.object({ login: z.string(), type: z.string().optional() }).nullable().optional(), created_at: z.string().optional(), updated_at: z.string().optional() });
 export const githubCommentListSchema = z.array(githubCommentSchema);
@@ -247,6 +258,19 @@ export const pbiAcceptanceRecordSchema = z.strictObject({
   decision: z.enum(['APPROVE', 'REQUEST_CHANGES', 'REVOKE']), decidedAt: z.iso.datetime(),
   evidenceDigest: z.string().regex(/^[0-9a-f]{64}$/), signature: text,
 });
+// What harness:pbi-accept verified from the raw CI artifacts at APPROVE. It keeps the PBI DONE after the artifacts expire, and only while the
+// approved plan, the SBI composition and every PR, head and merge commit are still the same.
+const nullableSha = z.string().regex(/^[0-9a-f]{40,64}$/).nullable();
+export const pbiEvidenceManifestSchema = z.strictObject({
+  id: text, pbiUrl: z.url(), evidenceDigest: z.string().regex(/^[0-9a-f]{64}$/), recordedAt: z.iso.datetime(),
+  plan: z.strictObject({ digest: z.string().regex(/^[0-9a-f]{64}$/), revision: z.number().int().positive(), approvalKey: z.string().regex(/^[0-9a-f]{64}$/) }),
+  sbis: z.array(z.strictObject({
+    id: text, number: z.number().int().positive(), kind: z.enum(sbiKinds), pullRequest: z.number().int().positive().nullable(), headSha: nullableSha, mergeCommitSha: nullableSha,
+    requiredChecks: z.array(z.strictObject({ name: text, status: text })), e2e: z.strictObject({ status: text, api: z.enum(['mock', 'real']) }).nullable(),
+    lane: z.enum(['mock', 'real']).nullable(), resultDigest: z.string().regex(/^[0-9a-f]{64}$/).nullable(), workflowRunId: z.number().int().positive().nullable(), artifactId: z.number().int().positive().nullable(),
+  })).min(1),
+  signature: text,
+});
 export const apiSchemaGenerationRecordSchema = z.strictObject({
   purpose: z.literal('api-schema-generation'), issueUrl: z.url(), runId: text, required: z.union([z.literal(1), z.literal(2)]),
   files: z.strictObject({ 'openapi.yaml': z.string().regex(/^[0-9a-f]{64}$/), 'proposal.json': z.string().regex(/^[0-9a-f]{64}$/), 'summary.md': z.string().regex(/^[0-9a-f]{64}$/) }),
@@ -277,6 +301,11 @@ export const lanePolicySchema = z.strictObject({
   prototypeGates: z.tuple([z.literal('typecheck'),z.literal('lint'),z.literal('format'),z.literal('build'),z.literal('secret-scan')]),
   productionGates: z.array(text).min(1),
 });
+// ADR-0006: only these rules can prove a Production file engineering; a file no rule proves is ambiguous.
+export const changeTypeRulesSchema = z.strictObject({
+  version: z.literal(1),
+  engineering: z.array(z.strictObject({ id: text, pattern: text, exclude: z.array(text).optional(), content: z.enum(['package-json-dependency-versions', 'gemfile-versions']).optional() })).min(1),
+}).refine(p => new Set(p.engineering.map(r => r.id)).size === p.engineering.length, 'duplicate change type rule');
 // summary.json is the signed authority for resume and merge assessment. Nested evidence stays open; the fields judges read are typed.
 const gitSha = z.string().regex(/^[0-9a-f]{40,64}$/);
 const result = z.looseObject({ status: text }).nullable();
@@ -306,6 +335,8 @@ export const runStateSchema = z.strictObject({
   riskPreflight: z.looseObject({ level: z.union([z.literal(1), z.literal(2), z.literal(3)]) }).optional(),
   risk: z.looseObject({ level: z.union([z.literal(1), z.literal(2), z.literal(3)]) }).optional(),
   escalation: z.strictObject({ code: z.enum(escalationCodes), detail: z.string() }).optional(),
+  // #147: Trusted Acceptance generated in the run from the approved spec; registrationSha is the commit that registered it.
+  acceptance: z.strictObject({ mode: z.literal('generated'), specDigest: sha256, registrationSha: gitSha }).optional(),
   pullRequest: z.strictObject({ number: z.number().int().positive(), url: z.url(), branch: text, base: text, repository: text }).optional(),
   // harness:reverify (ADR-0003): a run that verifies the code of an existing PR merged with the new main, without the implementation agent.
   kind: z.literal('reverify').optional(),

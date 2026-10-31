@@ -1,0 +1,154 @@
+# students.yaml after a contract change: studentId became an integer. Rails still returns a string.
+openapi: 3.1.0
+info:
+  title: API contract fixture
+  version: "1"
+paths:
+  /students:
+    get:
+      operationId: listStudents
+      parameters:
+        - name: grade
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Students
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StudentList"
+        "400":
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createStudent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StudentInput"
+      responses:
+        "201":
+          description: Created
+          headers:
+            Location:
+              required: true
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Student"
+        "400":
+          $ref: "#/components/responses/Error"
+  /students/{studentId}:
+    parameters:
+      - name: studentId
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: getStudent
+      responses:
+        "200":
+          description: Student
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Student"
+        "404":
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteStudent
+      responses:
+        "204":
+          description: Deleted
+  /students/{studentId}/archive:
+    parameters:
+      - name: studentId
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: archiveStudent
+      responses:
+        "202":
+          description: Accepted without a body
+          headers:
+            Location:
+              required: true
+              schema:
+                type: string
+components:
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    Student:
+      type: object
+      required: [studentId, name, status, guardianEmail, tags, profile]
+      properties:
+        studentId:
+          type: integer
+        name:
+          type: string
+        status:
+          type: string
+          enum: [active, suspended]
+          default: active
+        nickname:
+          type: [string, "null"]
+        guardianEmail:
+          type: string
+          format: email
+        tags:
+          type: array
+          items:
+            type: string
+        profile:
+          type: object
+          required: [grade]
+          properties:
+            grade:
+              type: integer
+    StudentList:
+      type: object
+      required: [students]
+      additionalProperties: false
+      properties:
+        students:
+          type: array
+          items:
+            $ref: "#/components/schemas/Student"
+    StudentInput:
+      type: object
+      required: [name, grade]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+        grade:
+          type: integer
+    Error:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [invalid_request, not_found]
+            message:
+              type: string

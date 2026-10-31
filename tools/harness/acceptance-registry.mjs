@@ -4,6 +4,8 @@ import { acceptanceRegistrationSchema, configSchema, generatedRegistrationSchema
 // harness.json holds the shared Verifier Registry only. The Trusted Acceptance of an SBI Issue lives in .harness/acceptance/sbi-<N>.json,
 // so a run and the CI rebuild of its SBI read that Issue's file alone and a registration for another Issue changes nothing for them.
 export const acceptancePath = number => `.harness/acceptance/sbi-${number}.json`;
+// The one acceptance verifier of a spec-approved SBI whose Trusted Acceptance is generated in the run (#147).
+export const generatedVerifierId = number => `generated-acceptance-sbi-${number}`;
 
 export async function readAcceptance(root, number) {
   const path = acceptancePath(number);
@@ -22,6 +24,12 @@ export async function withAcceptance(root, config, numbers) {
   const verifiers = [...config.verifiers];
   for (const number of [...new Set(numbers)]) {
     const registration = await readAcceptance(root, number);
+    if (registration?.version === 2) {
+      const id = generatedVerifierId(number);
+      if (verifiers.some(other => other.id === id)) throw new Error(`${acceptancePath(number)}: verifier ID ${id} is already registered`);
+      verifiers.push({ id, trust: 'acceptance', generated: true, directory: '.', planned: ['Generated Trusted Acceptance (Rails request spec)'], commands: [],
+        acceptanceIds: [...new Set(registration.mapping.flatMap(m => m.acceptanceIds))].sort(), sbiIssue: number });
+    }
     for (const v of registration?.version === 1 ? registration.verifiers : []) {
       if (v.id === 'sample-bdd' || verifiers.some(other => other.id === v.id)) throw new Error(`${acceptancePath(number)}: verifier ID ${v.id} is already registered`);
       verifiers.push({ id: v.id, trust: 'acceptance', trustedScript: v.trustedScript, directory: '.', planned: v.planned, commands: [], acceptanceIds: v.acceptanceIds, sbiIssue: number });

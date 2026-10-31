@@ -41,7 +41,7 @@ export async function verifyReverifyLink({ root, base, head }) {
   try {
     const message = (await git(root, ['log', '-1', '--format=%B', head])).stdout;
     const trailers = (await git(root, ['log', '-1', '--format=%(trailers:only,unfold)', head])).stdout;
-    // Fail closed like claimsSbiSource: a trailer line Git does not parse as a trailer still counts as a claim.
+    // Fail closed: a trailer line Git does not parse as a trailer still counts as a claim.
     if (!/^Harness-(Reverify|Parent)-Run:/m.test(message)) return { status: 'NONE', reasons: [] };
     const values = key => [...trailers.matchAll(new RegExp(`^${key}: *(\\S+)$`, 'gm'))].map(m => m[1]);
     const [runIds, parentIds] = [values('Harness-Reverify-Run'), values('Harness-Parent-Run')];

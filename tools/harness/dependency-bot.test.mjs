@@ -139,7 +139,7 @@ describe('CI Completion Judge for a trusted dependency bot PR', () => {
       const judged = await run(root, sha);
       assert.equal(judged.source.status, 'FAIL');
       assert.equal(judged.status, 'FAIL');
-      assert.ok(judged.reasons.some(r => r.startsWith('production source missing')), judged.reasons.join('; '));
+      assert.ok(judged.reasons.some(r => r.startsWith('sbi source missing')), judged.reasons.join('; '));
     }));
   });
   describe('given a human opened the same dependency update', () => {
@@ -148,7 +148,7 @@ describe('CI Completion Judge for a trusted dependency bot PR', () => {
       const human = { ...github(sha), fetchPull: async () => pull({ user: { login: 'alice', type: 'User' }, head: { sha, repo: { full_name: repository } } }) };
       const judged = await run(root, sha, { github: human });
       assert.equal(judged.status, 'FAIL');
-      assert.ok(judged.reasons.some(r => r.startsWith('production source missing')), judged.reasons.join('; '));
+      assert.ok(judged.reasons.some(r => r.startsWith('sbi source missing')), judged.reasons.join('; '));
     }));
   });
 });

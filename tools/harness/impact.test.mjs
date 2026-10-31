@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fixture, update } from './test-fixture.mjs';
 import { readJson } from './io.mjs';
-import { analyzeImpact, describeImpact, describeJudge, judgeCi, runCompletionJudge } from './impact.mjs';
+import { analyzeImpact, describeImpact, describeJudge, judgeCi, judgeTestedCommit, runCompletionJudge } from './impact.mjs';
 import { renderSbiBody } from './planner.mjs';
 import { sbiFromIssue } from './sbi-issue.mjs';
 import { withAcceptance } from './acceptance-registry.mjs';
@@ -231,7 +231,8 @@ describe('SBI requirement for Production changes', () => {
 
     it('when the impact is printed then the CI log shows why the SBI is required', () => {
       const lines = describeImpact(analyzeImpact({ config, sbis: [], files: files(touched.api) }));
-      assert.ok(lines.includes(`SBI required: yes (production:${touched.api})`));
+      assert.ok(lines.includes('Change type: ambiguous / SBI required (fail-closed)'), lines.join('\n'));
+      assert.ok(lines.includes(`Change type ambiguous: ${touched.api} (no engineering rule matches)`), lines.join('\n'));
     });
   });
 
@@ -253,7 +254,7 @@ describe('SBI requirement for Production changes', () => {
         const impact = analyzeImpact({ config, sbis: [], files: files(path) });
         assert.equal(impact.sbiRequired, false);
         assert.deepEqual(impact.sbiRequiredReasons, []);
-        assert.ok(describeImpact(impact).includes('SBI required: no (no production path changed)'));
+        assert.ok(describeImpact(impact).includes('Change type: none (no production path changed) / SBI not required'));
       });
     }
 
@@ -346,6 +347,65 @@ describe('CI Completion Judge', () => {
       assert.equal(judged({ impact, needs: { ...needs('success'), impact: { result: 'failure' } }, acceptance }).status, 'FAIL');
     });
   });
+
+  // Runs 40984230168 and 40985538230 (#163): a Gemfile and CI document change with no SBI asked for no Maestro lane, the maestro job
+  // still ran and failed, and the Judge passed.
+  describe('given a job that ran although the impact did not require it', () => {
+    const railsImpact = analyzeImpact({ config, sbis: [], files: files('apps/api/Gemfile', '.ai/workflows/ci.md') });
+    const ran = maestro => ({ ...needs('success', 'success', 'success'), maestro: { result: maestro } });
+
+    for (const result of ['failure', 'cancelled']) {
+      it(`when the maestro job ended in ${result} then fails although no lane was required`, () => {
+        const judgedRun = judged({ impact: railsImpact, needs: ran(result), acceptance });
+        assert.deepEqual(railsImpact.maestro, []);
+        assert.equal(judgedRun.status, 'FAIL');
+        assert.ok(judgedRun.reasons.includes(`maestro: ${result}`), judgedRun.reasons.join('; '));
+      });
+    }
+
+    for (const result of ['success', 'skipped']) {
+      it(`when the maestro job ended in ${result} then passes`, () => {
+        assert.equal(judged({ impact: railsImpact, needs: ran(result), acceptance }).status, 'PASS');
+      });
+    }
+
+    it('when the workflow did not hand over the maestro job then passes, as before the job existed', () => {
+      assert.equal(judged({ impact: railsImpact, needs: needs('success', 'success', 'success'), acceptance }).status, 'PASS');
+    });
+
+    it('when a job this Judge does not know failed then fails', () => {
+      const judgedRun = judged({ impact: railsImpact, needs: { ...needs('success', 'success', 'success'), 'future-job': { result: 'failure' } }, acceptance });
+      assert.equal(judgedRun.status, 'FAIL');
+      assert.ok(judgedRun.reasons.includes('future-job: failure'), judgedRun.reasons.join('; '));
+    });
+  });
+});
+
+describe('Tested commit of the Completion Judge', () => {
+  const head = 'a'.repeat(40), other = 'b'.repeat(40);
+  const needs = sha => ({ impact: { result: 'success', outputs: { head_sha: sha } } });
+
+  it('when the checkout, the event head and the impact job are on the same commit then nothing fails', () => {
+    assert.deepEqual(judgeTestedCommit({ headSha: head, expectedHeadSha: head, needs: needs(head) }), []);
+  });
+
+  for (const [name, expectedHeadSha, impactSha, pattern] of [
+    ['the workflow did not say which head it tests', '', head, /head sha: not provided/],
+    ['the checkout is not the head of the event', other, head, /checkout aaaaaaaaaaaa is not the head bbbbbbbbbbbb/],
+    ['the impact job did not report its commit', head, undefined, /impact: analyzed missing, not aaaaaaaaaaaa/],
+    ['the impact job analyzed another commit', head, other, /impact: analyzed bbbbbbbbbbbb, not aaaaaaaaaaaa/],
+  ]) {
+    it(`when ${name} then fails closed`, () => {
+      assert.match(judgeTestedCommit({ headSha: head, expectedHeadSha, needs: needs(impactSha) }).join('\n'), pattern);
+    });
+  }
+
+  it('when the Judge runs then the checked-out commit must be the head the workflow names', async () => fixture(async root => {
+    const headSha = (await git(root, ['rev-parse', 'HEAD'])).stdout.trim();
+    const judgedRun = await runCompletionJudge({ root, base: 'HEAD', needs: needs(headSha), expectedHeadSha: other });
+    assert.equal(judgedRun.status, 'FAIL');
+    assert.ok(judgedRun.reasons.some(r => r.includes(`is not the head ${other.slice(0, 12)}`)), judgedRun.reasons.join('; '));
+  }));
 });
 
 describe('CI Completion Judge for Trusted Acceptance and Security', () => {
@@ -577,8 +637,73 @@ describe('CI workflow setup', () => {
       assert.deepEqual(harness('impact'), ['pnpm harness:check', 'pnpm harness:impact $HARNESS_SCOPE']);
       assert.deepEqual(harness('verifiers'), ['pnpm harness:verify --verifier ${{ matrix.verifier }} $HARNESS_SCOPE']);
       assert.deepEqual(harness('harness-test'), ['pnpm harness:test']);
-      assert.deepEqual(harness('harness-demo'), ['pnpm harness:demo --full']);
+      assert.deepEqual(harness('harness-demo'), ['pnpm harness:demo $HARNESS_DEMO_SCOPE']);
       assert.deepEqual(harness('harness'), ['pnpm harness:judge $HARNESS_SCOPE']);
+    });
+  });
+
+  // harness:test was the critical path of a Full Gate pull request (#197): it runs as shards of the same file list in parallel jobs.
+  describe('given the Harness tests split into shards', () => {
+    const job = workflow.jobs['harness-test'];
+    it('when the Full Gate runs then every shard of the same test command runs, and one failing shard does not cancel the others', () => {
+      const shards = job.strategy.matrix.shard;
+      assert.ok(shards.length > 1);
+      assert.deepEqual(shards, shards.map((_, i) => i + 1));
+      assert.equal(job.strategy['fail-fast'], false);
+      const step = job.steps.find(s => s.run === 'pnpm harness:test');
+      assert.equal(step.env.HARNESS_TEST_SHARD, `\${{ matrix.shard }}/${shards.length}`);
+    });
+    it('when harness:test runs with a shard then node runs only that shard of the full file list, and without one it runs everything', async () => {
+      const script = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8')).scripts['harness:test'];
+      assert.match(script, /^node --test \$\{HARNESS_TEST_SHARD:\+--test-shard=\$HARNESS_TEST_SHARD\} /);
+      for (const glob of ['tools/harness/*.test.mjs', 'tools/harness/agents/*.test.mjs', '.harness/verification/*.test.mjs', '.harness/verification/lib/*.test.mjs']) assert.ok(script.includes(glob), glob);
+    });
+  });
+
+  // The self-repair demo was the longest job of a pull request run: every real application verifier ran a second time inside its run
+  // worktree, about 7 minutes of an 8 minute run (#192). The loop itself needs no verifier, so a pull request proves the loop and a
+  // push to main keeps proving it against the real verifiers.
+  describe('given the self-repair demo', () => {
+    it('when a pull request runs the Full Gate then the demo adds the real application verifiers only outside a pull request', () => {
+      assert.equal(workflow.env.HARNESS_DEMO_SCOPE, "${{ github.event_name != 'pull_request' && '--full' || '' }}");
+      assert.doesNotMatch(JSON.stringify(workflow.jobs['harness-demo']), /--full/);
+    });
+  });
+
+  // A pull_request run reads this workflow from the merge ref but checks out the Harness of the PR head. In runs 40984230168 and
+  // 40985538230 (#163) the head was branched before the maestro job existed: its impact reported no maestro output, the job still ran
+  // and failed, and the head's Judge, which did not know the job, passed.
+  describe('given a PR head whose Harness is older than this workflow', () => {
+    const head = '${{ github.event.pull_request.head.sha || github.sha }}';
+    const judge = workflow.jobs.harness.steps.find(s => s.run === 'pnpm harness:judge $HARNESS_SCOPE');
+    const guards = workflow.jobs.harness.steps.filter(s => s.run && !s.run.startsWith('pnpm ') && /exit 1/.test(s.run));
+
+    it('when the impact job runs then it reports the commit it analyzed', () => {
+      assert.equal(workflow.jobs.impact.outputs.head_sha, '${{ steps.impact.outputs.head_sha }}');
+    });
+
+    it('when the Judge runs then it is told the head the workflow checked out', () => {
+      assert.equal(judge.env.HARNESS_HEAD_SHA, head);
+    });
+
+    it('when the impact reported no maestro output then the maestro job does not start', () => {
+      assert.match(workflow.jobs.maestro.if, /needs\.impact\.outputs\.maestro != ''/);
+    });
+
+    for (const [name, pattern] of [
+      ['a job failed', /contains\(needs\.\*\.result, 'failure'\)/],
+      ['a job was cancelled', /contains\(needs\.\*\.result, 'cancelled'\)/],
+      ['the impact reported no maestro output', /needs\.impact\.outputs\.maestro == ''/],
+    ]) {
+      it(`when ${name} then the workflow fails the required check whatever the head's Judge says`, () => {
+        assert.ok(guards.some(s => s.if.startsWith('always()') && pattern.test(s.if)), guards.map(s => s.if).join('\n'));
+      });
+    }
+
+    it('when the Judge reads the maestro results then it downloads them from this run only', () => {
+      const download = workflow.jobs.harness.steps.find(s => s.uses?.startsWith('actions/download-artifact@'));
+      assert.equal(download.with['run-id'], undefined);
+      assert.equal(download.with['github-token'], undefined);
     });
   });
 });
