@@ -13,9 +13,10 @@ const citationFree = (path, text) => /\.(md|mdx|markdown)$/i.test(path)
 const classifierSources = new Set(['tools/harness/security-enforcement.mjs', 'tools/harness/security-impact-classifier.test.mjs']);
 const classifierSource = f => [f.path, f.previousPath].filter(Boolean).every(path => classifierSources.has(path));
 // A rule's contentExceptions drop only the named strings, and only when the file stays under the exception's paths before and after.
+// Line anchors work as in contentPatterns; case is ignored only where the exception says so.
 const contentFor = (rule, f, text) => (rule.contentExceptions || [])
   .filter(e => [f.path, f.previousPath].filter(Boolean).every(path => e.pathPatterns.some(p => new RegExp(p).test(path))))
-  .reduce((rest, e) => e.ignoredPatterns.reduce((t, p) => t.replace(new RegExp(p, 'gi'), ''), rest), text);
+  .reduce((rest, e) => e.ignoredPatterns.reduce((t, p) => t.replace(new RegExp(p, e.ignoreCase ? 'gim' : 'gm'), ''), rest), text);
 // An SBI that declares a rule requires all its verifiers; a matched file requires only the verifiers whose appliesTo covers that file.
 const sbiSources = new Set(['requiredSecurityRules', 'securityImpact', 'SBI/acceptance']);
 export function classifySecurity({ files = [], sbi = {}, legacySbi = false }, rawPolicy) {

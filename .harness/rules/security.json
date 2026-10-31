@@ -7,7 +7,7 @@
   "rules": [
     {
       "id": "SEC-AUTH-001",
-      "description": "AuthNへの影響を検知し着手承認・必須検証・HIGHを強制する。API契約テスト基盤がOpenAPIの構造名として列挙するsecuritySchemesと、Legacy SBI・Trusted Acceptanceの語は検出から除く（docs/security/authorization.md）",
+      "description": "AuthNへの影響を検知し着手承認・必須検証・HIGHを強制する。authenticateで始まる語、Rails 8・Devise・HTTP認証のフィルタとDeviseのルート・モデル宣言、has_secure_password、再認証、OpenAPIのsecurityキーを本文から検出する。API契約テスト基盤がOpenAPIの構造名として列挙するsecuritySchemes、Harnessのコードが自身の承認・gh login・OpenAPIの読み取りを指す既知の文脈（大文字・小文字を区別）、Legacy SBI・Trusted Acceptanceの語（区別しない）は本文の検出から除く（docs/security/authorization.md）",
       "categories": [
         "AuthN",
         "APIAuthentication"
@@ -16,7 +16,10 @@
         "(^|/)(auth|authn|authentication|sessions?|login|passwords?|tokens?)([_./-]|$)"
       ],
       "contentPatterns": [
-        "\\b(authentication|authenticate|sign_in)\\b",
+        "\\b(authentication|authenticate\\w*|sign_in)\\b",
+        "(_authenticat(e|ion)|authenticatable\\b|\\bHttpAuthentication\\b|\\w_unauthenticated)",
+        "\\bunauthenticated\\s+:\\w|\\b(devise_for|has_secure_password)\\b|\\bdevise\\s+:\\w|\\b(re|pre)authenticat\\w*",
+        "^[ \\t]*(-[ \\t]*)?[\"']?security[\"']?[ \\t]*:[ \\t]*([\\[*&!#-]|$)",
         "\\b(securitySchemes|bearerAuth|oauth2|jwt)\\b"
       ],
       "contentExceptions": [
@@ -34,8 +37,29 @@
             "^\\.harness/verification/(lib/)?[^/]+\\.mjs$"
           ],
           "ignoredPatterns": [
-            "\\b(authentication|authenticate|sign_in)\\b",
+            "\\b(authentication|authenticate\\w*|sign_in)\\b",
+            "(_authenticat(e|ion)|authenticatable\\b|\\bHttpAuthentication\\b|\\w_unauthenticated)",
+            "\\bunauthenticated\\s+:\\w|\\b(devise_for|has_secure_password)\\b|\\bdevise\\s+:\\w|\\b(re|pre)authenticat\\w*",
+            "^[ \\t]*(-[ \\t]*)?[\"']?security[\"']?[ \\t]*:[ \\t]*([\\[*&!#-]|$)",
             "\\b(securitySchemes|bearerAuth|oauth2|jwt)\\b"
+          ],
+          "ignoreCase": true
+        },
+        {
+          "pathPatterns": [
+            "^tools/harness/[^/]+\\.mjs$"
+          ],
+          "ignoredPatterns": [
+            "\\bauthenticatedRecords\\b",
+            "\\bGitHub authenticates\\b",
+            "\\bthe authenticated gh CLI\\b",
+            "\\bauthenticated (local )?ledger\\b",
+            "\\b[Aa]uthenticated human\\b",
+            "\\btest-authenticated-adapter\\b",
+            "\\bauthenticated (and authorized )?(endpoints?|response)\\b",
+            "\\.authenticated\\b",
+            "\\bauthenticated(?=: )",
+            "\\b(becomes|keeping it) authenticated\\b"
           ]
         }
       ],

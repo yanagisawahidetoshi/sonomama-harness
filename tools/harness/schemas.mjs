@@ -302,7 +302,8 @@ export const securityPolicySchema = z.strictObject({
     id: text.regex(/^SEC-[A-Z]+-\d+$/), description: text, categories: z.array(text).min(1),
     pathPatterns: z.array(text), contentPatterns: z.array(text), metadataPatterns: z.array(text),
     // A pattern that matches empty text would exempt every path or erase every content, so it is rejected.
-    contentExceptions: z.array(z.strictObject({ pathPatterns: z.array(narrowPattern).min(1), ignoredPatterns: z.array(narrowPattern).min(1) })).optional(),
+    // ignoreCase is set per exception; one that leaves it out ignores its strings only in the case it names, so it never widens by default.
+    contentExceptions: z.array(z.strictObject({ pathPatterns: z.array(narrowPattern).min(1), ignoredPatterns: z.array(narrowPattern).min(1), ignoreCase: z.boolean().optional() })).optional(),
     ignoreLegacySbiMetadata: z.literal(true).optional(),
     // Phrases of the SBI text that only negate the rule (an endpoint that needs no authentication) are dropped before metadataPatterns (#233).
     ignoredMetadataPatterns: z.array(narrowPattern).optional(),
