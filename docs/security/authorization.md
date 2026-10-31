@@ -21,7 +21,16 @@
 SEC-AUTH-001は、変更した行に`securitySchemes`などの語があると認証の変更とみなす。ただし、API契約テスト基盤（`apps/api/spec/support/api_contract/`直下の`.rb`）がOpenAPIの構造名として`securitySchemes`を列挙するだけの変更は、認証の変更ではないので、この語を本文の検出から除く（security.jsonの`contentExceptions`）。
 同じディレクトリでもYAMLなど`.rb`以外のファイルやサブディレクトリは除かない。除くのはこの語だけで、同じファイルでも`bearerAuth`・`jwt`・`authenticate`などの語、ファイル名による検出、他のルールはそのまま適用する。`packages/api-schema/openapi.yaml`の`securitySchemes`・`security`の変更や、契約テスト基盤の外にある`spec/`の変更も、これまでどおり検出する。
 
-手書きのSBI JSON（Legacy SBI、`.harness/state/sbi-<数字でない名前>.json`）と、Trusted Acceptance（`.harness/verification/`直下と`lib/`直下の`.mjs`）は、認証を仕様として記述するだけで、認証を実装しない。そのため、SEC-AUTH-001の語による検出（変更行の`jwt`・`authentication`など、Legacy SBIの本文の「認証」）を当てない（#217）。ファイル名による検出、SBIが宣言した`requiredSecurityRules`・`securityImpact`、他のルールはそのまま適用する。Run snapshot（`sbi-<数字>.json`）とアプリケーションのコードは、これまでどおり語でも検出する。
+手書きのSBI JSON（Legacy SBI、`.harness/state/sbi-<数字でない名前>.json`）と、Trusted Acceptance（`.harness/verification/`直下と`lib/`直下の`.mjs`）は、認証を仕様として記述するだけで、認証を実装しない。そのため、SEC-AUTH-001の語による検出（変更行の`jwt`・`authentication`・`authenticate_user!`・`security: []`など、SEC-AUTH-001の本文パターンすべてと、Legacy SBIの本文の「認証」）を大文字・小文字を区別せずに当てない（#217、#177）。ファイル名による検出、SBIが宣言した`requiredSecurityRules`・`securityImpact`、他のルールはそのまま適用する。Run snapshot（`sbi-<数字>.json`）とアプリケーションのコードは、これまでどおり語でも検出する。
+
+SEC-AUTH-001は、`authenticate`で始まる語（`authenticate_user!`、`authenticated?`、Deviseの`authenticated :user`など）、Rails 8・Devise・HTTP認証のフィルタ（`require_authentication`、`allow_unauthenticated_access`、`ActionController::HttpAuthentication`、`database_authenticatable`などの`authenticatable`、`http_basic_authenticate_with`）、Deviseのルートとモデルの宣言（`devise_for`、`unauthenticated :user`、`devise :omniauthable`など）、`has_secure_password`、再認証（`reauthenticate`、`preauthenticated`）、OpenAPIの`security`キーの行も本文から検出する。英文の`unauthenticated`や`authenticator`、`has_secure_token`だけでは検出しない。
+既知の制約: `devise`のモジュールの並びを次の行へ続けた場合（`devise :database_authenticatable,`の次の行の`:lockable, :timeoutable`など）、続きの行だけの変更は`devise`の宣言の一部だと行からはわからないので検出しない。`security`キーは先頭にもoperationの下にも書け、値が配列・ブロック・aliasのどれでも、空配列や`bearerAuth`以外のschemeでも、その行の追加・変更・削除を検出する。値が`{`で始まるJavaScriptのオブジェクトなど、OpenAPIのsecurityではない形は対象にしない。
+Harnessのコード（`tools/harness/`直下の`.mjs`）は、自身の承認台帳（`authenticatedRecords`、`authenticated local ledger`）、承認する人の確認（`Authenticated human`）、GitHubやgh CLIによる本人確認（`GitHub authenticates`、`the authenticated gh CLI`）、OpenAPIを読んだ結果（`authenticated endpoint`、`.authenticated`など）を`authenticate`で始まる語で書く。アプリの認証を変えるものではないので、security.jsonの`contentExceptions`に列挙した文脈だけを本文の検出から除く。除くのは列挙した文字列（大文字・小文字も一致するもの）だけで、同じ行の他の語、`authenticate_user!`、サブディレクトリやシェルスクリプト、`apps/`・`packages/`・`prototypes/`などHarness以外のパス、Harnessの外へ出すrenameは検出する。除く文脈が増えてきたら、語の列挙ではなく構文や文脈で判定する方式へ移る。
+`contentExceptions`の大文字・小文字の扱いは除外ごとに`ignoreCase`で決める。書かない除外は、列挙した大文字・小文字のとおりの文字列だけを除く。指定を忘れても除外が広がらないようにするためで、契約テスト基盤の`securitySchemes`（OpenAPIの名前そのもの）とHarnessの既知の文脈はこの既定のままにする。Legacy SBI・Trusted Acceptanceの除外は、本文パターンと同じく大文字・小文字を区別しない（`ignoreCase: true`）。
+既知の制約: 本文の検出は変更した行だけを読むので、次のOpenAPIの書き方は検出しない。変更前後のOpenAPIをparseして比べる方式を#218で扱う。
+- 既存の`security`の下でscheme名の行だけを書き換える変更（`- PartnerAuth: []`を`- OtherAuth: []`にするなど）
+- 1行のJSON（`{"openapi": "3.1.0", "security": []}`）や、flow mappingの中のキー（`get: {security: []}`）
+- 明示キー（`? security`）、`security: null`・`security: ~`、JavaScriptの識別子を値にしたもの（`security: requirements`）
 
 Railsの認可テスト（rails-authz-test）は、`apps/api/spec/authorization/`の`*_spec.rb`をテスト用DBで実行する。specが無い、テストが0件、skip・pending・focusで実行されないテストがある場合は失敗にする。
 役割ごとの許可・拒否のspecは、認可を実装するSBIが、ここから参照する権限表に沿って書く。権限表が決まるまでは、`apps/api/`の認可を変えるPRはこの検証で必ず失敗する。
