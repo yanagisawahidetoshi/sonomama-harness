@@ -72,6 +72,11 @@ export const githubMock = defaults => async (state, test) => {
         process.stdout.write(JSON.stringify({ total_count: artifacts.length, artifacts: page(artifacts) }));
       } else if (method === 'GET' && (m = endpoint.match(/^repos\\/acme\\/app\\/issues\\/(\\d+)\\/dependencies\\/blocked_by$/))) {
         process.stdout.write(JSON.stringify(page(state.blockedBy[m[1]] || [])));
+      } else if (method === 'GET' && (m = endpoint.match(/^repos\\/acme\\/app\\/issues\\/(\\d+)\\/timeline$/))) {
+        // Without issueTimelines, the labels of the Issue were added before any edit (issueEdits), as a human marks an SBI ready and leaves it.
+        const issue = state.issue && issueByNumber(Number(m[1]));
+        const labeled = issue ? issue.labels.map(l => ({ event: 'labeled', label: { name: l.name }, created_at: '2026-01-01T00:00:00Z' })) : [];
+        process.stdout.write(JSON.stringify(page((state.issueTimelines || {})[m[1]] || labeled)));
       } else if (method === 'PATCH' && (m = endpoint.match(/^repos\\/acme\\/app\\/issues\\/(\\d+)$/))) {
         const issue = issueByNumber(Number(m[1])); if (!issue) fail('gh: Not Found (HTTP 404)');
         Object.assign(issue, JSON.parse(input)); process.stdout.write(JSON.stringify(issue));

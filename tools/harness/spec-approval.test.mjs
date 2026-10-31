@@ -22,24 +22,34 @@ const comment = (id, login, text, overrides = {}) => ({ id, body: text, html_url
 const permissions = { alice: 'admin', bob: 'write', carol: 'read', 'planner[bot]': 'write' };
 
 describe('Spec digest of an SBI Issue', () => {
-  it('when the Issue is unchanged then the digest is the same', () => assert.equal(specDigest(body()), specDigest(body())));
+  // #194: everything the run gives the Agent or uses for Risk and Security is in the digest, so editing it voids earlier approvals.
+  const digest = (overrides = {}, title = issue().title) => specDigest({ title, body: body(overrides) });
+  it('when the Issue is unchanged then the digest is the same', () => assert.equal(digest(), digest()));
   for (const [name, overrides] of [
     ['an acceptance criterion', { acceptanceCriteria: [{ id: 'AC-1', description: '担当講師は閲覧できる' }, { id: 'AC-2', description: '担当外の講師は404になる' }] }],
     ['a Gherkin step', { scenarios: [{ ...planned().scenarios[0], then: ['201になる'] }] }],
     ['the change scope', { changeAreas: ['apps/api', 'apps/admin'] }],
     ['the security impact', { securityImpact: ['AuthZ'] }],
+    ['the purpose the Agent is told to implement', { purpose: '講師は全ての講座を閲覧できる。' }],
+    ['the kind', { kind: 'validation' }],
+    ['the expected number of changed files', { estimatedFiles: 9 }],
+    ['the verification method', { verification: { ...planned().verification, e2e: 'Maestro: 講座の閲覧' } }],
   ]) {
-    it(`when ${name} changes then the digest changes, so an earlier approval no longer matches`, () => assert.notEqual(specDigest(body(overrides)), specDigest(body())));
+    it(`when ${name} changes then the digest changes, so an earlier approval no longer matches`, () => assert.notEqual(digest(overrides), digest()));
   }
+  it('when the title changes then the digest changes, since the Agent and the Security classification read it', () => {
+    assert.notEqual(digest({}, 'SBI-001 講師は全ての講座を閲覧できる'), digest());
+  });
   it('when only a checkbox is ticked or line endings change then the digest stays, since the specification did not change', () => {
     const ticked = body().replace('- [ ] AC-1:', '- [x] AC-1:').replaceAll('\n', '\r\n');
-    assert.equal(specDigest(ticked), specDigest(body()));
+    assert.equal(specDigest({ title: issue().title, body: ticked }), digest());
   });
-  it('when the Issue has no Gherkin section then it has no digest', () => assert.equal(specDigest('## 目的\n\nなし\n'), null));
+  it('when the Issue has no Gherkin section then it has no digest', () => assert.equal(specDigest({ title: issue().title, body: '## 目的\n\nなし\n' }), null));
+  it('when the Issue has no title then it has no digest', () => assert.equal(specDigest({ body: body() }), null));
 });
 
 describe('Spec approval records on the SBI Issue', () => {
-  const digest = specDigest(body());
+  const digest = specDigest(issue());
   const approvals = comments => specApprovals({ comments, permissions, digest });
   it('when a person with write access posts exactly the approval line for the current digest then the spec is approved', () => {
     assert.deepEqual(approvals([comment(1, 'alice', `${specApprovalLine(digest)}\n`)]), { approved: true, approvers: ['alice'] });
@@ -78,7 +88,7 @@ describe('Starting a run from a spec-approved SBI Issue', () => {
   const load = gh => loadSbiIssue({ issueUrl: ref.url, config, github: gh });
   // #147: the approved spec starts the run in the generate mode; Trusted Acceptance is generated inside the run.
   it('when the spec is approved for the current digest and no Trusted Acceptance is registered then the run starts in the generate mode', async () => {
-    const loaded = await load(github({ comments: [comment(1, 'alice', specApprovalLine(specDigest(body())))] }));
+    const loaded = await load(github({ comments: [comment(1, 'alice', specApprovalLine(specDigest(issue())))] }));
     assert.equal(loaded.mode, 'generate');
   });
   it('when neither ready nor a spec approval exists then the run does not start and names both ways to start', async () => {
@@ -86,11 +96,15 @@ describe('Starting a run from a spec-approved SBI Issue', () => {
   });
   it('when the spec was approved and then the Gherkin changed then the old approval does not start the run', async () => {
     const edited = issue({ body: body({ scenarios: [{ ...planned().scenarios[0], then: ['201になる'] }] }) });
-    await assert.rejects(load(github({ own: edited, comments: [comment(1, 'alice', specApprovalLine(specDigest(body())))] })), /readyではありません/);
+    await assert.rejects(load(github({ own: edited, comments: [comment(1, 'alice', specApprovalLine(specDigest(issue())))] })), /readyではありません/);
+  });
+  it('when the spec was approved and then the purpose changed then the old approval does not start the run', async () => {
+    const edited = issue({ body: body({ purpose: '講師は全ての講座を閲覧できる。' }) });
+    await assert.rejects(load(github({ own: edited, comments: [comment(1, 'alice', specApprovalLine(specDigest(issue())))] })), /readyではありません/);
   });
   it('when the Issue still needs review then even an approval does not start the run', async () => {
     const reviewing = issue({ labels: labels('sbi', 'needs-review') });
-    await assert.rejects(load(github({ own: reviewing, comments: [comment(1, 'alice', specApprovalLine(specDigest(body())))] })), /needs-review/);
+    await assert.rejects(load(github({ own: reviewing, comments: [comment(1, 'alice', specApprovalLine(specDigest(issue())))] })), /needs-review/);
   });
   it('when GitHub cannot read the comments then the run does not start', async () => {
     const broken = { ...github(), listComments: async () => { throw new Error('gh: Server Error (HTTP 502)'); } };
@@ -112,7 +126,7 @@ describe('harness:spec-approve', () => {
   it('when a human approves then posts the approval line for the current spec digest and shows the spec-approved label', async () => {
     const { calls, github } = recorder();
     const result = await postSpecApproval({ issueUrl: ref.url, decision: 'approve', github });
-    assert.equal(result.digest, specDigest(body()));
+    assert.equal(result.digest, specDigest(issue()));
     assert.ok(calls.some(([kind, text]) => kind === 'comment' && text === specApprovalLine(result.digest)));
     assert.ok(calls.some(([kind, names]) => kind === 'add' && names.includes('spec-approved')));
   });

@@ -159,6 +159,21 @@ describe('Source SBI verification in the PR', () => {
       assert.ok(!describeSbiSource(source).some(l => l.includes('edited after the Run snapshot')));
     })));
 
+    // #194: the snapshot only proves the Issue did not change after the Run; ready must also still cover the content the Run took.
+    it('when the Issue body was edited after ready and before the Run took its snapshot then fails, though the snapshot matches the current Issue', () => mockGitHub({ issueEdits: { 7: [{ editedAt: '2026-01-02T00:00:00Z', deletedAt: null, diff: readyIssue.body }] } }, () => repository(async root => {
+      const source = await verifySnapshot(root, snapshot());
+      assert.equal(source.status, 'FAIL');
+      assert.ok(source.reasons.some(r => r.includes(ref.url) && r.includes('edited after ready')), source.reasons.join('; '));
+    })));
+
+    it('when the edit history of the Issue cannot be read then fails closed', () => mockGitHub({}, () => repository(async root => {
+      const files = await commit(root, { [admin]: 'export {};', [snapshotPath(snapshot())]: snapshot() }, `feat: home${trailers()}`);
+      const github = { fetchIssue: async () => readyIssue, issueTimeline: async () => [{ event: 'labeled', label: { name: 'ready' }, created_at: '2026-01-01T00:00:00Z' }], bodyEdits: async () => { throw new Error('GraphQL: edit history of acme/app#7 is unavailable'); } };
+      const source = await verifyIn(root, files, { github });
+      assert.equal(source.status, 'FAIL');
+      assert.ok(source.reasons.some(r => r.includes(ref.url) && r.includes('edit history')), source.reasons.join('; '));
+    })));
+
     it('when the Issue title was edited after the Run started then fails on the title digest and the SBI title', () => mockGitHub({ issue: { ...readyIssue, title: 'SBI-001 管理画面のホーム（改）' } }, () => repository(async root => {
       const source = await verifySnapshot(root, snapshot());
       assert.equal(source.status, 'FAIL');

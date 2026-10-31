@@ -64,7 +64,7 @@ describe('Protection of generated acceptance tests', () => {
 describe('Approved spec of an SBI Issue', () => {
   it('when the Issue is read then the spec carries its digest, acceptance criteria and Scenario names', () => {
     const spec = approvedSpec(issue);
-    assert.equal(spec.digest, specDigest(body));
+    assert.equal(spec.digest, specDigest(issue));
     assert.deepEqual(spec.acceptanceCriteria.map(a => a.id), ['AC-1', 'AC-2']);
     assert.deepEqual(spec.scenarios, ['担当講師が閲覧する', '担当外の講師が閲覧する']);
     assert.equal(spec.sbiIssue, 7);
@@ -77,7 +77,7 @@ describe('Generating Trusted Acceptance from an approved spec', () => {
     assert.equal(result.status, 'REGISTERED');
     assert.equal(await readFile(join(root, path), 'utf8'), content);
     const registration = generatedRegistrationSchema.parse(JSON.parse(await readFile(join(root, '.harness/acceptance/sbi-7.json'), 'utf8')));
-    assert.equal(registration.specDigest, specDigest(body));
+    assert.equal(registration.specDigest, specDigest(issue));
     assert.deepEqual(registration.tests, [{ path, sha256: sha256(content) }]);
     assert.deepEqual(registration.mapping.map(m => m.scenario), ['担当講師が閲覧する', '担当外の講師が閲覧する']);
     assert.deepEqual(registration.generator, { provider: 'claude', runId: 'run-1' });

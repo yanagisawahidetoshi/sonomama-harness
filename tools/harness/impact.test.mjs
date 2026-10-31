@@ -465,7 +465,9 @@ describe('CI Completion Judge for Trusted Acceptance and Security', () => {
       await git(root, ['add', '--all']);
       await git(root, ['commit', '-m', `feat: ci judge\n\nHarness-Run: ${runId}\nSBI-Issue: ${ref.url}`]);
     };
-    const judgeBranch = (root, verifiers = 'success') => runCompletionJudge({ root, base: 'main', needs: needs(verifiers), repository: 'acme/app', github: { fetchIssue: async () => readyIssue } });
+    // #194: the Issue was marked ready and left unedited, so the ready label still covers what the Run took from it.
+    const readyUnedited = { issueTimeline: async () => [{ event: 'labeled', label: { name: 'ready' }, created_at: '2026-10-01T00:00:00Z' }], bodyEdits: async () => [] };
+    const judgeBranch = (root, verifiers = 'success') => runCompletionJudge({ root, base: 'main', needs: needs(verifiers), repository: 'acme/app', github: { fetchIssue: async () => readyIssue, ...readyUnedited } });
     const status = (judged, id) => judged.security.checks.find(c => c.id === id)?.status;
 
     it('when the Completion Judge runs then executes the Trusted Acceptance of the SBI', () => fixture(async root => {
