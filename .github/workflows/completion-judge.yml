@@ -1,0 +1,79 @@
+name: Completion Judge
+# ADR-0008: the pull_request run of harness.yml executes the PR and is untrusted evidence. This workflow always comes from main
+# (pull_request_target), judges that evidence with main's Harness and publishes the check run "Completion Judge": success, neutral when a
+# human must review a change of the evidence producer, or failure. A change to this file affects no PR, its own included, until it is merged.
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+permissions: {}
+concurrency:
+  group: completion-judge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  # Holds no secret and no write permission: the hand-written Trusted Acceptance scripts read the PR tree, and ci-matrix imports its Harness,
+  # under the Node permission model. The PR head is checked out beside main as data only; nothing of it is installed.
+  # A fork's head is never judged here (its Harness would run in the Trusted Acceptance sandbox of this privileged event); publish then reports failure.
+  judge:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      actions: read
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      conclusion: ${{ steps.judge.outputs.conclusion }}
+      summary: ${{ steps.judge.outputs.summary }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0; packageManager in package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+      - run: pnpm install --frozen-lockfile --prod --ignore-workspace
+      # The public pull ref needs no credentials. The worktree is outside the checkout, so no file of the PR shadows main's Harness.
+      - env:
+          PULL: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          git fetch --no-tags origin "+refs/pull/${PULL}/head:refs/remotes/pull/head" "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          git worktree add --detach "$RUNNER_TEMP/pr" "$HEAD_SHA"
+      - id: judge
+        run: pnpm harness:judge --trusted --base "origin/${BASE_REF}"
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HARNESS_WORKSPACE: ${{ runner.temp }}/pr
+          HARNESS_PULL_REQUEST: ${{ github.event.pull_request.number }}
+          HARNESS_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GH_TOKEN: ${{ github.token }}
+  # The only job that may write a check run: it checks nothing out and runs no Harness code, it only turns the judge job's result into the
+  # check run. A failed, cancelled, skipped or silent judge job is published as a failure.
+  publish:
+    needs: judge
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      checks: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RESULT: ${{ needs.judge.result }}
+          CONCLUSION: ${{ needs.judge.outputs.conclusion }}
+          SUMMARY: ${{ needs.judge.outputs.summary }}
+          DETAILS: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          conclusion=failure
+          if [ "$RESULT" = success ] && { [ "$CONCLUSION" = success ] || [ "$CONCLUSION" = neutral ]; }; then conclusion=$CONCLUSION; fi
+          [ -n "$SUMMARY" ] || SUMMARY="Completion Judge: the judge job ended ${RESULT} without a result"
+          jq -n --arg sha "$HEAD_SHA" --arg conclusion "$conclusion" --arg summary "$SUMMARY" --arg url "$DETAILS" \
+            '{name: "Completion Judge", head_sha: $sha, status: "completed", conclusion: $conclusion, details_url: $url, output: {title: ("Completion Judge: " + ({success: "PASS", neutral: "MANUAL REVIEW REQUIRED"}[$conclusion] // "FAIL")), summary: $summary}}' \
+            | gh api "repos/${REPOSITORY}/check-runs" --input -
