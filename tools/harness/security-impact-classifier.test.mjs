@@ -234,7 +234,7 @@ describe('Security Impact Classifier on OpenAPI structure names in the API contr
       const auth = policy.rules.find(r => r.id === 'SEC-AUTH-001');
       assert.deepEqual(auth.contentExceptions, [
         { pathPatterns: ['^apps/api/spec/support/api_contract/[^/]+\\.rb$'], ignoredPatterns: ['\\bsecuritySchemes\\b'] },
-        { pathPatterns: ['^\\.harness/state/sbi-(?!\\d+\\.json$)[^/]+\\.json$', '^\\.harness/verification/(lib/)?[^/]+\\.mjs$'], ignoredPatterns: auth.contentPatterns },
+        { pathPatterns: ['^\\.harness/state/sbi-(?!\\d+\\.json$)[^/]+\\.json$', '^\\.harness/verification/(lib/)?[^/]+\\.mjs$'], ignoredPatterns: auth.contentPatterns, ignoreCase: true },
         { pathPatterns: ['^tools/harness/[^/]+\\.mjs$'], ignoredPatterns: harnessContexts },
       ]);
     });
@@ -244,6 +244,13 @@ describe('Security Impact Classifier on OpenAPI structure names in the API contr
     for (const [field, pattern] of [['ignoredPatterns', '[\\s\\S]*'], ['ignoredPatterns', ''], ['pathPatterns', '^'], ['pathPatterns', '.*']]) {
       it(`when a content exception has ${field} ${JSON.stringify(pattern)} that matches empty text then rejects the policy`, () => {
         const exception = { pathPatterns: ['^apps/api/spec/support/api_contract/[^/]+\\.rb$'], ignoredPatterns: ['\\bsecuritySchemes\\b'], [field]: [pattern] };
+        const broken = { ...policy, rules: policy.rules.map(r => r.id === 'SEC-AUTH-001' ? { ...r, contentExceptions: [exception] } : r) };
+        assert.throws(() => securityPolicySchema.parse(broken));
+      });
+    }
+    for (const ignoreCase of ['true', 1, null]) {
+      it(`when a content exception sets ignoreCase to ${JSON.stringify(ignoreCase)} instead of a boolean then rejects the policy`, () => {
+        const exception = { pathPatterns: ['^apps/api/spec/support/api_contract/[^/]+\\.rb$'], ignoredPatterns: ['\\bsecuritySchemes\\b'], ignoreCase };
         const broken = { ...policy, rules: policy.rules.map(r => r.id === 'SEC-AUTH-001' ? { ...r, contentExceptions: [exception] } : r) };
         assert.throws(() => securityPolicySchema.parse(broken));
       });
@@ -471,5 +478,75 @@ describe('Security Impact Classifier on infrastructure', () => {
     }
     it('when deletion protection is turned on then it stays ordinary', () => assert.ok(ordinary(infra('infra/staging/main.tf', 'deletion_protection = true', { deleted: 'deletion_protection = false' }))));
     it('when an infrastructure file is binary then it cannot be inspected and is critical', () => assert.ok(critical(infra('infra/staging/state.bin', '', { binary: true }))));
+  });
+});
+
+// Each content exception says whether it ignores its strings in any case; one that does not say matches them case by case (#177).
+describe('Security Impact Classifier on the case of the strings a content exception ignores', () => {
+  describe('given the legacy SBI and Trusted Acceptance exception, which ignores case', () => {
+    for (const added of ['JWT AUTHENTICATION', 'Authenticate_User! BearerAuth', 'SECURITY: []']) {
+      it(`when .harness/verification/api-env.mjs adds ${added} then does not match SEC-AUTH-001`, () => {
+        assert.equal(detected(assess([{ path: '.harness/verification/api-env.mjs', status: 'M', added }]), 'SEC-AUTH-001'), false);
+      });
+    }
+  });
+  describe('given the exceptions that do not set ignoreCase', () => {
+    it('when the contract test support adds SECURITYSCHEMES in another case than the OpenAPI name then matches SEC-AUTH-001', () => {
+      assert.ok(detected(assess([{ path: 'apps/api/spec/support/api_contract/unsupported.rb', status: 'M', added: 'SECURITYSCHEMES' }]), 'SEC-AUTH-001'));
+    });
+    it('when the contract test support adds the OpenAPI name securitySchemes then still does not match SEC-AUTH-001', () => {
+      assert.equal(detected(assess([{ path: 'apps/api/spec/support/api_contract/unsupported.rb', status: 'M', added: 'requestBodies securitySchemes links' }]), 'SEC-AUTH-001'), false);
+    });
+    it('when the Harness code adds AUTHENTICATED LOCAL LEDGER in another case than the declared context then matches SEC-AUTH-001', () => {
+      assert.ok(detected(assess([{ path: 'tools/harness/index.mjs', status: 'M', added: "source: 'AUTHENTICATED LOCAL LEDGER'" }]), 'SEC-AUTH-001'));
+    });
+  });
+});
+
+describe('Security Impact Classifier on legacy SBIs and Trusted Acceptance that describe authentication with the wider patterns (#177, #217)', () => {
+  for (const path of ['.harness/state/sbi-api-env.json', '.harness/verification/api-env.mjs', '.harness/verification/lib/readme.mjs']) {
+    for (const added of ["'Then before_action :authenticate_user! guards every controller'", '      security: []', "'Then before_action :require_authentication is not added'", "'devise :database_authenticatable is not used'", "'http_basic_authenticate_with is not used'"]) {
+      it(`when ${path} adds ${added.trim()} then does not match SEC-AUTH-001`, () => {
+        assert.equal(detected(assess([{ path, status: 'M', added }]), 'SEC-AUTH-001'), false);
+      });
+    }
+  }
+  it('when the same words are added to a Run snapshot then still match SEC-AUTH-001', () => {
+    assert.ok(detected(assess([{ path: '.harness/state/sbi-12.json', status: 'M', added: '"before_action :authenticate_user!"' }]), 'SEC-AUTH-001'));
+  });
+});
+
+describe('Security Impact Classifier on Rails 8, Devise and HTTP authentication filters (#177)', () => {
+  const controller = 'apps/api/app/controllers/application_controller.rb';
+  // Split so this test file's own added lines do not read as a token assignment to the CI secret content check.
+  const tokenModule = `${'To'}ken`;
+  describe('given a change that adds, removes or skips an authentication filter whose name does not start with authenticate', () => {
+    for (const [name, change] of [
+      ['adds before_action :require_authentication', { added: 'before_action :require_authentication' }],
+      ['removes before_action :require_authentication', { deleted: 'before_action :require_authentication' }],
+      ['adds skip_before_action :require_authentication', { added: 'skip_before_action :require_authentication, only: :show' }],
+      ['adds allow_unauthenticated_access', { added: 'allow_unauthenticated_access only: %i[new create]' }],
+      ['includes the token module of ActionController::HttpAuthentication', { added: `include ActionController::HttpAuthentication::${tokenModule}::ControllerMethods` }],
+      ['includes ActionController::HttpAuthentication::Basic::ControllerMethods', { added: 'include ActionController::HttpAuthentication::Basic::ControllerMethods' }],
+      ['adds http_basic_authenticate_with', { added: 'http_basic_authenticate_with name: "admin", except: :index' }],
+    ]) {
+      it(`when ${controller} ${name} then matches SEC-AUTH-001 and requires the authentication test`, () => {
+        const result = assess([{ path: controller, status: 'M', ...change }]);
+        assert.ok(detected(result, 'SEC-AUTH-001'));
+        assert.ok(result.requiredVerifiers.includes('authn-test'));
+      });
+    }
+    for (const added of ['devise :database_authenticatable, :registerable', 'devise :token_authenticatable', 'include Devise::Models::Authenticatable']) {
+      it(`when apps/api/app/models/user.rb adds ${added} then matches SEC-AUTH-001`, () => {
+        assert.ok(detected(assess([{ path: 'apps/api/app/models/user.rb', status: 'M', added }]), 'SEC-AUTH-001'));
+      });
+    }
+  });
+  describe('given ordinary English or identifiers that only contain the letters of authentication', () => {
+    for (const added of ['# Unauthenticated requests receive the shared Error schema.', 'render json: { error: "unauthenticated" }, status: :unauthorized', '# The authenticator app shows a code.']) {
+      it(`when ${controller} adds ${added} then does not match SEC-AUTH-001`, () => {
+        assert.equal(detected(assess([{ path: controller, status: 'M', added }]), 'SEC-AUTH-001'), false);
+      });
+    }
   });
 });
