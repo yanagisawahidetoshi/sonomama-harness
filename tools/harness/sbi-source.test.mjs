@@ -325,65 +325,104 @@ describe('CI Completion Judge for the source SBI Issue', () => {
       await commit(root, { [admin]: 'export const home = 1;' }, 'feat: home');
       const judged = await run(root);
       assert.equal(judged.status, 'FAIL');
-      assert.ok(judged.reasons.some(r => r.startsWith('production source missing')), judged.reasons.join('; '));
+      assert.ok(judged.reasons.some(r => r.startsWith('sbi source missing')), judged.reasons.join('; '));
     })));
 
-    // Engineering changes (dependency, tooling, Storybook, Design System) skip the SBI Run, not the Verifier, Security or Human Review.
+    it('when the Production change comes from a ready SBI Issue then the log names the verified source SBI', () => mockGitHub({}, () => fixture(async root => {
+      await prepare(root);
+      await commit(root, { [admin]: 'export const home = 1;', [snapshotPath(snapshot())]: snapshot() }, `feat: home${trailers()}`);
+      const judged = await run(root);
+      assert.equal(judged.impact.changeType, 'ambiguous');
+      assert.ok(describeSbiSource(judged.source).includes('Source: SBI #7'), describeSbiSource(judged.source).join('\n'));
+    })));
+
+    // ADR-0006: the change type comes from the diff alone. An Engineering Issue, a commit message or a trailer cannot lift the SBI.
     const engineeringUrl = 'https://github.com/acme/app/issues/9';
     const engineeringIssue = { number: 9, title: 'Sparkle Designを導入する', body: '## 背景\n技術基盤を更新する。\n', html_url: engineeringUrl, state: 'open', labels: labels('engineering', 'ready') };
     const engineering = `\n\nEngineering-Issue: ${engineeringUrl}`;
+    const readme = 'apps/admin/README.md';
 
-    it('when the Production change links a ready engineering Issue then the Judge passes without an SBI snapshot', () => mockGitHub({ issue: engineeringIssue }, () => fixture(async root => {
+    it('when only an app README changes then the diff is engineering and the Judge passes without an SBI, an Issue or a GitHub read', () => mockGitHub({}, async github => fixture(async root => {
       await prepare(root);
-      await commit(root, { [admin]: 'export const home = 1;' }, `chore: adopt design system${engineering}`);
+      await commit(root, { [readme]: '# admin\n認証ProviderはAmazon Cognito（User Pool）を使う。\n' }, 'docs: name the auth provider');
       const judged = await run(root);
-      assert.equal(judged.source.kind, 'engineering');
-      assert.deepEqual(judged.source.sources, [{ url: engineeringUrl }]);
+      assert.equal(judged.impact.changeType, 'engineering');
+      assert.equal(judged.impact.requiresSbi, false);
+      assert.ok(describeImpact(judged.impact).includes('Change type: engineering / SBI not required'), describeImpact(judged.impact).join('\n'));
       assert.equal(judged.status, 'PASS', judged.reasons.join('; '));
+      assert.deepEqual(await github.calls(), []);
     })));
 
-    it('when an engineering change fails its Verifier matrix then the Judge still fails', () => mockGitHub({ issue: engineeringIssue }, () => fixture(async root => {
+    it('when an engineering diff fails its Verifier matrix then the Judge still fails', () => mockGitHub({}, () => fixture(async root => {
       await prepare(root);
-      await commit(root, { [admin]: 'export const home = 1;' }, `chore: adopt design system${engineering}`);
+      await commit(root, { [readme]: '# admin\n' }, 'docs: update');
       const judged = await run(root, { needs: { ...needs, verifiers: { result: 'failure' } } });
-      assert.equal(judged.source.status, 'PASS', judged.source.reasons.join('; '));
       assert.equal(judged.status, 'FAIL');
+      assert.ok(judged.reasons.includes('verifiers: failure'));
     })));
 
-    it('when the linked Issue is only self-declared as engineering in its body then the Judge fails', () => mockGitHub({ issue: { ...engineeringIssue, body: '## 種類\nengineering\n', labels: labels('ready') } }, () => fixture(async root => {
+    it('when a runtime file changes with a ready engineering Issue linked then the diff stays ambiguous and the Judge fails without an SBI', () => mockGitHub({ issue: engineeringIssue }, () => fixture(async root => {
       await prepare(root);
       await commit(root, { [admin]: 'export const home = 1;' }, `chore: adopt design system${engineering}`);
       const judged = await run(root);
+      assert.equal(judged.impact.changeType, 'ambiguous');
+      assert.equal(judged.impact.requiresSbi, true);
+      assert.ok(describeImpact(judged.impact).includes('Change type: ambiguous / SBI required (fail-closed)'), describeImpact(judged.impact).join('\n'));
       assert.equal(judged.status, 'FAIL');
-      assert.ok(judged.reasons.some(r => r.includes('no engineering label')), judged.reasons.join('; '));
+      assert.ok(judged.reasons.some(r => r.startsWith('sbi source missing')), judged.reasons.join('; '));
     })));
 
-    it('when a broken SBI snapshot sits next to an Engineering-Issue trailer then the Judge checks the snapshot and fails', () => mockGitHub({ issue: engineeringIssue }, () => fixture(async root => {
+    it('when a runtime file change calls itself a refactor or engineering then the Judge still requires an SBI', () => mockGitHub({}, () => fixture(async root => {
       await prepare(root);
-      await commit(root, { [admin]: 'export const home = 1;', [snapshotPath(snapshot())]: '{ broken' }, `chore: adopt design system${engineering}`);
+      await commit(root, { [admin]: 'export const home = 1;' }, 'refactor: engineering only, no behaviour change');
       const judged = await run(root);
-      assert.notEqual(judged.source.kind, 'engineering');
+      assert.equal(judged.impact.changeType, 'ambiguous');
+      assert.equal(judged.status, 'FAIL');
+    })));
+
+    it('when an engineering diff carries stale Run trailers without a snapshot then it stays engineering and the Judge passes', () => mockGitHub({}, () => fixture(async root => {
+      await prepare(root);
+      await commit(root, { [readme]: '# admin\n' }, `docs: update${trailers()}`);
+      const judged = await run(root);
+      assert.equal(judged.impact.changeType, 'engineering');
+      assert.equal(judged.status, 'PASS', judged.reasons.join('; '));
+      assert.ok(!describeSbiSource(judged.source).some(l => l.startsWith('Source: SBI')));
+    })));
+
+    it('when an ambiguous diff carries only the Run trailers without a snapshot then the trailers are not a valid source and the Judge fails', () => mockGitHub({}, () => fixture(async root => {
+      await prepare(root);
+      await commit(root, { [admin]: 'export const home = 1;' }, `feat: home${trailers()}`);
+      const judged = await run(root);
+      assert.equal(judged.status, 'FAIL');
+      assert.ok(judged.reasons.some(r => r.startsWith('sbi source missing')), judged.reasons.join('; '));
+    })));
+
+    it('when an engineering diff adds a broken SBI snapshot then the snapshot is still verified and the Judge fails', () => mockGitHub({}, () => fixture(async root => {
+      await prepare(root);
+      await commit(root, { [readme]: '# admin\n', [snapshotPath(snapshot())]: '{ broken' }, `docs: update${trailers()}`);
+      const judged = await run(root);
+      assert.equal(judged.impact.changeType, 'engineering');
       assert.equal(judged.status, 'FAIL');
       assert.ok(judged.reasons.some(r => r.startsWith('sbi source invalid')), judged.reasons.join('; '));
     })));
 
-    it('when the PR deletes an SBI snapshot and links an Engineering Issue then the Judge stays on the SBI path and fails', () => mockGitHub({ issue: engineeringIssue }, () => fixture(async root => {
+    it('when a diff outside the Production paths adds a broken SBI snapshot then the snapshot is still verified and the Judge fails', () => mockGitHub({}, () => fixture(async root => {
+      await prepare(root);
+      await commit(root, { 'prototypes/web/src/main.tsx': 'export {};', [snapshotPath(snapshot())]: '{ broken' }, `feat: prototype${trailers()}`);
+      const judged = await run(root);
+      assert.equal(judged.impact.changeType, null);
+      assert.equal(judged.status, 'FAIL');
+      assert.ok(judged.reasons.some(r => r.startsWith('sbi source invalid')), judged.reasons.join('; '));
+    })));
+
+    it('when an engineering diff deletes an SBI snapshot then the deletion is verified as an SBI source and the Judge fails', () => mockGitHub({}, () => fixture(async root => {
       await writeFile(join(root, '.harness/state/sbi-7.json'), JSON.stringify(snapshot(), null, 2));
       await prepare(root);
       await git(root, ['rm', '--quiet', '.harness/state/sbi-7.json']);
-      await commit(root, { [admin]: 'export const home = 1;' }, `chore: adopt design system${engineering}`);
+      await commit(root, { [readme]: '# admin\n' }, 'docs: update');
       const judged = await run(root);
-      assert.notEqual(judged.source.kind, 'engineering');
       assert.equal(judged.status, 'FAIL');
-    })));
-
-    it('when the PR carries the Run trailers of an SBI Issue but no snapshot then the Judge fails instead of taking the Engineering Issue', () => mockGitHub({ issue: engineeringIssue }, () => fixture(async root => {
-      await prepare(root);
-      await commit(root, { [admin]: 'export const home = 1;' }, `feat: home${trailers()}${engineering}`);
-      const judged = await run(root);
-      assert.notEqual(judged.source.kind, 'engineering');
-      assert.equal(judged.status, 'FAIL');
-      assert.ok(judged.reasons.some(r => r.startsWith('sbi source missing')), judged.reasons.join('; '));
+      assert.ok(judged.reasons.some(r => r.startsWith('sbi source')), judged.reasons.join('; '));
     })));
 
     // The Issue a variant of the plan renders and the snapshot a Run takes from it.

@@ -1,25 +1,42 @@
 import { mkdtemp, cp, mkdir, rm, realpath, readFile, writeFile } from 'node:fs/promises';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { git } from './workspace.mjs';
+import { execute } from './io.mjs';
 import { runHarness } from './index.mjs';
 const source = new URL('../../', import.meta.url).pathname;
-export async function fixture(fn) {
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'sonomama-risk-')));
+// #197: the fixture inputs are copied, git-initialized and committed once per test process; each fixture is a copy of that template
+// (working tree and .git), so it starts as the same clean repository without repeating the copy and the commit.
+let template;
+async function makeTemplate() {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'sonomama-fixture-template-')));
+  process.once('exit', () => rmSync(root, { recursive: true, force: true }));
   const ignored = (await git(source, ['ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '--', 'apps', 'prototypes', 'packages'])).stdout
     .split('\n').filter(Boolean).map(path => join(source, path.replace(/\/$/, '')));
+  for (const path of ['apps', 'prototypes', 'packages', 'docs', '.harness/config', '.harness/acceptance', '.harness/verification', '.harness/rules', '.harness/skills', '.harness/state/sample-sbi.json', 'tools/harness', 'AGENTS.md', 'package.json', 'pnpm-workspace.yaml', '.gitignore']) {
+    await mkdir(join(root, path, '..'), { recursive: true });
+    // Locally installed dependencies and build output are not fixture inputs; only the files Git would see are copied.
+    await cp(join(source, path), join(root, path), { recursive: true, filter: src => !ignored.some(dir => src === dir || src.startsWith(`${dir}/`)) });
+  }
+  await mkdir(join(root, '.harness/runs'), { recursive: true });
+  await git(root, ['init', '--template=', '--initial-branch=main']);
+  // A detached auto gc can still be writing packs while the fixture is removed (ENOTEMPTY on .git/objects/pack).
+  await git(root, ['config', 'gc.auto', '0']);
+  await git(root, ['config', 'maintenance.auto', 'false']);
+  await commitFixture(root);
+  // One pack instead of a loose object per file keeps each copy small.
+  await git(root, ['repack', '-a', '-d', '-q']);
+  return root;
+}
+export async function fixture(fn) {
+  template ??= makeTemplate();
+  const from = await template;
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'sonomama-risk-')));
   try {
-    for (const path of ['apps', 'prototypes', 'packages', 'docs', '.harness/config', '.harness/acceptance', '.harness/verification', '.harness/rules', '.harness/skills', '.harness/state/sample-sbi.json', 'tools/harness', 'AGENTS.md', 'package.json', 'pnpm-workspace.yaml', '.gitignore']) {
-      await mkdir(join(root, path, '..'), { recursive: true });
-      // Locally installed dependencies and build output are not fixture inputs; only the files Git would see are copied.
-      await cp(join(source, path), join(root, path), { recursive: true, filter: src => !ignored.some(dir => src === dir || src.startsWith(`${dir}/`)) });
-    }
-    await mkdir(join(root, '.harness/runs'), { recursive: true });
-    await git(root, ['init', '--template=', '--initial-branch=main']);
-    // A detached auto gc can still be writing packs while the fixture is removed (ENOTEMPTY on .git/objects/pack).
-    await git(root, ['config', 'gc.auto', '0']);
-    await git(root, ['config', 'maintenance.auto', 'false']);
-    await commitFixture(root);
+    // The native cp is several times faster than fs.cp for the many small files of the template.
+    const copied = await execute('cp', ['-pR', `${from}/.`, root]);
+    if (!copied.ok) throw new Error(`fixture copy failed: ${copied.stderr || copied.error}`);
     await fn(root);
   } finally { await rm(root, { recursive: true, force: true, maxRetries: 5 }); }
 }

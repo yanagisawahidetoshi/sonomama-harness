@@ -23,6 +23,7 @@ import { assertState } from './state-machine.mjs';
 import { loadSbiIssue, inScope } from './sbi-issue.mjs';
 import { generateAcceptance, isGeneratedAcceptanceInput, isGeneratedRegistrationPath } from './acceptance-generation.mjs';
 import { judgeDetection, runGeneratedAcceptance } from './acceptance-run.mjs';
+import { inspectViolation, judgeViolation, parseViolationAnswer, violationPrompt, violationResponseSchema, withViolationCopy } from './acceptance-violation.mjs';
 import { snapshotFromIssue, snapshotPath, riskView, snapshotVerified, matchSbiSource } from './sbi-source.mjs';
 import { verifyReverifyLink, committedSnapshot, parsePullUrl, reverifyTrailers, mergeTree, gitVersion } from './reverify.mjs';
 import { parseIssueUrl } from './planner.mjs';
@@ -331,26 +332,84 @@ async function assessPreflight(root, summary, inputs, quiet) {
   await json(join(directory, 'merge-decision.json'), summary.merge);
   return null;
 }
-// #147: generation → quality checks → registration commit → detection (G), before the gate and before the implementation agent.
-// Nothing is committed unless the generated tests passed the checks; the registration commit advances headSha, never baselineSha.
-async function prepareGeneratedAcceptance({ root, summary, inputs, source, quiet, acceptanceAgent, acceptanceRunner = runGeneratedAcceptance }) {
+// #147: generation → quality checks → detection (G) → registration commit, before the gate and before the implementation agent.
+// G is proven per Scenario by a failed expectation: before the implementation (the missing behavior is its own natural violation) or,
+// for a Scenario that already passes, under a controlled violation run in a disposable copy. A RED baseline is not required.
+// An attempt whose tests miss a violation or cannot be judged regenerates the tests from the same approved spec, up to maxConsecutiveFailures.
+// Nothing is committed unless G passed; the registration commit advances headSha, never baselineSha.
+async function detectScenarios({ workspace, directory, registration, sbiIssue, config, runner, violator }) {
+  const report = await runner({ workspace, sbiIssue, config });
+  if (report.error) return { environment: report.error, scenarios: [] };
+  const baseline = judgeDetection({ registration, report });
+  const scenarios = baseline.scenarios.map(s => ({ scenario: s.scenario, acceptanceIds: s.acceptanceIds, baseline: s.outcome,
+    outcome: s.outcome === 'already satisfied' ? null : s.outcome, failures: s.failures, ...(s.reason ? { reason: s.reason } : {}) }));
+  const satisfied = scenarios.filter(s => s.outcome === null);
+  // An attempt that already cannot be judged is regenerated without asking for violations.
+  if (!satisfied.length || scenarios.some(s => s.outcome === 'undeterminable')) {
+    for (const s of satisfied) Object.assign(s, { outcome: 'undeterminable', reason: 'not checked; another Scenario could not be judged' });
+    return { scenarios };
+  }
+  const carried = [];
+  for (const test of registration.tests) carried.push({ path: test.path, content: await readFile(join(workspace, test.path), 'utf8') });
+  const examplesOf = name => registration.mapping.find(m => m.scenario === name).examples.map(e => e.description);
+  const request = { prompt: violationPrompt({ sbiIssue, scenarios: satisfied.map(s => ({ ...s, examples: examplesOf(s.scenario) })) }), schema: violationResponseSchema, scenarios: satisfied.map(s => s.scenario) };
+  const answer = parseViolationAnswer(await violator(request));
+  for (const s of satisfied) {
+    const undeterminable = reason => Object.assign(s, { outcome: 'undeterminable', reason });
+    if (!answer.success) { undeterminable(`the violation answer does not match the schema: ${answer.error.issues.map(i => `${i.path.join('.')} ${i.message}`).join(', ')}`); continue; }
+    if (answer.data.escalation) { undeterminable(`no controlled violation could be made: ${answer.data.escalation}`); continue; }
+    const proposal = answer.data.violations.find(v => v.scenario === s.scenario);
+    if (!proposal) { undeterminable('no controlled violation was proposed'); continue; }
+    const inspected = await inspectViolation({ workspace, proposal });
+    s.violation = { patchDigest: inspected.patchDigest, files: inspected.files, changedLines: inspected.changedLines };
+    if (inspected.findings.length) { undeterminable(`the controlled violation was rejected: ${inspected.findings.map(f => `${f.path}: ${f.message}`).join('; ')}`); continue; }
+    const examples = examplesOf(s.scenario);
+    const violated = await withViolationCopy({ workspace, directory, carried, proposal }, copy => runner({ workspace: copy, sbiIssue, config, examples }));
+    const judged = judgeViolation({ registration, scenario: s.scenario, report: violated });
+    if (judged.outcome === 'environment') {
+      for (const rest of satisfied.filter(r => r.outcome === null)) Object.assign(rest, { outcome: 'undeterminable', reason: 'not run; the run stopped on an environment failure' });
+      return { environment: judged.reason, scenarios };
+    }
+    Object.assign(s, { outcome: judged.outcome, ...(judged.failures ? { failures: judged.failures } : {}), ...(judged.reason ? { reason: judged.reason } : {}) });
+  }
+  return { scenarios };
+}
+async function prepareGeneratedAcceptance({ root, summary, inputs, source, quiet, acceptanceAgent, violationAgent, acceptanceRunner = runGeneratedAcceptance }) {
   const { directory, workspace } = runPaths(root, summary.id);
   const { escalate } = controller(root, summary, quiet);
-  const agent = acceptanceAgent ?? (request => runAgent({ provider: summary.provider, iteration: 0, prompt: request.prompt, schema: request.schema, directory, workspace, timeoutMs: inputs.config.timeoutMs }));
-  const generation = await generateAcceptance({ workspace, issue: source.issue, provider: summary.provider, runId: summary.id, agent });
-  await json(join(directory, 'acceptance-generation.json'), redact(generation));
-  if (generation.status === 'ESCALATED') return escalate(`Trusted Acceptanceの生成を止めました（仕様が曖昧）: ${generation.reason}`, 'SPEC_AMBIGUOUS');
-  if (generation.status !== 'REGISTERED') return escalate(`生成したTrusted Acceptanceが品質検査に通りません: ${generation.findings.map(f => `${f.path}: ${f.message}`).join('; ')}`, 'ACCEPTANCE_REJECTED');
+  const ask = request => runAgent({ provider: summary.provider, iteration: 0, prompt: request.prompt, schema: request.schema, directory, workspace, timeoutMs: inputs.config.timeoutMs });
+  const agent = acceptanceAgent ?? ask, violator = violationAgent ?? ask;
+  // Evidence keeps digests and results only; the violation patches themselves are never written anywhere.
+  const attempts = [];
+  // scenarios repeats the last attempt, the one the registration (or the escalation) is based on.
+  const record = status => json(join(directory, 'acceptance-detection.json'), redact({ status, scenarios: attempts.at(-1)?.scenarios ?? [], attempts }));
+  let feedback = [], registration = null;
+  for (let attempt = 1; attempt <= inputs.config.maxConsecutiveFailures && !registration; attempt += 1) {
+    const generation = await generateAcceptance({ workspace, issue: source.issue, provider: summary.provider, runId: summary.id, agent, feedback });
+    await json(join(directory, 'acceptance-generation.json'), redact(generation));
+    if (generation.status === 'ESCALATED') return escalate(`Trusted Acceptanceの生成を止めました（仕様が曖昧）: ${generation.reason}`, 'SPEC_AMBIGUOUS');
+    if (generation.status !== 'REGISTERED') return escalate(`生成したTrusted Acceptanceが品質検査に通りません: ${generation.findings.map(f => `${f.path}: ${f.message}`).join('; ')}`, 'ACCEPTANCE_REJECTED');
+    const detected = await detectScenarios({ workspace, directory: join(directory, 'violations'), registration: generation.registration, sbiIssue: source.ref.number, config: inputs.config, runner: acceptanceRunner, violator });
+    attempts.push({ attempt, tests: generation.registration.tests, scenarios: detected.scenarios, ...(detected.environment ? { environment: detected.environment } : {}) });
+    // The environment (Docker, the RSpec report) says nothing about the tests, so it stops the run and is not counted as an attempt.
+    if (detected.environment) { await record('ENVIRONMENT_FAILED'); return escalate(`生成したTrusted Acceptanceを実行できません（環境）: ${detected.environment}`, 'ACCEPTANCE_RUN_FAILED'); }
+    if (detected.scenarios.every(s => s.outcome === 'detected')) registration = generation.registration;
+    // The next attempt is told which Scenario was not proven and why, not the violation it was checked with.
+    else feedback = detected.scenarios.filter(s => s.outcome !== 'detected').map(s => `${s.scenario}: ${s.outcome === 'missed' ? '違反を入れてもPASSしました' : '判定できませんでした'}（${s.reason}）`);
+  }
+  if (!registration) {
+    await record('FAIL');
+    const last = attempts.at(-1).scenarios.filter(s => s.outcome !== 'detected');
+    const failed = last.some(s => s.outcome === 'missed');
+    return escalate(`検出（G）が${attempts.length}回続けて成立しません: ${last.map(s => `${s.scenario}: ${s.reason}`).join('; ')}`, failed ? 'DETECTION_FAILED' : 'DETECTION_UNDETERMINABLE');
+  }
+  await record('PASS');
   summary.headSha = await commitWorkspace(workspace, `SBI ${inputs.sbi.id}: register generated Trusted Acceptance\n\nHarness-Run: ${summary.id}\nSBI-Issue: ${source.ref.url}`);
-  summary.acceptance = { mode: 'generated', specDigest: generation.registration.specDigest, registrationSha: summary.headSha };
-  const detection = judgeDetection({ registration: generation.registration, report: await acceptanceRunner({ workspace, sbiIssue: source.ref.number, config: inputs.config }) });
-  await json(join(directory, 'acceptance-detection.json'), redact(detection));
-  if (detection.status !== 'PASS') return escalate(`検出（G）を判定できません: ${detection.reasons.join('; ')}`, 'DETECTION_UNDETERMINABLE');
-  if (detection.scenarios.every(s => s.outcome === 'already satisfied')) return escalate('検出（G）: すべてのScenarioが実装の前からPASSしています（already satisfied）。生成したテストは新しい振る舞いを何も検出していないので、人が確認してください', 'DETECTION_UNDETERMINABLE');
+  summary.acceptance = { mode: 'generated', specDigest: registration.specDigest, registrationSha: summary.headSha };
   await saveRun(root, summary);
   return null;
 }
-async function runProtected({ root, provider, sbiPath, issueUrl, quiet = false, agent = runAgent, reviewer = review, semanticReviewer, full = false, publish = false, issues = githubCli, acceptanceAgent, acceptanceRunner }) {
+async function runProtected({ root, provider, sbiPath, issueUrl, quiet = false, agent = runAgent, reviewer = review, semanticReviewer, full = false, publish = false, issues = githubCli, acceptanceAgent, violationAgent, acceptanceRunner }) {
   root = await realpath(root);
   if (issueUrl && sbiPath) throw new Error('Give either an SBI Issue URL or --sbi, not both');
   // The Issue is read and validated before any run directory or worktree exists.
@@ -380,7 +439,7 @@ async function runProtected({ root, provider, sbiPath, issueUrl, quiet = false, 
   // Not serialized: a resumed run uses the default runner. Tests replace it so harness:test never starts Docker for the generated specs.
   inputs.acceptanceRunner = acceptanceRunner;
   if (source?.mode === 'generate') {
-    const halted = await prepareGeneratedAcceptance({ root, summary, inputs, source, quiet, acceptanceAgent, acceptanceRunner });
+    const halted = await prepareGeneratedAcceptance({ root, summary, inputs, source, quiet, acceptanceAgent, violationAgent, acceptanceRunner });
     if (halted) return halted;
   }
   const stopped = await assessPreflight(root, summary, inputs, quiet);

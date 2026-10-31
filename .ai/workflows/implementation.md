@@ -3,7 +3,9 @@
 ## run の流れ
 
 1. 通常は`pnpm planner:sbi <PBI URL>`で作ったSBI Issueをレビューし、ACごとのTrusted Acceptanceを`.harness/acceptance/sbi-<番号>.json`に登録して`ready`にする（[pbi-sbi-planner.md](pbi-sbi-planner.md)）。SBI JSONは書かない。
-   新方式では`ready`の代わりに`pnpm harness:spec-approve`で仕様を承認する。runがIssueの仕様からRailsのrequest specを生成し、品質検査と実装前の実行（G）を通ったものだけを登録してから実装する。実装後は同じspecが全てPASSすることを確かめる（I）。
+   新方式では`ready`の代わりに`pnpm harness:spec-approve`で仕様を承認する。runがIssueの仕様からRailsのrequest specを生成し、品質検査と検出（G）を通ったものだけを登録してから実装する。実装後は同じspecが全てPASSすることを確かめる（I）。
+   Gは実装前のREDを求めない。Scenarioごとに、実装前にexpectationの失敗でFAILすればそれを証拠にし、実装前からPASSするScenarioには生成AIが提案したcontrolled violation（`apps/api/app/**`の既存ファイルだけ、2ファイル・20行まで）を使い捨てのコピーに当て、そのScenarioのexpectationがFAILすることを確かめる。load・構文・DB・timeoutなどの失敗は検出に数えない。
+   違反を入れてもPASSする（`DETECTION_FAILED`）・判定できない（`DETECTION_UNDETERMINABLE`）ときは同じ承認済み仕様からテストを作り直し、`maxConsecutiveFailures`回続いたら止める。RSpecの結果が出ない環境の失敗は回数に数えず`ACCEPTANCE_RUN_FAILED`で止める。生成テストとcontrolled violationの実行は、ADR-0005どおりsecretなしで、外部へ出られないCompose network（`internal: true`。Rails ↔ DBなどCompose内の通信だけ通る）で行う。依存のインストールはimageのbuild時だけ。証跡`acceptance-detection.json`には各回のテストdigest・違反patchのdigest・結果だけを残し、patch本文は残さない。
 2. pnpm harness:checkで検証する。
 3. `pnpm harness:run <SBI Issue URL>`を実行する。IssueからSBIを組み立て、Run開始時のsnapshotを保存する。デモは`pnpm harness:demo`（サンプルSBI）。
 4. WAITING_FOR_HUMAN_GATEなら、人間が設計・作業範囲を確認し、`pnpm harness:approve <SBI Issue URL> --phase gate`を実行する。

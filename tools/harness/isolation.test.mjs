@@ -238,6 +238,14 @@ describe('Verifier isolation', () => {
       const override = parseYaml(composeOverride(readFileSync(new URL('../../compose.yaml', import.meta.url), 'utf8')));
       assert.equal(override.services.db, undefined);
     });
+    // ADR-0005: PR code runs without a network. Without network the services still reach each other (Rails ↔ DB) but nothing outside.
+    it('when the verifier has no network then the override makes the default network and every declared network internal', () => {
+      const override = parseYaml(composeOverride('services:\n  api:\n    build: ./apps/api\n    networks: [back]\n  db:\n    image: postgres\nnetworks:\n  back:\n', { network: false }));
+      assert.deepEqual(override.networks, { default: { internal: true }, back: { internal: true } });
+    });
+    it('when the verifier declares network access then the override leaves the networks as they are', () => {
+      assert.equal(parseYaml(composeOverride(readFileSync(new URL('../../compose.yaml', import.meta.url), 'utf8'), { network: true })).networks, undefined);
+    });
     it('when the workspace Compose file asks for root then the override still names the host user', () => {
       const override = parseYaml(composeOverride('services:\n  api:\n    build: ./apps/api\n    user: root\n'));
       assert.equal(override.services.api.user, user);
@@ -345,6 +353,28 @@ describe('Verifier isolation with a real Docker daemon', () => {
       const output = checked.processes.map(p => p.stdout).join('');
       assert.match(output, new RegExp(`UID ${process.getuid()} HOME /tmp`));
       assert.doesNotMatch(output, /UID 0\b/);
+    }));
+  });
+  describe('given a Compose verifier without network', () => {
+    it('when its service runs then it reaches the other Compose service but not the outside network', () => fixture(async root => {
+      await mkdir(join(root, 'probe'), { recursive: true });
+      await writeFile(join(root, 'probe/Dockerfile'), 'FROM node:22.23.4-bookworm-slim\n');
+      const peer = "require('node:http').createServer((q, s) => s.end('peer')).listen(8080)";
+      const probe = `const get = async url => { try { await fetch(url, { signal: AbortSignal.timeout(5000) }); return 'reached'; } catch { return 'blocked'; } };
+(async () => { let inside = 'blocked'; for (let i = 0; i < 20 && inside === 'blocked'; i++) { inside = await get('http://peer:8080'); if (inside === 'blocked') await new Promise(r => setTimeout(r, 500)); }
+console.log('PROBE ' + JSON.stringify({ inside, outside: await get('https://example.com') })); })();`;
+      await writeFile(join(root, 'compose.yaml'), `services:\n  peer:\n    build:\n      context: ./probe\n    command: ["node", "-e", ${JSON.stringify(peer)}]\n  probe:\n    build:\n      context: ./probe\n    depends_on: [peer]\n`);
+      await writeFile(join(root, 'probe.js'), probe);
+      const config = { timeoutMs: 300000, securityVerifiers: [{ id: 'probe', directory: '.', isolation: 'compose', network: false, commands: [
+        ['docker', 'compose', '-f', 'compose.yaml', 'build'], ['docker', 'compose', '-f', 'compose.yaml', 'run', '--rm', 'probe', 'node', '-e', probe], ['docker', 'compose', '-f', 'compose.yaml', 'down']] }] };
+      const result = await verifySecurity({ workspace: root, sbi, assessment: { requiredVerifiers: ['probe'] }, policy: { verifiers: [] }, config, headSha: 'x' });
+      const checked = result.checks.find(c => c.id === 'probe');
+      if (!(await execute('docker', ['info'], { timeoutMs: 30000 })).ok) {
+        assert.equal(checked.status, 'FAIL');
+        return;
+      }
+      assert.equal(checked.status, 'PASS', JSON.stringify(checked.processes?.map(p => p.stderr)));
+      assert.deepEqual(JSON.parse(checked.processes.map(p => p.stdout).join('').match(/PROBE (.*)/)[1]), { inside: 'reached', outside: 'blocked' });
     }));
   });
   describe('given a malicious application test in a workspace that holds Harness trust state', () => {
