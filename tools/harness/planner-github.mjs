@@ -24,6 +24,21 @@ async function listAll(endpoint, query, schema) {
   }
   throw new Error(`gh api GET ${endpoint}: too many pages`);
 }
+// The GraphQL edit history of an Issue body, oldest first.
+async function userContentEdits({ owner, repo, number }) {
+  const query = 'query($owner:String!,$repo:String!,$number:Int!,$after:String){repository(owner:$owner,name:$repo){issue(number:$number){userContentEdits(first:100,after:$after){nodes{editedAt deletedAt diff} pageInfo{hasNextPage endCursor}}}}}';
+  const versions = [];
+  let after = null;
+  for (let page = 0; page < 50; page++) {
+    const edits = (await api('POST', 'graphql', { query, variables: { owner, repo, number, after } }))?.data?.repository?.issue?.userContentEdits;
+    if (!edits) throw new Error(`GraphQL: edit history of ${owner}/${repo}#${number} is unavailable`);
+    versions.push(...edits.nodes);
+    // GitHub returns the edits newest first. editedAt has only seconds, so the API order (reversed) is kept instead of sorting by time.
+    if (!edits.pageInfo.hasNextPage) return versions.reverse();
+    after = edits.pageInfo.endCursor;
+  }
+  throw new Error(`GraphQL: edit history of ${owner}/${repo}#${number} has too many pages`);
+}
 const labelDefinitions = {
   sbi: { color: '0e8a16', description: 'Planner-generated SBI' },
   'needs-review': { color: 'fbca04', description: 'SBI awaiting human review; not ready for the Execution Harness' },
@@ -82,19 +97,12 @@ export const githubCli = {
     return Buffer.from(file.content, 'base64').toString('utf8');
   },
   // Every version of an Issue body that GitHub keeps in its edit history, oldest first. A version deleted from the history has no body.
-  async bodyVersions({ owner, repo, number }) {
-    const query = 'query($owner:String!,$repo:String!,$number:Int!,$after:String){repository(owner:$owner,name:$repo){issue(number:$number){userContentEdits(first:100,after:$after){nodes{editedAt deletedAt diff} pageInfo{hasNextPage endCursor}}}}}';
-    const versions = [];
-    let after = null;
-    for (let page = 0; page < 50; page++) {
-      const edits = (await api('POST', 'graphql', { query, variables: { owner, repo, number, after } }))?.data?.repository?.issue?.userContentEdits;
-      if (!edits) throw new Error(`GraphQL: edit history of ${owner}/${repo}#${number} is unavailable`);
-      versions.push(...edits.nodes);
-      // GitHub returns the edits newest first. editedAt has only seconds, so the API order (reversed) is kept instead of sorting by time.
-      if (!edits.pageInfo.hasNextPage) return versions.reverse().map(v => ({ body: v.deletedAt ? null : v.diff, deletedAt: v.deletedAt ?? null }));
-      after = edits.pageInfo.endCursor;
-    }
-    throw new Error(`GraphQL: edit history of ${owner}/${repo}#${number} has too many pages`);
+  async bodyVersions(ref) {
+    return (await userContentEdits(ref)).map(v => ({ body: v.deletedAt ? null : v.diff, deletedAt: v.deletedAt ?? null }));
+  },
+  // When each body edit happened, the body it left and when a version was deleted from the history (#194: ready binds to the body as it was when it was added).
+  async bodyEdits(ref) {
+    return (await userContentEdits(ref)).map(v => ({ editedAt: v.editedAt ?? null, deletedAt: v.deletedAt ?? null, body: v.deletedAt ? null : v.diff ?? null }));
   },
   // GitHub issue dependencies: the Issues registered as blocking this one (blocked by).
   async blockedBy({ owner, repo, number }) {

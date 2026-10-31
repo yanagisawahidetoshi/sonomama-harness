@@ -209,7 +209,7 @@ export async function runCompletionJudge({ root, base, all = false, needs, repos
     let generatedSpecDigest = null, generatedSpecError = null;
     if (snapshot && sbi.acceptanceCriteria.some(a => generatedId.test(a.verifier))) {
       const [owner, repo] = snapshot.source.repo.split('/');
-      try { generatedSpecDigest = specDigest((await issueGithub.fetchIssue({ owner, repo, number: snapshot.source.number })).body); }
+      try { generatedSpecDigest = specDigest(await issueGithub.fetchIssue({ owner, repo, number: snapshot.source.number })); }
       catch (error) { generatedSpecError = `SBI Issue ${snapshot.source.url} could not be read, so the spec digest cannot be checked (${error.message})`; }
     }
     const result = await verify({ root, workspace: root, config, sbi, files, only: new Set(sbi.acceptanceCriteria.map(a => a.verifier)), generatedSpecDigest, generatedSpecError,
