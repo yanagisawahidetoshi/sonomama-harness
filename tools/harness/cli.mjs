@@ -9,7 +9,7 @@ import { startApiMock, waitForApiMock } from './api-mock.mjs';
 import { startApiDocs } from './api-docs.mjs';
 import { relativePath } from './schemas.mjs';
 import { describeImpact, describeJudge, loadImpact, runCompletionJudge, runVerifier } from './impact.mjs';
-import { runTrustedJudge } from './trusted-judge.mjs';
+import { checkConclusion, runTrustedJudge } from './trusted-judge.mjs';
 import { runPushGate } from './push-gate.mjs';
 import { describeSbiSource } from './sbi-source.mjs';
 import { collectPbiStatus, renderPbiStatus, acceptPbi } from './pbi-status.mjs';
@@ -180,8 +180,9 @@ try {
       }
       const summary = `Completion Judge: ${judged.status}${judged.reasons.length ? ` (${judged.reasons.join('; ')})` : ''}`;
       console.log(redactText(summary));
-      await output([`conclusion=${judged.status === 'PASS' ? 'success' : 'failure'}`, `summary=${redactText(summary).replace(/\s+/g, ' ').slice(0, 60000)}`]);
-      process.exitCode = judged.status === 'PASS' ? 0 : 1;
+      await output([`conclusion=${checkConclusion(judged.status)}`, `summary=${redactText(summary).replace(/\s+/g, ' ').slice(0, 60000)}`]);
+      // A human review is a result, not a failure of the judge job; publish turns it into a neutral check run.
+      process.exitCode = judged.status === 'FAIL' ? 1 : 0;
     } else {
       const needs = JSON.parse(process.env.HARNESS_NEEDS || '{}');
       // Set only on pull_request events; a trusted dependency bot PR is read from GitHub by this number.

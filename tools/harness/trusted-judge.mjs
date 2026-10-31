@@ -9,7 +9,7 @@ import { redactText } from './evidence-protection.mjs';
 import { sbiFilePattern } from './sbi-source.mjs';
 import { loadImpact, runCompletionJudge } from './impact.mjs';
 // ADR-0008: the pull_request run executes the PR and is untrusted evidence. The Completion Judge on pull_request_target reads it as data
-// with main's code, and does not pass a PR that changed the producer of that evidence on its own evidence.
+// with main's code. A PR that changed the producer of that evidence is not passed on its own evidence; a human reviews it.
 export const evidenceWorkflow = '.github/workflows/harness.yml';
 // What the pull_request workflow reads and runs: the workflow, the Harness and its rules, and the root dependencies the Harness installs.
 const producerPatterns = [/^\.github\//, /^tools\/harness\//, /^\.harness\//, /^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|\.node-version|\.npmrc)$/];
@@ -18,8 +18,11 @@ const producerData = [sbiFilePattern, /^\.harness\/acceptance\/sbi-[1-9]\d*\.jso
 
 export function judgeProducer(files) {
   const paths = [...new Set(files.map(f => f.path))].filter(p => producerPatterns.some(r => r.test(p)) && !producerData.some(r => r.test(p))).sort();
-  return { paths, reasons: paths.length ? [`producer changed: ${paths.join(', ')} (the PR's own evidence cannot pass it; a human reviews it)`] : [] };
+  return { paths, status: paths.length ? 'MANUAL_REVIEW_REQUIRED' : 'PASS', reasons: paths.length ? [`producer changed: ${paths.join(', ')} (manual review required: the PR's own evidence cannot pass it)`] : [] };
 }
+
+// A human review is a neutral check run: GitHub lets a person merge it, while the Harness merge assessment counts only success.
+export const checkConclusion = status => ({ PASS: 'success', MANUAL_REVIEW_REQUIRED: 'neutral' })[status] ?? 'failure';
 
 // The latest completed pull_request run of harness.yml for the head; a run of another workflow file the PR added never counts.
 export function selectEvidenceRun({ runs, headSha }) {
@@ -103,6 +106,8 @@ export async function runTrustedJudge({ root, workspace, base, repository, pullN
   // The run's head stands for the head its impact job analyzed; judgeTestedCommit compares it and the PR tree with the event head.
   const needs = { ...evidence.needs, impact: { ...evidence.needs.impact, outputs: { head_sha: run.head_sha } } };
   const judged = await runCompletionJudge({ root, workspace, base, needs, repository, pullNumber, maestroResults, acceptanceResults, expectedHeadSha: headSha });
-  const reasons = [...producer.reasons, ...evidence.reasons, ...judged.reasons];
-  return { ...judged, needs, run, producer, status: reasons.length ? 'FAIL' : 'PASS', reasons };
+  // A failure of the evidence wins; a producer change alone leaves the PR to a human.
+  const failures = [...evidence.reasons, ...judged.reasons];
+  const status = failures.length ? 'FAIL' : producer.status;
+  return { ...judged, needs, run, producer, status, reasons: [...producer.reasons, ...failures] };
 }

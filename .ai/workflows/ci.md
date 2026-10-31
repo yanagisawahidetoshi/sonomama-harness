@@ -13,19 +13,26 @@
 ## 信頼できるCompletion Judge（ADR-0008）
 
 `harness.yml`は`pull_request`でPRのコードを動かすので、その結果は信用しない証拠として扱う。
-`.github/workflows/completion-judge.yml`は`pull_request_target`で動き、workflowは常にmainのものになる。mainのHarnessで判定して、専用GitHub Appのcheck run `Completion Judge`を出す。
+`.github/workflows/completion-judge.yml`は`pull_request_target`で動き、workflowは常にmainのものになる。mainのHarnessで判定して、check run `Completion Judge`を出す。専用のGitHub Appは使わない。
 
 | job | 内容 |
 | --- | --- |
-| `judge` | mainをcheckoutし、PRのheadをcheckoutの外（`runner.temp/pr`）にdetached worktreeで置く。PRのものはinstallも実行もしない。`pnpm harness:judge --trusted`が、同じhead SHAの`pull_request` runが終わるまで待つ。impactをmainのコードで計算し直し、そのrunのjobs APIとartifactで判定する。secretもenvironmentも持たない |
-| `publish` | environment `completion-judge`のApp鍵でtokenを作り、`judge`の結果をcheck runにする。checkoutもHarnessの実行もしない。`judge`が失敗・取消・結果なしなら`failure`を出す |
+| `judge` | mainをcheckoutし、PRのheadをcheckoutの外（`runner.temp/pr`）にdetached worktreeで置く。PRのものはinstallも実行もしない。`pnpm harness:judge --trusted`が、同じhead SHAの`pull_request` runが終わるまで待つ。impactをmainのコードで計算し直し、そのrunのjobs APIとartifactで判定する。secretも書き込み権限も持たない |
+| `publish` | `checks: write`の`GITHUB_TOKEN`で、`judge`の結果をcheck runにする。checkoutもHarnessの実行もしない。`judge`が失敗・取消・skip・結果なしなら`failure`を出す |
+
+| 判定 | check run | 意味 |
+| --- | --- | --- |
+| `PASS` | success | 必要なjobと判定がすべて通った |
+| `MANUAL_REVIEW_REQUIRED` | neutral | 証拠の作り手を変えたPR。ほかは通っている。人が確認してmergeする。Harnessのmerge判定（`MERGE_ALLOWED`・`autoMergeEligible`）はsuccessしか数えない |
+| `FAIL` | failure | 必要なjobや判定が通っていない（作り手の変更があってもFAILが優先） |
 
 - 要求したverifierごとに、runの`verifiers (<id>)` jobのsuccessを求める。head SHAのcheck run一覧は使わない。PR側の`harness` jobは数えない。
-- 証拠の作り手（`.github/**`、`tools/harness/**`、`.harness/**`、rootの`package.json`・`pnpm-lock.yaml`・`pnpm-workspace.yaml`・`.node-version`・`.npmrc`）を変えたPRは、すべてのjobが通っても`producer changed`でFAILする。SBIのJSONと生成したTrusted Acceptanceの登録は除く。
+- 証拠の作り手は`.github/**`、`tools/harness/**`、`.harness/**`、rootの`package.json`・`pnpm-lock.yaml`・`pnpm-workspace.yaml`・`.node-version`・`.npmrc`。SBIのJSONと生成したTrusted Acceptanceの登録は除く。
 - 手書きのTrusted Acceptanceの登録（version 1）はmain側のものだけを使う。生成した登録（version 2）はPRのものを使い、spec digestで検査する。
-- forkからのPRは`judge`を動かさず、`publish`が`failure`を出す（BLOCKED）。
+- forkからのPRは`judge`を動かさず、`publish`が`failure`を出す。
 - 実行の`pull_request` runをre-runしたときは、`Completion Judge` workflowもre-runする。
-- ruleset を`Completion Judge`に切り替えるまでは、今の`harness` jobが必須チェックのまま。
+- 同じGitHub Actionsから同じ名前のcheckを出せば偽装できる。これは受け入れた残余リスクで、作り手を変えるPRを人が確認して防ぐ（ADR-0008）。
+- rulesetを`Completion Judge`に切り替えるまでは、今の`harness` jobが必須チェックのまま。
 
 ## Maestro（mobile E2E）
 

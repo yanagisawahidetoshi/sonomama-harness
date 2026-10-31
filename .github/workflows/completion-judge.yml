@@ -1,7 +1,7 @@
 name: Completion Judge
 # ADR-0008: the pull_request run of harness.yml executes the PR and is untrusted evidence. This workflow always comes from main
-# (pull_request_target), judges that evidence with main's Harness and publishes the result as the check run of a dedicated GitHub App,
-# the only source the ruleset accepts. A change to this file affects no PR, its own included, until it is merged.
+# (pull_request_target), judges that evidence with main's Harness and publishes the check run "Completion Judge": success, neutral when a
+# human must review a change of the evidence producer, or failure. A change to this file affects no PR, its own included, until it is merged.
 on:
   pull_request_target:
     branches: [main]
@@ -11,7 +11,7 @@ concurrency:
   group: completion-judge-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 jobs:
-  # Holds no secret and no environment: the hand-written Trusted Acceptance scripts read the PR tree, and ci-matrix imports its Harness,
+  # Holds no secret and no write permission: the hand-written Trusted Acceptance scripts read the PR tree, and ci-matrix imports its Harness,
   # under the Node permission model. The PR head is checked out beside main as data only; nothing of it is installed.
   # A fork's head is never judged here (its Harness would run in the Trusted Acceptance sandbox of this privileged event); publish then reports failure.
   judge:
@@ -52,24 +52,18 @@ jobs:
           HARNESS_PULL_REQUEST: ${{ github.event.pull_request.number }}
           HARNESS_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           GH_TOKEN: ${{ github.token }}
-  # The only job with the App key: it checks nothing out and runs no Harness code, it only turns the judge job's result into the check run.
-  # A failed, cancelled or silent judge job is published as a failure.
+  # The only job that may write a check run: it checks nothing out and runs no Harness code, it only turns the judge job's result into the
+  # check run. A failed, cancelled, skipped or silent judge job is published as a failure.
   publish:
     needs: judge
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    environment: completion-judge
-    permissions: {}
+    permissions:
+      checks: write
     steps:
-      - id: token
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
-        with:
-          app-id: ${{ vars.COMPLETION_JUDGE_APP_ID }}
-          private-key: ${{ secrets.COMPLETION_JUDGE_PRIVATE_KEY }}
-          permission-checks: write
       - env:
-          GH_TOKEN: ${{ steps.token.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           RESULT: ${{ needs.judge.result }}
@@ -78,8 +72,8 @@ jobs:
           DETAILS: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           conclusion=failure
-          if [ "$CONCLUSION" = success ] && [ "$RESULT" = success ]; then conclusion=success; fi
+          if [ "$RESULT" = success ] && { [ "$CONCLUSION" = success ] || [ "$CONCLUSION" = neutral ]; }; then conclusion=$CONCLUSION; fi
           [ -n "$SUMMARY" ] || SUMMARY="Completion Judge: the judge job ended ${RESULT} without a result"
           jq -n --arg sha "$HEAD_SHA" --arg conclusion "$conclusion" --arg summary "$SUMMARY" --arg url "$DETAILS" \
-            '{name: "Completion Judge", head_sha: $sha, status: "completed", conclusion: $conclusion, details_url: $url, output: {title: ("Completion Judge: " + $conclusion), summary: $summary}}' \
+            '{name: "Completion Judge", head_sha: $sha, status: "completed", conclusion: $conclusion, details_url: $url, output: {title: ("Completion Judge: " + ({success: "PASS", neutral: "MANUAL REVIEW REQUIRED"}[$conclusion] // "FAIL")), summary: $summary}}' \
             | gh api "repos/${REPOSITORY}/check-runs" --input -
