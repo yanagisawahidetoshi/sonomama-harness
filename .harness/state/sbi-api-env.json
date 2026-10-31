@@ -2,7 +2,7 @@
   "id": "SBI-API-ENV",
   "title": "API用Rails開発環境を apps/api に構築する",
   "description": "Issue #21。apps/apiにRails 8.1 API mode (Ruby 3.4) を生成し、root compose.yamlのapi / db (PostgreSQL) serviceで起動・検証できるようにする。RSpec / RuboCop / Brakeman / Bundler Audit / ZeitwerkをDocker経由でHarnessのrails verifierから実行する。業務API・認証・業務テーブルは作らない。",
-  "gherkin": "Feature: API開発環境\n  Scenario: Dockerだけで起動できる\n    Given 開発者のローカルにRubyとPostgreSQLがない\n    When docker compose up api db を実行する\n    Then hostから /up に疎通できる\n  Scenario: Harnessから品質チェックできる\n    Given harness.jsonのrails verifierにDocker Composeのコマンドが登録されている\n    When Harnessがapps/apiの変更を検証する\n    Then RSpec / RuboCop / Brakeman / Bundler Audit / Zeitwerk checkがDocker上でPASSする\n  Scenario: 未決定の技術を固定しない\n    Given 認証ProviderとOpenAPI 3.1 contract validation方式が未決定である\n    When Gemfileとコードを確認する\n    Then 認証gem・JWT実装・committee-rails・業務model / endpointは存在しない",
+  "gherkin": "Feature: API開発環境\n  Scenario: Dockerだけで起動できる\n    Given 開発者のローカルにRubyとPostgreSQLがない\n    When docker compose up api db を実行する\n    Then hostから /up に疎通できる\n  Scenario: Harnessから品質チェックできる\n    Given harness.jsonのrails verifierにDocker Composeのコマンドが登録されている\n    When Harnessがapps/apiの変更を検証する\n    Then RSpec / RuboCop / Brakeman / Bundler Audit / Zeitwerk checkがDocker上でPASSする\n  Scenario: 認証Providerの決定とProvider固有実装を分ける\n    Given 認証ProviderはADR-0007でAmazon Cognitoに決まっている\n    And Provider固有gemの追加とCognito固有実装への直接依存は承認が必要である\n    And OpenAPI 3.1 contract validation方式が未決定である\n    When Gemfile・コード・READMEの認証節を確認する\n    Then READMEの認証節はAmazon CognitoとADR-0007を示し、承認なしにProvider固有実装を導入しない方針を書いている\n    And 認証gem・JWT実装・committee-rails・業務model / endpointは存在しない",
   "acceptanceCriteria": [
     {
       "id": "API-AC-1",
@@ -111,7 +111,7 @@
     },
     {
       "id": "API-AC-22",
-      "description": "READMEにDockerベースの開発手順が記載されている",
+      "description": "READMEにDockerベースの開発手順が記載されている。認証節はAmazon Cognito（ADR-0007）と、承認なしにProvider固有実装を導入しない方針を示す",
       "verifier": "api-acceptance"
     }
   ],
