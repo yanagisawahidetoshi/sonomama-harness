@@ -10,8 +10,10 @@ const ref = { owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/ac
 const readyAt = '2026-10-30T10:00:00Z';
 const labeled = (at = readyAt, name = 'ready') => ({ event: 'labeled', label: { name }, created_at: at });
 const renamed = at => ({ event: 'renamed', created_at: at });
-const edit = (editedAt, deletedAt = null) => ({ editedAt, deletedAt });
-const judge = ({ timeline = [labeled()], edits = [] } = {}) => readyBinding({ url: ref.url, timeline, edits });
+const issue = { title: 'SBI-001 ホームに見出しを表示する', body: '## 目的\n\n見出しを表示する。\n' };
+// A version of the body GitHub keeps in the edit history; the newest one is the current body.
+const edit = (editedAt, deletedAt = null, body = deletedAt ? null : issue.body) => ({ editedAt, deletedAt, body });
+const judge = ({ timeline = [labeled()], edits = [], current = issue } = {}) => readyBinding({ url: ref.url, issue: current, timeline, edits });
 
 describe('Binding the ready label to the content it approved', () => {
   describe('given an SBI Issue that a human marked ready', () => {
@@ -47,6 +49,16 @@ describe('Binding the ready label to the content it approved', () => {
     });
   });
 
+  // The content approved at ready and the content the run takes must have the same digest, whatever the dates say.
+  describe('given the body GitHub kept as it was at ready', () => {
+    it('when the newest version before ready differs from the current body, though no edit is dated after ready, then the approval does not hold', () => {
+      assert.match(judge({ edits: [edit('2026-10-30T09:00:00Z', null, '## 目的\n\n別の内容。\n')] }).join('\n'), /digest/);
+    });
+    it('when the version at ready was deleted from the history then the approved content is unknown and the approval does not hold', () => {
+      assert.match(judge({ edits: [edit('2026-10-30T09:00:00Z', '2026-10-30T09:30:00Z')] }).join('\n'), /digest/);
+    });
+  });
+
   describe('given a timeline that does not date the ready label', () => {
     for (const [name, timeline] of [
       ['has no labeled event for ready', [labeled(readyAt, 'sbi')]],
@@ -64,14 +76,14 @@ describe('Binding the ready label to the content it approved', () => {
       bodyEdits: async () => { if (fails === 'edits') throw new Error('GraphQL: edit history of acme/app#7 is unavailable'); return edits; },
     });
     it('when GitHub shows no edit after ready then the approval holds', async () => {
-      assert.deepEqual(await readReadyBinding({ ref, github: github() }), []);
+      assert.deepEqual(await readReadyBinding({ ref, issue, github: github() }), []);
     });
     it('when GitHub shows an edit after ready then the approval does not hold', async () => {
-      assert.ok((await readReadyBinding({ ref, github: github({ edits: [edit('2026-10-30T11:00:00Z')] }) })).length);
+      assert.ok((await readReadyBinding({ ref, issue, github: github({ edits: [edit('2026-10-30T11:00:00Z')] }) })).length);
     });
     for (const fails of ['timeline', 'edits']) {
       it(`when the ${fails} cannot be read then the approval does not hold`, async () => {
-        const reasons = await readReadyBinding({ ref, github: github({ fails }) });
+        const reasons = await readReadyBinding({ ref, issue, github: github({ fails }) });
         assert.ok(reasons.length && reasons.every(r => r.includes(ref.url)), JSON.stringify(reasons));
       });
     }
@@ -84,10 +96,10 @@ describe('GitHub adapter for the ready approval', () => {
     it('when the timeline is read then the labeled and renamed events keep their label and date', () => mockGitHub({ issueTimelines: { 7: [labeled(), renamed('2026-10-30T11:00:00Z')] } }, async () => {
       assert.deepEqual((await githubCli.issueTimeline(ref)).map(e => [e.event, e.label?.name, e.created_at]), [['labeled', 'ready', readyAt], ['renamed', undefined, '2026-10-30T11:00:00Z']]);
     }));
-    it('when the body edits are read then every edit of the GraphQL history keeps its date, deleted ones included', () => mockGitHub({ issueEdits: { 7: [
+    it('when the body edits are read then every edit of the GraphQL history keeps its date and body oldest first, deleted ones included', () => mockGitHub({ issueEdits: { 7: [
       { editedAt: '2026-10-30T11:00:00Z', deletedAt: null, diff: 'B' }, { editedAt: '2026-10-30T09:00:00Z', deletedAt: '2026-10-30T12:00:00Z', diff: null },
     ] } }, async () => {
-      assert.deepEqual((await githubCli.bodyEdits(ref)).map(e => [e.editedAt, e.deletedAt]).sort(), [['2026-10-30T09:00:00Z', '2026-10-30T12:00:00Z'], ['2026-10-30T11:00:00Z', null]]);
+      assert.deepEqual((await githubCli.bodyEdits(ref)).map(e => [e.editedAt, e.deletedAt, e.body]), [['2026-10-30T09:00:00Z', '2026-10-30T12:00:00Z', null], ['2026-10-30T11:00:00Z', null, 'B']]);
     }));
   });
 });
