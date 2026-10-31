@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { fixture, update } from './test-fixture.mjs';
 import { githubMock } from './test-github.mjs';
 import { git } from './workspace.mjs';
+import { githubCli } from './planner-github.mjs';
 import { analyzeImpact, describeImpact, judgeCi, runCompletionJudge } from './impact.mjs';
 import { renderSbiBody } from './planner.mjs';
 import { sbiSnapshotSchema } from './schemas.mjs';
@@ -502,6 +503,28 @@ describe('CI Completion Judge for the source SBI Issue', () => {
       assert.equal(judged.status, 'FAIL');
       assert.ok(judged.reasons.some(r => r.includes(`harness/${otherRunId}`) && r.includes(runId)), judged.reasons.join('; '));
     })));
+
+    // A second, valid snapshot of another ready Issue does not make the PR the change of another run; the Harness PR is held to its own run only.
+    it('when a Harness PR carries the snapshot of its own run and a valid snapshot of another ready SBI Issue then the Judge fails on the count alone', () => {
+      const otherRef = { owner: 'acme', repo: 'app', number: 8, url: 'https://github.com/acme/app/issues/8' };
+      const otherIssue = { number: 8, title: 'SBI-002 管理画面の一覧', body: renderSbiBody({ ...planned, id: 'SBI-002', title: '管理画面の一覧', purpose: '一覧を表示する',
+        acceptanceCriteria: [{ id: 'LIST-AC-1', description: '一覧が出る' }], scenarios: [{ ...planned.scenarios[0], acceptanceIds: ['LIST-AC-1'] }] }, pbi), html_url: otherRef.url, state: 'open', labels: labels('sbi', 'ready') };
+      const listAcceptance = { ...homeAcceptance, id: 'list-acceptance', trustedScript: '.harness/verification/list.mjs', acceptanceIds: ['LIST-AC-1'], sbiIssue: 8 };
+      const other = snapshotFromIssue({ ref: otherRef, issue: otherIssue, runId: otherRunId, sbi: sbiFromIssue({ ref: otherRef, issue: otherIssue, config: { verifiers: [listAcceptance] } }) });
+      // The gh stub serves one Issue by number; the second ready Issue is read through its created Issues (timeline and permission) and here.
+      const github = { ...githubCli, fetchIssue: ref => ref.number === 8 ? Promise.resolve(otherIssue) : githubCli.fetchIssue(ref) };
+      return mockGitHub({ pulls: [pull(`harness/${runId}`)], created: [otherIssue] }, () => fixture(async root => {
+        await writeFile(join(root, '.harness/verification/list.mjs'), 'console.log(JSON.stringify({ acceptance: ["LIST-AC-1"] }));');
+        await update(root, '.harness/config/harness.json', c => { c.verifiers.push(listAcceptance); });
+        await prepare(root);
+        await commit(root, { [admin]: 'export const home = 1;', [snapshotPath(snapshot())]: snapshot() }, `feat: home${trailers()}`);
+        await commit(root, { [snapshotPath(other)]: other }, `feat: list${trailers(other)}`);
+        const judged = await run(root, { pullNumber: '201', github });
+        assert.deepEqual(judged.source.reasons.filter(r => !r.startsWith('harness pr:')), [], 'both snapshots are valid on their own');
+        assert.equal(judged.source.status, 'FAIL');
+        assert.ok(judged.reasons.some(r => r.includes(`harness/${runId}`) && r.includes('exactly one')), judged.reasons.join('; '));
+      }));
+    });
 
     it('when the pull request cannot be read then the Judge fails closed, since it cannot tell whether Harness opened it', () => mockGitHub({ pulls: [] }, () => fixture(async root => {
       await prepare(root);
