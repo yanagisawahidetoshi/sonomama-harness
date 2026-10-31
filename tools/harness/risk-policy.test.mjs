@@ -18,6 +18,7 @@ const level1 = [
   ['Rails routes', file('apps/api/config/routes.rb', 'resources :courses, only: [:index]')],
   ['shared admin configuration', file('apps/admin/src/shared/config/env.ts', 'export const apiBase = import.meta.env.VITE_API_BASE;')],
   ['an added test', file('apps/admin/src/features/courses/CourseList.test.tsx', 'it("renders", () => expect(true).toBe(true));')],
+  ['an added assertion in an existing test', file('apps/api/spec/models/course_spec.rb', '  expect(course).to be_published', { status: 'M' })],
   ['an internal refactor', file('apps/api/app/models/course.rb', 'scope :published, -> { where(published: true) }')],
   ['product documentation', file('docs/product/intro.md')],
 ];
@@ -34,6 +35,15 @@ const level2 = [
   ['the agent rules', file('.ai/architecture.md')],
   ['ordinary infrastructure outside production', file('infra/staging/network.tf', 'module "vpc" { source = "./vpc" }')],
   ['a deployment manifest outside production', file('deploy/staging/app.yaml', 'replicas: 2')],
+  ['a Helm chart value', file('charts/api/values.yaml', 'replicas: 2')],
+  ['a CDK stack', file('cdk/lib/stack.ts', 'new Bucket(this, "assets");')],
+  // ADR-0006: weakening a test never merges automatically.
+  ['a deleted test file', file('apps/admin/src/features/courses/CourseList.test.tsx', '', { status: 'D', deleted: 'it("renders", () => expect(true).toBe(true));' })],
+  ['a focused test', file('apps/admin/src/features/courses/CourseList.test.tsx', 'it.only("renders", () => expect(true).toBe(true));')],
+  ['a skipped test', file('apps/admin/src/features/courses/CourseList.test.tsx', 'describe.skip("list", () => {});')],
+  ['an RSpec example marked pending', file('apps/api/spec/models/course_spec.rb', '  pending "until the API exists"')],
+  ['an RSpec focus tag', file('apps/api/spec/models/course_spec.rb', 'it "publishes", :focus do')],
+  ['a removed assertion', file('apps/admin/src/features/courses/CourseList.test.tsx', 'it("renders", () => {});', { status: 'M', deleted: '  expect(screen.getByRole("list")).toBeVisible();' })],
 ];
 const level3 = [
   ['the Risk policy itself', file('.harness/rules/pr-risk.json', '{ "version": 1 }')],

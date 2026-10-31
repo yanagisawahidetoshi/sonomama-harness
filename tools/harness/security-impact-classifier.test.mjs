@@ -250,14 +250,21 @@ describe('Security Impact Classifier on infrastructure', () => {
   const ordinary = result => detected(result, 'SEC-INFRA-001') && !detected(result, 'SEC-PRODINFRA-001') && result.minimumRiskLevel === 2 && result.requiredHumanApprovals === 1;
   const critical = result => detected(result, 'SEC-PRODINFRA-001') && result.minimumRiskLevel === 3 && result.requiredHumanApprovals === 2;
   describe('given an infrastructure change outside production that adds nothing dangerous', () => {
+    for (const path of ['live/staging/terragrunt.hcl', 'charts/api/values.yaml', 'cdk/lib/stack.ts', 'infra/staging/main.tf.json', 'environments/staging/main.tf']) {
+      it(`when ${path} changes then it is ordinary infrastructure, not level 1`, () => assert.ok(ordinary(infra(path, 'replicas = 2'))));
+    }
+    it('when the Rails production environment config changes then it is not infrastructure', () => assert.equal(detected(infra('apps/api/config/environments/production.rb', 'config.log_level = :info'), 'SEC-PRODINFRA-001'), false));
     it('when a module is added in staging then it is ordinary infrastructure at level 2 with one review', () => assert.ok(ordinary(infra('infra/staging/network.tf', 'module "vpc" { source = "./vpc" }'))));
     it('when tags change then it is ordinary infrastructure', () => assert.ok(ordinary(infra('terraform/modules/db/main.tf', 'tags = { team = "core" }'))));
     it('when an existing open ingress is narrowed then it stays ordinary', () => assert.ok(ordinary(infra('infra/staging/sg.tf', 'cidr_blocks = ["10.0.0.0/16"]', { deleted: 'cidr_blocks = ["0.0.0.0/0"]' }))));
     it('when an egress rule opens to everywhere then it stays ordinary', () => assert.ok(ordinary(infra('infra/staging/sg.tf', 'egress {\n  from_port = 0\n  cidr_blocks = ["0.0.0.0/0"]\n}'))));
+    it('when a non-production directory is named non-prod then it stays ordinary', () => assert.ok(ordinary(infra('infra/non-prod/main.tf', 'replicas = 1'))));
+    it('when an ingress description names an egress block then the open ingress is still critical', () => assert.ok(critical(infra('infra/staging/sg.tf', 'ingress {\n  description = "allow egress {"\n  cidr_blocks = ["0.0.0.0/0"]\n}'))));
     it('when a document only mentions a dangerous setting then it is not infrastructure at all', () => assert.equal(detected(infra('docs/product/notes.md', 'Never set force_destroy = true.'), 'SEC-PRODINFRA-001'), false));
   });
   describe('given a change to production infrastructure', () => {
-    for (const path of ['infra/production/main.tf', 'terraform/envs/prod/main.tf', 'terraform/envs/prod.tfvars', 'k8s/overlays/production/deployment.yaml', 'deploy/prod/app.yaml']) {
+    for (const path of ['infra/production/main.tf', 'terraform/envs/prod/main.tf', 'terraform/envs/prod.tfvars', 'k8s/overlays/production/deployment.yaml', 'deploy/prod/app.yaml',
+      'environments/prod/main.tf', 'infra/prd/main.tf', 'live/prod/terragrunt.hcl', 'charts/api/values-production.yaml', '.github/workflows/deploy-production.yml']) {
       it(`when ${path} changes then it is critical at level 3 with two reviews`, () => assert.ok(critical(infra(path, 'replicas = 3'))));
     }
   });
@@ -271,9 +278,21 @@ describe('Security Impact Classifier on infrastructure', () => {
       ['an IAM policy statement allows every resource', '"Resource": "*"'],
       ['an ingress opens to every IPv4 address', 'ingress {\n  from_port = 22\n  cidr_blocks = ["0.0.0.0/0"]\n}'],
       ['an ingress opens to every IPv6 address', 'ipv6_cidr_blocks = ["::/0"]'],
+      ['one element of a multi-line IAM list becomes every action', '    "*",'],
+      ['an IAM list gains every action after another one', 'actions = ["s3:GetObject", "*"]'],
+      ['a YAML policy allows every resource', "Resource: '*'"],
+      ['a Kubernetes role allows every resource', 'resources:\n  - "*"'],
+      ['CloudFormation turns deletion protection off', 'DeletionProtection: false'],
     ]) {
       it(`when ${name} outside production then it is critical`, () => assert.ok(critical(infra('infra/staging/main.tf', added))));
     }
+    for (const [name, deleted] of [
+      ['destroy protection is removed', 'lifecycle { prevent_destroy = true }'],
+      ['deletion protection is removed', 'deletion_protection = true'],
+    ]) {
+      it(`when ${name} outside production then it is critical`, () => assert.ok(critical(infra('infra/staging/main.tf', '', { deleted }))));
+    }
+    it('when deletion protection is turned on then it stays ordinary', () => assert.ok(ordinary(infra('infra/staging/main.tf', 'deletion_protection = true', { deleted: 'deletion_protection = false' }))));
     it('when an infrastructure file is binary then it cannot be inspected and is critical', () => assert.ok(critical(infra('infra/staging/state.bin', '', { binary: true }))));
   });
 });
