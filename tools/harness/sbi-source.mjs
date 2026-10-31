@@ -6,6 +6,7 @@ import { githubCli } from './planner-github.mjs';
 import { sbiFromIssue } from './sbi-issue.mjs';
 import { readAcceptance } from './acceptance-registry.mjs';
 import { readSpecApproval, specApprovalLine } from './spec-approval.mjs';
+import { readReadyBinding } from './ready-approval.mjs';
 import { sbiSchema, sbiSnapshotSchema } from './schemas.mjs';
 import { git } from './workspace.mjs';
 // A Production change is backed by a Harness Run that started from an approved SBI Issue. The Run commits what it took from the Issue
@@ -113,6 +114,8 @@ export async function verifySbiSource({ root, base, files, required, config, rep
       catch (error) { specApproval = { approved: false, digest: null }; source.reasons.push(`sbi source: the spec approval of ${snapshot.source.url} could not be read (${error.message})`); }
     }
     source.reasons.push(...judgeSbiSource({ snapshot, issue, repository, runs, specApproval }));
+    // #194: the snapshot only shows the Issue did not change after the Run; ready must still cover what the Run took from it.
+    if (issue && !generated) source.reasons.push(...(await readReadyBinding({ ref: { owner, repo, number: snapshot.source.number, url: snapshot.source.url }, issue, github })).map(r => `sbi source: ${r}`));
     if (issue) {
       source.reasons.push(...matchSbiSource({ snapshot, issue, config, generate: generated }));
       source.sources.push({ url: snapshot.source.url, runId: snapshot.runId, number: snapshot.source.number });

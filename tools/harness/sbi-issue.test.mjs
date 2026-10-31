@@ -188,6 +188,55 @@ describe('Scope of an execution SBI', () => {
 
 // A Rails or frontend SBI depends on the OpenAPI Schema SBI. Only a merged Harness PR of that SBI puts the canonical openapi.yaml on main,
 // so the dependency is done when GitHub shows such a PR, not when someone closes its Issue.
+// #194: ready approves the Issue as it was when the label was added. GitHub dates the labeled event and every edit of the body.
+const readyAt = '2026-10-30T10:00:00Z';
+const readyEvent = { event: 'labeled', label: { name: 'ready' }, created_at: readyAt, actor: { login: 'alice', type: 'User' } };
+describe('Starting a run from an SBI Issue a human marked ready', () => {
+  const github = ({ own = issue(), timeline = [readyEvent], edits = [], access = { permission: 'write', role_name: 'write' } } = {}) => ({
+    fetchIssue: async () => own, issueTimeline: async () => timeline, bodyHistory: async () => ({ lastEditedAt: edits.at(-1)?.editedAt ?? null, edits }), collaboratorPermission: async () => access,
+  });
+  const load = gh => loadSbiIssue({ issueUrl: ref.url, config: config(), github: gh });
+  // A version GitHub keeps in the edit history; the newest one is the current body.
+  const editedAt = editedAt => ({ editedAt, deletedAt: null, body: issue().body });
+  describe('given the Issue as it was approved', () => {
+    it('when nothing was edited after ready was added then the run starts from the approved content', async () => {
+      const loaded = await load(github());
+      assert.equal(loaded.mode, 'registered');
+      assert.equal(loaded.sbi.description, planned().purpose);
+    });
+  });
+  describe('given an edit after ready was added', () => {
+    it('when the body was edited after the approval then the run does not start and the human has to approve the Issue again', async () => {
+      const edited = issue({ body: renderSbiBody(planned({ purpose: '管理者がホームを開くと設定画面へ移動する。' }), pbi) });
+      await assert.rejects(load(github({ own: edited, edits: [editedAt('2026-10-30T11:00:00Z')] })), /readyではありません[\s\S]*edited after ready/);
+    });
+    it('when the body went from A to B and back to A after the approval then the run still does not start, since nobody approved it again', async () => {
+      await assert.rejects(load(github({ edits: [editedAt('2026-10-30T11:00:00Z'), editedAt('2026-10-30T12:00:00Z')] })), /readyではありません[\s\S]*edited after ready/);
+    });
+    it('when the title was changed after the approval then the run does not start', async () => {
+      await assert.rejects(load(github({ own: issue({ title: 'SBI-001 全ユーザーの一覧を表示する' }), timeline: [readyEvent, { event: 'renamed', created_at: '2026-10-30T11:00:00Z' }] })), /readyではありません[\s\S]*title/);
+    });
+    it('when ready was removed and added again after the edits then the run starts from the content approved again', async () => {
+      const timeline = [readyEvent, { event: 'unlabeled', label: { name: 'ready' }, created_at: '2026-10-30T12:30:00Z' }, { ...readyEvent, created_at: '2026-10-30T13:00:00Z' }];
+      assert.equal((await load(github({ timeline, edits: [editedAt('2026-10-30T11:00:00Z'), editedAt('2026-10-30T12:00:00Z')] }))).mode, 'registered');
+    });
+  });
+  // #200: as for harness-spec, only a human with write access approves the Issue.
+  describe('given the person who added ready', () => {
+    it('when a bot added ready then the run does not start', async () => {
+      await assert.rejects(load(github({ timeline: [{ ...readyEvent, actor: { login: 'planner[bot]', type: 'Bot' } }] })), /readyではありません[\s\S]*ready was added by planner\[bot\]/);
+    });
+    it('when a person with triage access added ready then the run does not start', async () => {
+      await assert.rejects(load(github({ access: { permission: 'read', role_name: 'triage' } })), /readyではありません[\s\S]*ready was added by alice/);
+    });
+  });
+  describe('given GitHub cannot show when ready was added', () => {
+    it('when the edit history cannot be read then the run does not start', async () => {
+      await assert.rejects(load({ ...github(), bodyHistory: async () => { throw new Error('GraphQL: edit history of acme/app#7 is unavailable'); } }), /readyではありません[\s\S]*edit history/);
+    });
+  });
+});
+
 describe('Dependencies of a ready SBI Issue', () => {
   const schemaUrl = 'https://github.com/acme/app/issues/6';
   const schema = { number: 6, title: 'SBI-001 OpenAPI Schemaを作る', html_url: schemaUrl, labels: labels('sbi', 'ready') };
@@ -203,10 +252,13 @@ describe('Dependencies of a ready SBI Issue', () => {
       if (number === 6 && dependency) return dependency;
       throw new Error('gh: Not Found (HTTP 404)');
     },
+    // #194: the dependent Issue #7 was marked ready and left unedited, so only the dependency decides.
     issueTimeline: async ({ number }) => {
+      if (number === 7) return [readyEvent];
       if (timelineFails) throw new Error('gh: Server Error (HTTP 502)');
       return number === 6 ? pulls.map(p => ({ event: 'cross-referenced', source: { type: 'issue', issue: { number: p.number, html_url: p.html_url, pull_request: { url: `https://api.github.com/repos/acme/app/pulls/${p.number}` } } } })) : [];
     },
+    bodyHistory: async () => ({ lastEditedAt: null, edits: [] }), collaboratorPermission: async () => ({ permission: 'write', role_name: 'write' }),
     fetchPull: async (_, number) => { const pull = pulls.find(p => p.number === number); if (!pull) throw new Error('gh: Not Found (HTTP 404)'); return pull; },
     pullCommitMessages: async (_, number) => pulls.find(p => p.number === number).commits,
   });
