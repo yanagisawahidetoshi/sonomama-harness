@@ -52,12 +52,13 @@
 - **実行と判定の trust boundary を分ける。**
   - 実行: 今の `pull_request` の workflow（`harness.yml`）が PR のコードを checkout し、Verifier・harness-test・harness-demo・maestro・Trusted Acceptance を動かす。その結果は信用しない証拠（untrusted evidence）として扱う。`pull_request` の cache は PR の merge ref の scope に閉じ、main の cache を書き換えない。
   - 判定: `pull_request_target` の workflow（2025-12-08 以降、default branch の workflow だけが使われる）で、main の `tools/harness` と `.harness` を使う。PR の code・依存・script・artifact を install も実行もしない。PR から得るもの（metadata・差分・artifact・job の結果）は判定用のデータとしてだけ扱う。
+  - 例外: 手書きの Trusted Acceptance（`trustedScript`）は、今と同じく judge の中で Node の permission model（環境変数なし、PR の tree と信頼側の helper の読み取りだけ、子プロセス不可）で動かす。`ci-matrix` のように PR のコードを import するものがあるので、App の鍵は check run を出す job だけに置き、判定する job には secret を置かない。判定する job は結果だけを渡し、check run を出す job は PR の tree を checkout しない。
 - **judge は実行の run を待ってから、独立に検証する。**
   - 同じ head SHA・event が `pull_request`・workflow が `harness.yml` の run を探し、完了まで poll する（maestro の上限に合わせて timeout を決める）。同じ PR の古い judge は `concurrency` で取り消す。取り消されて check が出なくても BLOCKED なので fail-closed。
   - impact は main のコードで PR の差分から計算し直す。要求した verifier ごとに、その run の jobs API で `verifiers (<name>)` の success を求める。head SHA の check run の一覧は使わない（同じ名前の check を別の workflow から出せるため）。PR 側の impact が verifier を減らしても、要求は減らない。
   - artifact（`acceptance-results-*`、`maestro-results`）はその run から API で取り、Zod の schema と head SHA の照合を通す。欠落・schema の不一致・head SHA の不一致・要求したのに skipped は FAIL。
   - PR の差分は API か `git fetch` でデータとして読む。fork からの PR は、checkout v7 が `pull_request_target` で fork の fetch を既定で拒否するので judge が出ず、BLOCKED になる。
-- **証拠の作り手（producer）を変えた PR は、自分の証拠だけでは PASS しない。** producer は、実行の workflow が読んで動かすもの: `.github/**`、`tools/harness/**`、`.harness/**`、root の `package.json`・`pnpm-lock.yaml`・`pnpm-workspace.yaml`・`.node-version`・`.npmrc`。lockfile を外すと、依存を差し替えて `harness:verify` を乗っ取れる。判定は main のコードで差分のパスを見て行い、producer の変更があれば、すべての job が success でも Completion Judge は理由のコードを付けて failure にする。
+- **証拠の作り手（producer）を変えた PR は、自分の証拠だけでは PASS しない。** producer は、実行の workflow が読んで動かすもの: `.github/**`、`tools/harness/**`、`.harness/**`、root の `package.json`・`pnpm-lock.yaml`・`pnpm-workspace.yaml`・`.node-version`・`.npmrc`。lockfile を外すと、依存を差し替えて `harness:verify` を乗っ取れる。ただし、judge が main のコードでデータとして検査するもの（SBI の JSON `.harness/state/sbi-*.json` と、生成した Trusted Acceptance の登録 `.harness/acceptance/sbi-<N>.json`）は除く。除かないと、SBI の PR がすべて自動で PASS しなくなる。判定は main のコードで差分のパスを見て行い、producer の変更があれば、すべての job が success でも Completion Judge は理由のコードを付けて failure にする。
   - Team / Production では、producer を変えた PR の PASS 条件を「同じ head SHA への、ADR-0001 の GitHub Review が L3 の人数（異なる2人以上）」にする。
   - Bootstrap では PR の作成者しかおらず、自分の PR は承認できない。ruleset に repo admin の bypass（pull request 経由だけ）を置き、producer を変えた PR は repo owner が内容を確かめて bypass で merge する。
 - **judge の結果は、専用 GitHub App の check run `Completion Judge` として出す。** ruleset の必須チェックをこの App の integration_id に固定し、`harness`@15368 は外す。
