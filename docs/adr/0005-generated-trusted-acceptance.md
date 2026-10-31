@@ -37,7 +37,7 @@
 
 - **仕様の承認と、テストの準備を分ける。**
   - 仕様の承認の正本は、SBI Issue への `harness-spec: <spec digest>` コメントにする。write 以上の権限を持つ人間が投稿したもので、編集されていないものだけを数える。撤回は `harness-spec-revoke: <spec digest>`。
-  - spec digest は、Agent への指示・Risk・Security 分類・実行範囲に使う承認対象の情報全体を正規化したテキストの sha256。今は title・目的・種類・受け入れ要件・Gherkin・想定変更範囲・想定変更ファイル数・検証方法・Risk / Security Impact を含む（#194 で title・目的・種類・想定変更ファイル数・検証方法を追加）。どれかが変われば、それまでの承認は無効になる。チェックボックスの状態は含めない。runが新しい項目を読むようになったら、その項目も digest に入れる。
+  - spec digest は、Agent への指示・Risk・Security 分類・実行範囲に使う承認対象の情報全体を正規化したテキストの sha256。今は title・Planner marker・目的・種類・受け入れ要件・Gherkin・依存SBI・想定変更範囲・想定変更ファイル数・検証方法・Risk / Security Impact を含む（#194・#200 で title・Planner marker・目的・種類・依存SBI・想定変更ファイル数・検証方法を追加。Planner marker は run が記録する PBI、依存SBI は run を始める条件）。どれかが変われば、それまでの承認は無効になる。チェックボックスの状態は含めない。runが新しい項目を読むようになったら、その項目も digest に入れる。
   - `spec-approved` label は表示用だけで、判定には使わない。
   - `ready` は生成方式の仕様承認には使わない。version 1 の手書き Trusted Acceptance を登録した SBI の legacy 互換経路としてだけ残す。
   - legacy `ready` では「label が付いていること」だけを信用しない（#194）。write 以上の権限を持つ人間（bot は数えない）が `ready` を付けた時点の Issue 内容を、GitHub の監査履歴（timeline の `labeled`・`renamed` と本文の編集履歴）に束縛する。最後に `ready` を付けた人で判定し、権限や付けた人を読めなければ無効にする。`ready` の後に本文か title が変わった場合は、A→B→A で元に戻しても無効にする。再承認は `ready` を外して付け直すことで行う。
