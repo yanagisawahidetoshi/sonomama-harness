@@ -202,9 +202,10 @@ async function changedContent(root, files) {
   const content = [];
   for (const t of securityTargets(files)) {
     if (t.target === 'deleted') { content.push(t); continue; }
-    let text = '', missing = false;
-    try { text = await readFile(join(root, t.path), 'utf8'); } catch (e) { if (e.code !== 'ENOENT') throw e; missing = true; }
-    content.push({ ...t, text: t.added ?? '', envTemplate: isSafeEnvTemplate(t.path, text), ...(missing && { missing }) });
+    let bytes = Buffer.alloc(0), missing = false;
+    try { bytes = await readFile(join(root, t.path)); } catch (e) { if (e.code !== 'ENOENT') throw e; missing = true; }
+    // An uninspectable file has no added line, so secret-scan reads its whole bytes instead.
+    content.push({ ...t, text: t.target === 'uninspectable' ? bytes.toString('latin1') : t.added ?? '', envTemplate: isSafeEnvTemplate(t.path, bytes.toString('utf8')), ...(missing && { missing }) });
   }
   return content;
 }

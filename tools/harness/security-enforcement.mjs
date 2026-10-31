@@ -71,14 +71,24 @@ export function securityPassed(evidence) {
 // #184: the one classification of the changed files for the content checks, shared by the Harness run and CI. An entry is deleted, uninspectable
 // (binary, a submodule or a mode-only change: no line to read), the SBI snapshot the Harness writes from the Issue (secret-scan only), or content.
 // The diff never has renames or copies (--no-renames), so a moved file is a deletion and an addition with added lines.
+// A blank line is an added line too, so lines are counted, not read from the joined text.
+const lineCount = (count, text) => count ?? (text ? text.split('\n').length : 0);
 export function securityTargets(files) {
-  return files.map(f => ({ ...f, target: f.status === 'D' ? 'deleted'
-    : f.binary || (f.status !== 'A' && !f.added && !f.deleted && f.modeChanged) ? 'uninspectable'
-      : snapshotFilePattern.test(f.path) ? 'snapshot' : 'content' }));
+  return files.map(f => {
+    const addedLines = lineCount(f.addedLines, f.added), deletedLines = lineCount(f.deletedLines, f.deleted);
+    return { ...f, addedLines, deletedLines, target: f.status === 'D' ? 'deleted'
+      : f.binary || (f.status !== 'A' && !addedLines && !deletedLines && f.modeChanged) ? 'uninspectable'
+        : snapshotFilePattern.test(f.path) ? 'snapshot' : 'content' };
+  });
+}
+// The Harness run reads its committed diff whole; a file the SBI allows by name but the diff lacks is read when it exists and is no diff entry.
+export function localTargets(files, allowedFiles = []) {
+  const paths = new Set(files.map(f => f.path));
+  return [...securityTargets(files), ...allowedFiles.filter(path => !paths.has(path)).map(path => ({ path, optional: true }))];
 }
 // No line was added: every entry besides the snapshot deletes a file or only loses lines, with no binary or mode change.
 const deletionOnly = targets => targets.some(t => t.target !== 'snapshot')
-  && targets.every(t => t.target === 'snapshot' || t.target === 'deleted' || (t.target === 'content' && t.status === 'M' && !t.added && !t.modeChanged));
+  && targets.every(t => t.target === 'snapshot' || t.target === 'deleted' || (t.target === 'content' && t.status === 'M' && !t.addedLines && !t.modeChanged));
 // A content scan exception drops only the named strings from the one file it names, for the verifiers it names, and says why.
 const scanText = (policy, id, file) => (policy.contentScanExceptions || []).filter(e => e.path === file.path && e.verifiers.includes(id))
   .reduce(({ text, exceptions }, e) => {
@@ -88,7 +98,6 @@ const scanText = (policy, id, file) => (policy.contentScanExceptions || []).filt
 // changed lists the targets from securityTargets: CI passes the added lines of each changed file (envTemplate marks a vetted .env template),
 // a Harness run reads its committed diff whole from the workspace. entries is the number of diff entries; every entry must land in one bucket.
 // An empty diff, a diff of the SBI snapshot alone, a missing changed file or an entry left out fails; a deletion-only diff passes as such.
-// An entry marked optional (a file the SBI allows by name but the diff does not have) is read when it exists and is no diff entry.
 export async function verifySecurity({ workspace, assessment, policy, config, headSha, verification, changed, entries = changed?.filter(c => !c.optional).length ?? 0 }) {
   const registry = new Map(policy.verifiers.map(v => [v.id, v]));
   for (const adapter of config.securityVerifiers || []) {
@@ -96,7 +105,7 @@ export async function verifySecurity({ workspace, assessment, policy, config, he
     registry.set(adapter.id, { ...adapter, kind: 'command' });
   }
   const checks = [], violations = [];
-  const content = [], deleted = [], uninspectable = [], secretPaths = [];
+  const content = [], raw = [], deleted = [], uninspectable = [], secretPaths = [];
   const contentKinds = new Set(['secret', 'pii-log', 'forbidden']);
   if (!changed && assessment.requiredVerifiers.some(id => contentKinds.has(registry.get(id)?.kind))) throw new Error('Security content checks need the changed files to scan');
   const targets = (changed ?? []).map(c => ({ target: 'content', ...c }));
@@ -104,16 +113,21 @@ export async function verifySecurity({ workspace, assessment, policy, config, he
     const { path, text, envTemplate } = t;
     if (t.target === 'deleted') { deleted.push(path); continue; }
     if (isSecretPath(path) && !envTemplate) { violations.push({ code: 'prohibited_secret_path', path }); secretPaths.push(path); continue; }
-    if (t.target === 'uninspectable') { uninspectable.push(path); continue; }
     const missing = () => { if (!t.optional) violations.push({ code: 'missing_changed_file', path }); };
-    if (t.missing) { missing(); continue; }
+    if (t.missing) { missing(); if (t.target === 'uninspectable') uninspectable.push(path); continue; }
+    // An uninspectable file has no line to scan, but secret-scan still reads its bytes (#184); it is not counted as scanned.
+    if (t.target === 'uninspectable') {
+      uninspectable.push(path);
+      try { raw.push({ path, text: text ?? await readFile(join(workspace, path), 'latin1') }); } catch (e) { if (e.code !== 'ENOENT') throw e; missing(); }
+      continue;
+    }
     if (text !== undefined) { content.push({ path, text, snapshot: t.target === 'snapshot', optional: t.optional }); continue; }
     try { content.push({ path, text: await readFile(join(workspace,path), 'utf8'), snapshot: t.target === 'snapshot', optional: t.optional }); }
     catch (e) { if (e.code !== 'ENOENT') throw e; missing(); }
   }
   const diffTargets = targets.filter(t => !t.optional);
   const onlyDeleted = deletionOnly(diffTargets);
-  const diff = { entries, deletedFiles: deleted.length, deletedLines: diffTargets.reduce((n, t) => n + (t.deleted ? t.deleted.split('\n').length : 0), 0) };
+  const diff = { entries, deletedFiles: deleted.length, deletedLines: diffTargets.reduce((n, t) => n + lineCount(t.deletedLines, t.deleted), 0) };
   for (const id of assessment.requiredVerifiers) {
     const adapter = registry.get(id);
     const general = verification?.checks?.find(c=>c.id===id);
@@ -131,7 +145,7 @@ export async function verifySecurity({ workspace, assessment, policy, config, he
       const files = content.filter(f => adapter.kind === 'secret' || !f.snapshot);
       const excluded = content.filter(f => adapter.kind !== 'secret' && f.snapshot).map(f => f.path);
       const findings = [], exceptions = [];
-      for (const file of files) {
+      for (const file of [...files, ...adapter.kind === 'secret' ? raw : []]) {
         const { text, exceptions: applied } = scanText(policy, id, file);
         exceptions.push(...applied);
         if (adapter.kind === 'secret' && hasTrackedCredential(file.path, text)) findings.push({path:file.path,code:'credential_value'});

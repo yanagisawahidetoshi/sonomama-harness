@@ -14,7 +14,7 @@ import { runAiReview } from './ai-review.mjs';
 import { assessRisk } from './risk-classifier.mjs';
 import { mergeDecision } from './merge-policy.mjs';
 import { authenticatedRecords, recordDecision, waitsForIssue } from './human-approvals.mjs';
-import { classifySecurity, verifySecurity, combineSecurity, securityPassed, securityTargets } from './security-enforcement.mjs';
+import { classifySecurity, verifySecurity, combineSecurity, securityPassed, localTargets } from './security-enforcement.mjs';
 import { withEvidenceProtection, redact, redactText, hasSecret, assertSafeInput, isSecretPath } from './evidence-protection.mjs';
 import { githubPrCli, githubState, pullRequestBody } from './github-pr.mjs';
 import { digest, prepareWorkspace, commitWorkspace, changedFiles, workspaceIntegrity, toolFingerprint, assertWritablePath, workspaceFingerprint, sourceIntegrity, assertWorktreeOwner, assertSafeCommit, git } from './workspace.mjs';
@@ -164,8 +164,7 @@ async function verifyHead({ root, summary, inputs, result, iterDir, iteration, r
   summary.executionSecurityAssessment = summary.securityAssessment;
   // The committed diff, not allowedFiles alone: an SBI Issue allows directories only, and its allowedFiles is empty.
   // The diff is classified as in CI (#184) and read whole; a file the SBI allows by name but the diff lacks is read when it exists.
-  const diffPaths = new Set(files.map(f => f.path));
-  const changed = [...securityTargets(files), ...sbi.allowedFiles.filter(path => !diffPaths.has(path)).map(path => ({ path, optional: true }))];
+  const changed = localTargets(files, sbi.allowedFiles);
   result.securityVerification = redact(await verifySecurity({ workspace, sbi, assessment: summary.securityAssessment, policy: securityPolicy, config, headSha:summary.headSha, verification:result.verification, changed, entries: files.length }));
   result.security = { id:'security',required:true,status:securityPassed(result.securityVerification)?'PASS':'FAIL' };
   result.gateApproved = gateCleared(summary);
