@@ -13,7 +13,7 @@ const policy = dependencyBotPolicySchema.parse(JSON.parse(await readFile(new URL
 const repository = 'acme/app';
 const headSha = 'a'.repeat(40);
 const bot = { login: 'renovate[bot]', type: 'Bot' };
-const pull = (overrides = {}) => ({ number: 42, merged_at: null, base: { ref: 'main' }, body: null, user: bot, head: { sha: headSha, repo: { full_name: repository } }, ...overrides });
+const pull = (overrides = {}) => ({ number: 42, merged_at: null, base: { ref: 'main' }, body: null, user: bot, head: { ref: 'dependabot/npm_and_yarn/zod-4.1.0', sha: headSha, repo: { full_name: repository } }, ...overrides });
 const commit = (overrides = {}) => ({ commit: { message: 'chore(deps): update vite', verification: { verified: true } }, author: { login: 'renovate[bot]' }, ...overrides });
 const lockfiles = [{ path: 'apps/admin/package.json' }, { path: 'pnpm-lock.yaml' }];
 const judge = (overrides = {}) => judgeDependencyBot({ policy, files: lockfiles, pull: pull(), commits: [commit()], headSha, repository, ...overrides });
@@ -99,7 +99,7 @@ describe('CI Completion Judge for a trusted dependency bot PR', () => {
     return (await git(root, ['rev-parse', 'HEAD'])).stdout.trim();
   };
   const github = sha => ({
-    fetchPull: async () => pull({ head: { sha, repo: { full_name: repository } } }),
+    fetchPull: async () => pull({ head: { ref: 'dependabot/npm_and_yarn/zod-4.1.0', sha, repo: { full_name: repository } } }),
     pullCommits: async () => [commit()],
     fetchIssue: async () => { throw new Error('no SBI Issue is read'); },
   });
@@ -145,7 +145,7 @@ describe('CI Completion Judge for a trusted dependency bot PR', () => {
   describe('given a human opened the same dependency update', () => {
     it('when judged then the SBI source is required and the Judge fails', () => fixture(async root => {
       const sha = await bump(root);
-      const human = { ...github(sha), fetchPull: async () => pull({ user: { login: 'alice', type: 'User' }, head: { sha, repo: { full_name: repository } } }) };
+      const human = { ...github(sha), fetchPull: async () => pull({ user: { login: 'alice', type: 'User' }, head: { ref: 'alice/update-zod', sha, repo: { full_name: repository } } }) };
       const judged = await run(root, sha, { github: human });
       assert.equal(judged.status, 'FAIL');
       assert.ok(judged.reasons.some(r => r.startsWith('sbi source missing')), judged.reasons.join('; '));
