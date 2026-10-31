@@ -301,13 +301,15 @@ describe('AI Review result bound to the reviewed SHA (#187)', () => {
   describe('given the real adapter over a provider CLI that passes the head SHA it was shown', () => {
     const answering = sha => providerAiReviewer({ run: async (_command, _args, { input }) => ({ ok: true, code: 0, stderr: '',
       stdout: JSON.stringify({ is_error: false, structured_output: { headSha: sha ?? input.match(/"headSha": "([0-9a-f]{40})"/)[1], status: 'PASS', riskLevel: 1, reasons: ['matches the SBI'] } }) }) });
-    it('when an approved level 1 SBI passes every required check then the run is auto merge eligible', () => fixture(async root => {
+    // #220: these runs come from --sbi PATH, a local self-test. The adapter's PASS lets them reach MERGE_ALLOWED, but only a run from an
+    // approved SBI Issue is auto merge eligible (the Merge decision with AI Review above).
+    it('when an approved level 1 SBI passes every required check then the --sbi run is MERGE_ALLOWED but not auto merge eligible', () => fixture(async root => {
       const docs = await docsSbi(root);
       const run = await runHarness({ root, quiet: true, provider: 'claude', agent: docs, semanticReviewer: answering() });
       assert.equal(run.iterations.at(-1).semanticReview.adapter, 'claude');
       assert.equal(run.risk.level, 1);
       assert.equal(run.status, 'MERGE_ALLOWED');
-      assert.equal(run.merge.autoMergeEligible, true);
+      assert.equal(run.merge.autoMergeEligible, false);
     }));
     it('when the CLI answers for another SHA then the run is never DONE nor auto merge eligible', () => fixture(async root => {
       const docs = await docsSbi(root);
@@ -315,11 +317,12 @@ describe('AI Review result bound to the reviewed SHA (#187)', () => {
       assert.notEqual(run.executionStatus, 'DONE');
       assert.equal(run.merge.autoMergeEligible, false);
     }));
-    it('when Codex implemented the run then Claude reviews it and the run is auto merge eligible', () => fixture(async root => {
+    it('when Codex implemented the run then Claude reviews it and the --sbi run reaches MERGE_ALLOWED without auto merge', () => fixture(async root => {
       const docs = await docsSbi(root);
       const run = await runHarness({ root, quiet: true, provider: 'codex', agent: docs, semanticReviewer: answering() });
       assert.equal(run.iterations.at(-1).semanticReview.adapter, 'claude');
-      assert.equal(run.merge.autoMergeEligible, true);
+      assert.equal(run.status, 'MERGE_ALLOWED');
+      assert.equal(run.merge.autoMergeEligible, false);
     }));
     it('when the run uses the fake provider then the fake adapter reviews it and no CLI runs', () => fixture(async root => {
       let called = 0;
