@@ -23,7 +23,7 @@ SEC-AUTH-001は、変更した行に`securitySchemes`などの語があると認
 
 手書きのSBI JSON（Legacy SBI、`.harness/state/sbi-<数字でない名前>.json`）と、Trusted Acceptance（`.harness/verification/`直下と`lib/`直下の`.mjs`）は、認証を仕様として記述するだけで、認証を実装しない。そのため、SEC-AUTH-001の語による検出（変更行の`jwt`・`authentication`など、Legacy SBIの本文の「認証」）を当てない（#217）。ファイル名による検出、SBIが宣言した`requiredSecurityRules`・`securityImpact`、他のルールはそのまま適用する。Run snapshot（`sbi-<数字>.json`）とアプリケーションのコードは、これまでどおり語でも検出する。
 
-SBIの本文（タイトル・目的・受け入れ要件と、PRに入るRun snapshot）のうち、認証が要らないことを述べるだけの言い回しは、SEC-AUTH-001の「認証」の検出から除く（#233、security.jsonの`ignoredMetadataPatterns`と、pr-risk.jsonの`authn_changed`の`ignoredPatterns`）。除くのは次の3つの形だけ。
+SBIの本文（タイトル・目的・受け入れ要件と、PRに入るRun snapshot）のうち、認証が要らないことを述べるだけの言い回しは、SEC-AUTH-001の「認証」の検出から除く（#233、security.jsonの`ignoredMetadataPatterns`と、pr-risk.jsonの`authn_changed`の`ignoredPatterns`）。除くのは次の3つの形だけ。同じ文に「ようにする」「可能にする」「に変更」「化」「外す」「削除」「廃止」「やめる」「緩和」「許可」があるときは、境界を変える記述とみなして除かない。
 
 - 「認証不要の」「認証なしで」のように、要らないことを述べる形。「認証不要にする」「認証不要化」のように、既存の境界を変える形は除かない。
 - 「認証ヘッダや Cookie を付けない」「認証ヘッダも Cookie も持たない」のように、付けないリクエストやクライアントを述べる形。
