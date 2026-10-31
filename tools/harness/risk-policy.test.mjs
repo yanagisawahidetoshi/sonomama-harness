@@ -32,6 +32,8 @@ const level2 = [
   ['the Harness implementation', file('tools/harness/verifier.mjs', 'export const noop = () => {};')],
   ['the agent instructions', file('AGENTS.md')],
   ['the agent rules', file('.ai/architecture.md')],
+  ['ordinary infrastructure outside production', file('infra/staging/network.tf', 'module "vpc" { source = "./vpc" }')],
+  ['a deployment manifest outside production', file('deploy/staging/app.yaml', 'replicas: 2')],
 ];
 const level3 = [
   ['the Risk policy itself', file('.harness/rules/pr-risk.json', '{ "version": 1 }')],
@@ -45,7 +47,8 @@ const level3 = [
   ['bulk deletion of production data', file('apps/api/app/jobs/cleanup_job.rb', 'User.delete_all')],
   ['session authentication', file('apps/api/app/controllers/sessions_controller.rb', 'def create\n  head :no_content\nend')],
   ['a production secret file', file('.env.production', 'API_TOKEN=')],
-  ['production infrastructure', file('infra/main.tf', 'resource "aws_db_instance" "main" {}')],
+  ['production infrastructure', file('infra/production/main.tf', 'resource "aws_db_instance" "main" {}')],
+  ['production Terraform variables', file('terraform/envs/prod.tfvars', 'instance_count = 3')],
 ];
 
 describe('PR risk rules', () => {
