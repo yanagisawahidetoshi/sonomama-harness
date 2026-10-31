@@ -55,3 +55,39 @@ export async function startApiMock({ root, issueUrl, dynamic = false, port = moc
   const child = spawner(prism, args, { cwd: root });
   return { ...contract, url: `http://${mockHost}:${port}`, child };
 }
+
+// Prism is ready only once it answers HTTP (any status). An exit or spawn error before that fails at once with its output,
+// and a timeout names itself, so neither surfaces later as a bare "fetch failed". Prism prints its fatal reason to stdout and its usage to stderr.
+export async function waitForApiMock({ url, child, timeoutMs = 30000, intervalMs = 100 }) {
+  const output = { stdout: '', stderr: '' }, readers = {};
+  for (const name of ['stdout', 'stderr']) { readers[name] = chunk => { output[name] = (output[name] + chunk).slice(-1000); }; child[name]?.on('data', readers[name]); }
+  let exited = child.signalCode ?? (child.exitCode === null || child.exitCode === undefined ? null : `exit ${child.exitCode}`), failed = null;
+  const onExit = (code, signal) => { exited = signal ?? `exit ${code}`; };
+  const onError = error => { failed = error; };
+  child.once('exit', onExit).once('error', onError);
+  const detail = () => ['stdout', 'stderr'].filter(n => output[n].trim()).map(n => `\n[${n}] ${output[n].trim()}`).join('');
+  let lastError = null;
+  try {
+    for (const started = Date.now(); ; await new Promise(r => setTimeout(r, intervalMs))) {
+      if (failed) throw new Error(`Prismを起動できません（${failed.code ?? failed.message}）${detail()}`);
+      if (exited !== null) throw new Error(`Prismがready前に終了しました（${exited}）${detail()}`);
+      const remaining = timeoutMs - (Date.now() - started);
+      if (remaining <= 0) throw new Error(`Prismが${timeoutMs}ms以内にreadyになりません（${url}、最後の接続エラー: ${lastError?.cause?.code ?? lastError?.message ?? 'なし'}）${detail()}`);
+      try { await fetch(url, { signal: AbortSignal.timeout(Math.min(remaining, 2000)) }); return; } catch (error) { lastError = error; }
+    }
+  } finally {
+    // Keep draining the pipes so a Prism logging every request never blocks on a full buffer.
+    for (const name of ['stdout', 'stderr']) child[name]?.off('data', readers[name]).resume();
+    child.off('exit', onExit).off('error', onError);
+  }
+}
+
+// Resolves after the process has exited, so the next Prism never overlaps it; one that ignores SIGTERM is killed after graceMs.
+export function stopApiMock(child, { graceMs = 5000 } = {}) {
+  if (!child || child.exitCode !== null || child.signalCode !== null || child.pid === undefined) return Promise.resolve();
+  return new Promise(resolve => {
+    const timer = setTimeout(() => child.kill('SIGKILL'), graceMs);
+    child.once('exit', () => { clearTimeout(timer); resolve(); });
+    child.kill();
+  });
+}
