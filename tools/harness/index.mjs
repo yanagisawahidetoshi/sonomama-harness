@@ -182,7 +182,8 @@ async function verifyHead({ root, summary, inputs, result, iterDir, iteration, r
     await transition('REVIEWING', `iteration ${iteration}`);
     result.review = redact(await reviewer({ root, workspace, sbi, rules, verification: result.verification, files }));
     await json(join(iterDir, 'review.json'), result.review);
-    result.semanticReview = redact(await runAiReview({ provider: summary.provider, semanticReviewer, input: { root, workspace, sbi, verification: result.verification } }));
+    result.semanticReview = redact(await runAiReview({ provider: summary.provider, semanticReviewer, input: { root, workspace, sbi, verification: result.verification, provider: summary.provider,
+      headSha: summary.headSha, baselineSha: summary.baselineSha, files, timeoutMs: config.timeoutMs } }));
     await json(join(iterDir, 'semantic-review.json'), result.semanticReview);
     await transition('JUDGING', `iteration ${iteration}`);
     result.completion = judge(result, sbi);
@@ -246,7 +247,7 @@ async function executeLoop({ root, summary, inputs, quiet, agent = runAgent, rev
       const proposed = assessRisk({ files: proposedFiles, metadata: metadata(sbi), humanGate: humanGateRisk(summary), securityAssessment: proposedSecurity, lane:classifyLane(proposedFiles,sbi,inputs.lanePolicy) }, riskPolicy);
       if (proposed.level === 3 && summary.riskPreflight.level < 3) {
         await json(join(iterDir, 'proposed-risk.json'), proposed);
-        await record(); return escalate(`New high risk before applying code: ${proposed.reasons.filter(r => r !== 'default_medium').join(', ')} goes beyond the level ${summary.riskPreflight.level} the approved SBI declared; update the SBI, get it approved again and start a new run`, 'NEW_HIGH_RISK');
+        await record(); return escalate(`New high risk before applying code: ${proposed.reasons.filter(r => r !== 'default_low').join(', ')} goes beyond the level ${summary.riskPreflight.level} the approved SBI declared; update the SBI, get it approved again and start a new run`, 'NEW_HIGH_RISK');
       }
       for (const file of response.files) { const path = join(workspace, file.path); await mkdir(dirname(path), { recursive: true }); await writeFile(path, file.content); }
       // A run from an SBI Issue commits its snapshot and links itself in the trailers, as the CI SBI source check requires.

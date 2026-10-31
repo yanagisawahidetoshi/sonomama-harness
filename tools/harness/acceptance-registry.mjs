@@ -20,10 +20,13 @@ export async function readAcceptance(root, number) {
 }
 
 // The registrations become acceptance verifiers carrying sbiIssue, which is what sbiFromIssue and the verifier selection read.
-export async function withAcceptance(root, config, numbers) {
+// Two trees (ADR-0008): a hand-written registration (version 1) runs a script of the trusted root, so only the root's counts; a generated one
+// (version 2) comes with the PR in the workspace and is checked against the spec digest.
+export async function withAcceptance(root, config, numbers, workspace = root) {
   const verifiers = [...config.verifiers];
   for (const number of [...new Set(numbers)]) {
-    const registration = await readAcceptance(root, number);
+    const trusted = await readAcceptance(root, number), proposed = workspace === root ? trusted : await readAcceptance(workspace, number);
+    const registration = proposed?.version === 2 ? proposed : trusted?.version === 1 ? trusted : null;
     if (registration?.version === 2) {
       const id = generatedVerifierId(number);
       if (verifiers.some(other => other.id === id)) throw new Error(`${acceptancePath(number)}: verifier ID ${id} is already registered`);

@@ -588,8 +588,8 @@ describe('Risk view of a verified SBI snapshot', () => {
   const level = files => assessRisk({ files, metadata: {}, humanGate: false }, policy);
   it('when the snapshot is verified then its location no longer raises the change to LEVEL 3', () => {
     const view = riskView([app, stored()], { snapshot: snapshot(), verified: true });
-    assert.equal(level(view).level, 2);
-    assert.ok(!level(view).reasons.includes('harness_policy'));
+    assert.equal(level(view).level, 1);
+    assert.ok(!level(view).reasons.some(reason => ['harness_policy', 'policy_root'].includes(reason)));
   });
   it('when the snapshot is not verified then it stays LEVEL 3 through harness_policy', () => {
     assert.equal(level(riskView([app, stored()], { snapshot: snapshot(), verified: false })).level, 3);

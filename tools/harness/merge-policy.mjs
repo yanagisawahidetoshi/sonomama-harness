@@ -17,7 +17,7 @@ export function aiReviewPassed(checks, github = null) {
 // With a GitHub pull request (PR mode) the merge approval comes only from GitHub Review; local merge records are not counted (ADR-0001).
 // humanGate marks a Human Gate risk (AuthN/AuthZ/RLS/PII/Migration/ADR) the approved SBI declared: level 3 and two humans after implementation.
 // fromSbiIssue: the run started from an approved SBI Issue (#220). --sbi PATH is a local self-test and is never a candidate for auto merge.
-export function mergeDecision({ risk, checks, approvals = [], headSha, contextDigest, humanGate = false, securityVerification, lane, github = null, baseline = null, fromSbiIssue = false }) {
+export function mergeDecision({ risk, checks, approvals = [], headSha, contextDigest, humanGate = false, securityVerification, github = null, baseline = null, fromSbiIssue = false }) {
   const required = ['verification', 'policy-review', 'security', 'completion'];
   const local = validHumanApprovals(approvals, { purpose: 'merge', headSha, contextDigest });
   const valid = github ? (github.reviews?.approvedHumans ?? []).map(login => ({ reviewer: `github:${login}` })) : local.approvals;
@@ -43,5 +43,5 @@ export function mergeDecision({ risk, checks, approvals = [], headSha, contextDi
   else { decision = 'MERGE_ALLOWED'; reasons.push('all_conditions_satisfied'); }
   return { state: decision, decision, riskLevel: effectiveLevel, headSha, contextDigest, requiredApprovals,
     validApprovals: valid.length, validReviewers: valid.map(a => a.reviewer), approvalSource: github ? 'github-review' : 'local-ledger', reasons,
-    autoMergeEligible: fromSbiIssue === true && lane?.name !== 'prototype' && decision === 'MERGE_ALLOWED' && effectiveLevel === 1 && risk.autoMergeAllowed !== false && !humanGate && checkOk && aiReviewPassed(checks, github) };
+    autoMergeEligible: fromSbiIssue === true && decision === 'MERGE_ALLOWED' && effectiveLevel === 1 && risk.autoMergeAllowed !== false && !humanGate && checkOk && aiReviewPassed(checks, github) };
 }
