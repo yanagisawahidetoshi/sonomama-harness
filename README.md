@@ -154,7 +154,8 @@ Security Checkはsecurity.jsonとSBIから必要なSecurity Verifierを決めて
 秘密情報・禁止パターンの基本検査は全runで必須。Security条件は承認人数で上書きできない。
 
 AI Review（Semantic Review）は全Risk Levelで必須（#175）。PASSでなければMERGE_ALLOWEDにもautoMergeEligibleにもならない。
-`runHarness` / `resumeRun` / `approveRun` / `reverifyPullRequest`のsemanticReviewer引数が信頼するadapterの接続点（本物のadapterは#187）。
+`runHarness` / `resumeRun` / `approveRun` / `reverifyPullRequest`のsemanticReviewer引数が信頼するadapterの接続点。CLIはrunのprovider（claude / codex）でレビューする本物のadapter（#187）を渡す。
+adapterはhead SHAとdiffだけを見せ、応答をstrict schemaで検証する。別SHAへの結果・タイムアウト・不正な応答はFAIL（[脅威モデル](docs/security/threat-model.md)）。
 adapter未接続はNOT_CONFIGURED（実行は完了してもmerge判定は`ai_review_not_passed`でBLOCKED）、実行失敗・結果なし・PASS/FAIL以外はFAIL。
 fake adapterはfake provider（`harness:demo`・テスト）だけが選び、PRのmerge判定では数えない。設定で無効にはできない。
 返すstatusはPASS/FAIL、追加リスクはriskLevel=1/2/3で指定する。

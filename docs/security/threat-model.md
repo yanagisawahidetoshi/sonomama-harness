@@ -55,6 +55,15 @@ Mobile E2E の `maestro` CI job（#145）は、この隔離の例外として人
 
 KVM を渡したコンテナの中で動かし、この例外をなくす作業は #146 で行う。
 
+AI Review の adapter（#187、`tools/harness/agents/ai-review-adapter.mjs`）は provider CLI（claude / codex）をホストで動かす。レビュー対象の変更から reviewer への経路を次の条件で絞る。
+
+- 入力は Harness が計算した head SHA・committed diff・SBI・Verifier の結果だけ。workspace は渡さない。秘密ファイルは中身を除き、prompt 全体を redaction に通す。prompt は diff をデータとして扱うよう指示する。
+- CLI は空の一時ディレクトリで、tool なし（claude）・read-only sandbox（codex）で動かす。workspace の `CLAUDE.md` / `AGENTS.md` を読ませない。
+- 出力は Zod の strict schema（headSha・PASS/FAIL・riskLevel・reasons）で検証し、redaction を通したものだけを返す。生の応答・stdout・stderr は run 配下にもエラー文にも残さない。
+- タイムアウト・異常終了・不正な応答・別 SHA への結果は FAIL。fake adapter は fake provider（demo・テスト）だけが使い、real provider の run で fake の結果は FAIL。
+
+diff に仕込まれた指示で AI Review が PASS に誘導されても、ほかの必須チェック（Verifier・Security・Trusted Acceptance・CI）は残る。AI Review の riskLevel は Risk を上げる方向にだけ使い、人間の承認人数には数えない。
+
 `api-contract`のようにHarnessのスクリプトがworkspaceのファイルを読むだけのverifierは、`isolation: harness`としてホストで動かす。対象は`tools/harness/*.mjs`だけで、環境変数は`PATH`と`HARNESS_BASE_REF`に限る。
 
 対象外: Agent CLI自体の実行環境、OS全体を悪意あるローカルユーザーから守ること、GitHub Actions Runnerの設計。

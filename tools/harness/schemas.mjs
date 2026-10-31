@@ -119,6 +119,19 @@ export const responseJsonSchema = {
   },
 };
 
+// AI Review (#187): the provider CLI answers with this object only. The SHA binds the review to what the Harness showed it.
+export const aiReviewResponseSchema = z.strictObject({
+  headSha: z.string().regex(/^[0-9a-f]{40,64}$/), status: z.enum(['PASS', 'FAIL']), riskLevel: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+  reasons: z.array(z.string().max(500)).max(20),
+});
+export const aiReviewJsonSchema = {
+  type: 'object', additionalProperties: false, required: ['headSha', 'status', 'riskLevel', 'reasons'],
+  properties: {
+    headSha: { type: 'string' }, status: { type: 'string', enum: ['PASS', 'FAIL'] }, riskLevel: { type: 'integer', enum: [1, 2, 3] },
+    reasons: { type: 'array', items: { type: 'string' } },
+  },
+};
+
 const line = text.max(200);
 export const plannedSbiSchema = z.strictObject({
   id: text.max(20), kind: z.enum(sbiKinds), title: text.max(80), purpose: text.max(300),
