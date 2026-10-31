@@ -106,8 +106,8 @@ change-type（diffが何を変えているか）と、SBI source（変更がど�
 
 - テストの変更は`engineering`になるが、これはSBIが要らないという意味だけを持つ。L1のAuto Mergeを安全にできるという意味は持たない。
 - テストの削除、skip・pending・focus化（`.only`、`xit`、`fdescribe`、`:focus`など）、明白なassertionの弱体化は、Risk / Policy側でL1のAuto Mergeの対象から外す必要がある。
-- 現状、`pr-risk.json`でL1の候補になるのは`safeRules`の`explicit_safe_docs_only`（`docs/`）と`explicit_safe_prototype_only`（`prototypes/`）だけで、`apps/**`・`packages/**`のテストはDefaultのLEVEL 2になる。そのため今はL1にならない。
-- ただし、テストの削除や弱体化を見つけてL1から外すRisk / Policyの保護はまだ無い。follow-upとして作り、テストをL1の候補にするsafe ruleを足す前に入れる。
+- [ADR-0008](0008-default-risk-level-one.md)（#157）で既定がLEVEL 1になり、テストの変更もL1になる。その前提として、`pr-risk.json`の`testProtection`がテストファイルの削除、skip・pending・focus化、assertionを含む行の削除をLEVEL 2へ上げる。
+- 書き換えたassertionが弱くなったかどうか（`toBe(1)`を`toBeDefined()`にする等）までは判定しない。必要になったら別のIssueで足す。
 
 ### 変えないこと
 
