@@ -7,7 +7,7 @@
   "rules": [
     {
       "id": "SEC-AUTH-001",
-      "description": "AuthNへの影響を検知し着手承認・必須検証・HIGHを強制する。API契約テスト基盤がOpenAPIの構造名として列挙するsecuritySchemesは本文の検出から除く（docs/security/authorization.md）",
+      "description": "AuthNへの影響を検知し着手承認・必須検証・HIGHを強制する。authenticateで始まる語とOpenAPIのsecurityキーを本文から検出する。API契約テスト基盤がOpenAPIの構造名として列挙するsecuritySchemesと、Harnessのコードが自身の承認・gh login・OpenAPIの読み取りを指す既知の文脈は本文の検出から除く（docs/security/authorization.md）",
       "categories": [
         "AuthN",
         "APIAuthentication"
@@ -16,7 +16,8 @@
         "(^|/)(auth|authn|authentication|sessions?|login|passwords?|tokens?)([_./-]|$)"
       ],
       "contentPatterns": [
-        "\\b(authentication|authenticate|sign_in)\\b",
+        "\\b(authentication|authenticate\\w*|sign_in)\\b",
+        "^[ \\t]*(-[ \\t]*)?[\"']?security[\"']?[ \\t]*:[ \\t]*([\\[*&!#-]|$)",
         "\\b(securitySchemes|bearerAuth|oauth2|jwt)\\b"
       ],
       "contentExceptions": [
@@ -26,6 +27,23 @@
           ],
           "ignoredPatterns": [
             "\\bsecuritySchemes\\b"
+          ]
+        },
+        {
+          "pathPatterns": [
+            "^tools/harness/[^/]+\\.mjs$"
+          ],
+          "ignoredPatterns": [
+            "\\bauthenticatedRecords\\b",
+            "\\bGitHub authenticates\\b",
+            "\\bthe authenticated gh CLI\\b",
+            "\\bauthenticated (local )?ledger\\b",
+            "\\b[Aa]uthenticated human\\b",
+            "\\btest-authenticated-adapter\\b",
+            "\\bauthenticated (and authorized )?(endpoints?|response)\\b",
+            "\\.authenticated\\b",
+            "\\bauthenticated(?=: )",
+            "\\b(becomes|keeping it) authenticated\\b"
           ]
         }
       ],
