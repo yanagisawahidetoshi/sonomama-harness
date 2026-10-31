@@ -6,7 +6,7 @@
 | --- | --- |
 | `impact` | `pnpm harness:impact` でrequired verifierとFull Gateの要否を決め、理由をログに出す |
 | `verifiers` | required verifierごとのmatrix。`pnpm harness:verify --verifier <id>` を並列に実行する（`fail-fast: false`） |
-| `harness-test` / `harness-demo` | Full Gateのときだけ、`harness:test` と `harness:demo` を並列に実行する。実アプリVerifierまで回す `--full`（`HARNESS_DEMO_SCOPE`）はPR以外、つまりmainへのpushだけに付く |
+| `harness-test` / `harness-demo` | Full Gateのときだけ、`harness:test` と `harness:demo` を並列に実行する。`harness:test` はtest fileを3 runnerに分けて走らせる（`HARNESS_TEST_SHARD` → `node --test --test-shard`。変数が無いローカルとpush gateは全件）。実アプリVerifierまで回す `--full`（`HARNESS_DEMO_SCOPE`）はPR以外、つまりmainへのpushだけに付く |
 | `maestro` | `impact` の `maestro` が空でないときだけ、Android EmulatorでMaestroを実行する（下記）。mainへのpushではDevelopment BuildのAPK cacheだけを作る |
 | `harness` | Completion Judge。変更されたSBIのTrusted AcceptanceとSecurity Verifierを実行し、各jobの結果を集約する。必須チェック名なのでjob idを変えない |
 
