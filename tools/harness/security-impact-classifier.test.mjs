@@ -481,6 +481,42 @@ describe('Security Impact Classifier on infrastructure', () => {
   });
 });
 
+// An SBI that only says a request needs no authentication does not change authentication (#233). Only the Japanese phrasing the Planner
+// writes is recognised; an English SBI that names authentication still raises the lane Security Gate (lanes.json). A change that makes an
+// existing endpoint public, or that blocks unauthenticated users, still matches, and so does any authentication in the code.
+describe('Security Impact Classifier on an SBI that states no authentication is needed', () => {
+  const sbi = (description, ac = 'GET /api/v1/health returns 200') => ({ title: 'Health check', description, risks: [], acceptanceCriteria: [{ id: 'AC-1', description: ac }] });
+  const classify = (spec, files = []) => classifySecurity({ files, sbi: spec }, policy);
+  describe('given an SBI whose text only negates authentication', () => {
+    for (const [name, spec] of [
+      ['an endpoint that needs no authentication', sbi('Rails API に認証不要の GET /api/v1/health を実装する。')],
+      ['a request without an authentication header', sbi('疎通確認を実装する。', '認証ヘッダや Cookie を付けないリクエストでも HTTP 200 が返る')],
+      ['a client that has no authentication header', sbi('疎通確認を実装する。', '認証ヘッダも Cookie も持たないクライアントでも 200 が返る')],
+      ['an unauthenticated client that can reach it', sbi('未認証クライアントが疎通確認できる。')],
+    ]) {
+      it(`when it describes ${name} then does not match SEC-AUTH-001`, () => assert.equal(detected(classify(spec), 'SEC-AUTH-001'), false));
+    }
+  });
+  describe('given an SBI or code that changes authentication', () => {
+    for (const [name, spec] of [
+      ['making an existing endpoint public', sbi('既存の GET /api/v1/courses を認証不要にする。')],
+      ['blocking unauthenticated users', sbi('未認証ユーザーは 401 を返す。')],
+      ['letting unauthenticated clients call an existing endpoint', sbi('既存の GET /api/v1/courses を未認証クライアントでも呼べるようにする。')],
+      ['making an endpoint reachable by unauthenticated clients', sbi('既存の GET /api/v1/courses を未認証クライアントでもアクセス可能にする。')],
+      ['letting requests through without authentication', sbi('既存の GET /api/v1/courses に認証なしでアクセスできるようにする。')],
+      ['changing it to accept requests without an authentication header', sbi('課金 API を変更する。', '認証ヘッダも Cookie も付けないリクエストでも 200 を返すように変更する')],
+      ['adding authentication', sbi('ログインに認証を追加する。')],
+      ['an English change that adds authentication', sbi('Add authentication to the courses API.')],
+    ]) {
+      it(`when it describes ${name} then still matches SEC-AUTH-001`, () => assert.ok(detected(classify(spec), 'SEC-AUTH-001')));
+    }
+    it('when the SBI negates authentication but the code adds it then still matches SEC-AUTH-001', () => {
+      const result = classify(sbi('認証不要の GET /api/v1/health を実装する。'), [{ path: 'apps/api/app/controllers/health_controller.rb', status: 'A', added: 'before_action :authenticate' }]);
+      assert.ok(detected(result, 'SEC-AUTH-001'));
+    });
+  });
+});
+
 // Each content exception says whether it ignores its strings in any case; one that does not say matches them case by case (#177).
 describe('Security Impact Classifier on the case of the strings a content exception ignores', () => {
   describe('given the legacy SBI and Trusted Acceptance exception, which ignores case', () => {
