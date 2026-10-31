@@ -15,10 +15,10 @@ const classifierSource = f => [f.path, f.previousPath].filter(Boolean).every(pat
 // A rule's contentExceptions drop only the named strings, and only when the file stays under the exception's paths before and after.
 const contentFor = (rule, f, text) => (rule.contentExceptions || [])
   .filter(e => [f.path, f.previousPath].filter(Boolean).every(path => e.pathPatterns.some(p => new RegExp(p).test(path))))
-  .reduce((rest, e) => e.ignoredPatterns.reduce((t, p) => t.replace(new RegExp(p, 'g'), ''), rest), text);
+  .reduce((rest, e) => e.ignoredPatterns.reduce((t, p) => t.replace(new RegExp(p, 'gi'), ''), rest), text);
 // An SBI that declares a rule requires all its verifiers; a matched file requires only the verifiers whose appliesTo covers that file.
 const sbiSources = new Set(['requiredSecurityRules', 'securityImpact', 'SBI/acceptance']);
-export function classifySecurity({ files = [], sbi = {} }, rawPolicy) {
+export function classifySecurity({ files = [], sbi = {}, legacySbi = false }, rawPolicy) {
   const policy = securityPolicySchema.parse(rawPolicy);
   const appliesTo = new Map(policy.verifiers.map(v => [v.id, v.appliesTo]));
   const applies = (id, matches) => !appliesTo.get(id) || matches.some(m => sbiSources.has(m.source) || [m.path, m.previousPath].some(path => path && appliesTo.get(id).some(p => new RegExp(p).test(path))));
@@ -33,7 +33,7 @@ export function classifySecurity({ files = [], sbi = {} }, rawPolicy) {
     const matches = [];
     if ((sbi.requiredSecurityRules || []).includes(rule.id)) matches.push({ source: 'requiredSecurityRules' });
     if (declared.some(d => rule.categories.some(c => normalize(c) === normalize(d)))) matches.push({ source: 'securityImpact' });
-    if (rule.metadataPatterns.some(p => new RegExp(p,'i').test(metadata))) matches.push({ source: 'SBI/acceptance' });
+    if (!(legacySbi && rule.ignoreLegacySbiMetadata) && rule.metadataPatterns.some(p => new RegExp(p,'i').test(metadata))) matches.push({ source: 'SBI/acceptance' });
     for (const f of files) {
       const at = f.previousPath ? { path: f.path, previousPath: f.previousPath } : { path: f.path };
       if ([f.path, f.previousPath].filter(Boolean).some(path => rule.pathPatterns.some(p => new RegExp(p,'i').test(path)))) matches.push({ source: 'path', ...at });

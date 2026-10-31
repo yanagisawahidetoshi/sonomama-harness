@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { isSafeEnvTemplate } from './evidence-protection.mjs';
 import { classifyChangeType, describeChangeType, needsContent } from './change-type.mjs';
 import { readJson } from './io.mjs';
-import { judgeHarnessPull, readHarnessPull, readSbiFiles, sbiFilePattern, snapshotFilePattern, verifySbiSource } from './sbi-source.mjs';
+import { judgeHarnessPull, readHarnessPull, readSbiFiles, snapshotFilePattern, verifySbiSource } from './sbi-source.mjs';
 import { judgeChangedFileCount } from './planner-judge.mjs';
 import { dependencyBotExemption } from './dependency-bot.mjs';
 import { githubCli } from './planner-github.mjs';
@@ -227,7 +227,8 @@ export async function runCompletionJudge({ root, base, all = false, needs, repos
   }
   const acceptance = { status: !sbis.length || (checksPassed(checks) && !missing.length) ? 'PASS' : 'FAIL', missing };
   const policy = securityPolicySchema.parse(await readJson(join(root, '.harness/rules/security.json')));
-  const assessment = combineSecurity(classifySecurity({ files }, policy), ...sbis.map(sbi => classifySecurity({ files, sbi }, policy)));
+  // A changed legacy SBI is a document being edited, not the SBI this PR implements; its declarations still count (#217).
+  const assessment = combineSecurity(classifySecurity({ files }, policy), ...sbis.map(sbi => classifySecurity({ files, sbi, legacySbi: !snapshots.some(s => s.snapshot.sbi === sbi) }, policy)));
   // Application verifiers an SBI requires ran in the matrix job, which succeeds only when every one of them passed.
   const matrix = impact.requiredVerifiers.map(id => ({ id, status: needs.verifiers?.result === 'success' ? 'PASS' : 'FAIL', reason: `verifier matrix: ${needs.verifiers?.result ?? 'missing'}` }));
   const security = await verifySecurity({ workspace: root, sbi: {}, assessment, policy, config, headSha, verification: { checks: [...checks, ...matrix] }, changed: await changedContent(root, files) });
@@ -236,8 +237,8 @@ export async function runCompletionJudge({ root, base, all = false, needs, repos
     ? await dependencyBotExemption({ policy: dependencyBotPolicySchema.parse(await readJson(join(root, '.harness/rules/dependency-bots.json'))), files, headSha, repository, pullNumber, github })
     : null;
   // The SBI source is a separate axis from the change type: a changed, broken or deleted snapshot is always verified,
-  // while the Run trailers alone are no source and never change the change type.
-  const snapshotChanged = files.some(f => sbiFilePattern.test(f.path));
+  // while the Run trailers alone are no source and never change the change type. A legacy hand-written SBI is not a snapshot (#217).
+  const snapshotChanged = files.some(f => snapshotFilePattern.test(f.path));
   // #220: a Harness PR (harness/<run-id>) needs the snapshot of its own run whatever the diff, and no exemption lifts that.
   const harnessPull = all ? null : await readHarnessPull({ repository, pullNumber, github });
   const sourceRequired = exemption?.exempt ? [] : impact.sbiRequiredReasons.length ? impact.sbiRequiredReasons : snapshotChanged ? ['sbi-snapshot'] : [];
