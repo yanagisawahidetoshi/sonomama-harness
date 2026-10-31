@@ -526,5 +526,17 @@
   ],
   "piiLogPatterns": [
     "(logger|console|logging)\\s*[.\\(].*(email|ssn|phone_number|pii)"
+  ],
+  "contentScanExceptions": [
+    {
+      "path": "tools/harness/security-enforcement.test.mjs",
+      "verifiers": [
+        "forbidden-pattern-check"
+      ],
+      "ignoredPatterns": [
+        "added:'process\\.env\\.NODE_TLS_REJECT_UNAUTHORIZED[ ]=[ ]0'"
+      ],
+      "reason": "SEC-CONFIG-001の分類テストが、検知する危険なTLS設定を入力の文字列として書く。--allの全文検査で誤検知しないよう、この1つの文字列だけを外す（#184）"
+    }
   ]
 }
