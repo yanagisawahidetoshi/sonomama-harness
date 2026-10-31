@@ -37,7 +37,7 @@ export async function runIsolated({ workspace, adapter, config, cwd, commands = 
   // Fail closed: without a reachable daemon nothing untrusted runs, and the check cannot pass.
   const ready = await execute(docker, ['info', '--format', '{{.ServerVersion}}'], { env: dockerCliEnv(), timeoutMs: 30000 });
   if (!ready.ok) return unavailable('docker is not available', ready);
-  return mode === 'compose' ? compose({ workspace, commands, docker, cwd, timeoutMs }) : container({ workspace, adapter, commands, docker, cwd, timeoutMs });
+  return mode === 'compose' ? compose({ workspace, commands, docker, cwd, timeoutMs, network: adapter.network !== false }) : container({ workspace, adapter, commands, docker, cwd, timeoutMs });
 }
 
 async function ensureImage(docker) {
@@ -154,12 +154,16 @@ export function validateCompose(workspace, file, text) {
 }
 // Loaded after the workspace Compose file, so it wins: every service built from the workspace runs as the host user, whatever the file says.
 // HOME points at the container /tmp because the host uid has no home there. Pulled images (postgres) keep the user their image chose.
-export function composeOverride(text) {
-  const services = Object.entries((YAML.parse(text) || {}).services || {}).filter(([, service]) => service?.build !== undefined);
+// Without network (ADR-0005), every network the services join becomes internal: they reach each other (Rails ↔ DB) but no outside host.
+// Image builds use the builder's network, not these, so dependencies are still installed at build time.
+export function composeOverride(text, { network = true } = {}) {
+  const model = YAML.parse(text) || {};
+  const services = Object.entries(model.services || {}).filter(([, service]) => service?.build !== undefined);
   const user = `${process.getuid()}:${process.getgid()}`;
-  return YAML.stringify({ services: Object.fromEntries(services.map(([id]) => [id, { user, environment: { HOME: '/tmp' } }])) });
+  const networks = network ? {} : { networks: Object.fromEntries(['default', ...Object.keys(model.networks || {})].map(id => [id, { internal: true }])) };
+  return YAML.stringify({ services: Object.fromEntries(services.map(([id]) => [id, { user, environment: { HOME: '/tmp' } }])), ...networks });
 }
-async function compose({ workspace, commands, docker, cwd, timeoutMs }) {
+async function compose({ workspace, commands, docker, cwd, timeoutMs, network }) {
   const temp = await mkdtemp(join(tmpdir(), 'sonomama-isolation-'));
   try {
     const empty = join(temp, 'empty');
@@ -173,7 +177,7 @@ async function compose({ workspace, commands, docker, cwd, timeoutMs }) {
         validateCompose(workspace, path, text);
         if (!overrides.has(file)) {
           const override = join(temp, `${overrides.size}-harness-override.yaml`);
-          await writeFile(override, composeOverride(text));
+          await writeFile(override, composeOverride(text, { network }));
           overrides.set(file, override);
         }
       } catch (error) { return unavailable(`Compose file rejected: ${error.message}`); }
