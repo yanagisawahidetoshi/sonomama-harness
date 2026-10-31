@@ -235,15 +235,6 @@ jobs:
           pattern: acceptance-results-*
           merge-multiple: true
           path: ${{ runner.temp }}/acceptance-results
-      # Temporary diagnosis for #200, reverted in the next commit: can the GITHUB_TOKEN of this job read the edit history and a collaborator permission?
-      # Only counts, dates and the permission name are printed.
-      - name: diagnose GitHub API access (#200, temporary)
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh api graphql -f query='query{repository(owner:"yanagisawahidetoshi",name:"sonomama-harness"){issue(number:175){lastEditedAt userContentEdits(first:100){totalCount nodes{editedAt deletedAt}}}}}' --jq '.data.repository.issue | {lastEditedAt, totalCount: .userContentEdits.totalCount, editedAt: [.userContentEdits.nodes[].editedAt]}'
-          gh api repos/${{ github.repository }}/collaborators/yanagisawahidetoshi/permission --jq '{permission, role_name}'
       - run: pnpm harness:judge $HARNESS_SCOPE
         env:
           HARNESS_NEEDS: ${{ toJson(needs) }}
