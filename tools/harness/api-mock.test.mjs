@@ -167,7 +167,7 @@ describe('API Mock Server', () => {
     async function serving(root, test) {
       await approved(root);
       const port = await freePort();
-      const spawner = (command, args, options) => spawn(command, args, { ...options, stdio: ['ignore', 'ignore', 'pipe'] });
+      const spawner = (command, args, options) => spawn(command, args, { ...options, stdio: ['ignore', 'pipe', 'pipe'] });
       const mock = await startApiMock({ root, issueUrl, spawner, port });
       try {
         await waitForApiMock(mock);
