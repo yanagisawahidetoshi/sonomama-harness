@@ -58,6 +58,14 @@ export const generatedRegistrationSchema = z.strictObject({
   protectedFiles: z.array(z.strictObject({ path: relativePath, sha256: z.string().regex(/^[0-9a-f]{64}$/) })),
   mapping: z.array(z.strictObject({ scenario: text, acceptanceIds: z.array(text).min(1), examples: z.array(z.strictObject({ path: relativePath, description: text })).min(1) })).min(1),
 });
+// The generated acceptance report one verifier matrix leg leaves for the Completion Judge (#147). It comes from a job that ran PR code.
+export const acceptanceResultSchema = z.strictObject({
+  sbiIssue: z.number().int().positive(), headSha: z.string().regex(/^[0-9a-f]{40}$/),
+  report: z.strictObject({
+    examples: z.array(z.strictObject({ description: z.string(), status: z.string(), exceptionClass: z.string().nullable(), message: z.string().nullable() })),
+    errorsOutsideOfExamples: z.number().int().min(0), error: z.string().optional(),
+  }),
+});
 export const configSchema = z.strictObject({
   version: z.literal(1), provider: z.enum(['fake', 'codex', 'claude']), sbi: relativePath,
   maxConsecutiveFailures: z.number().int().min(1).max(3), maxIterations: z.number().int().min(1).max(20),
