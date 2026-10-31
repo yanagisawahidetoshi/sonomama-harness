@@ -27,7 +27,7 @@ SONOMAMAのセキュリティ要件は、人がこのディレクトリに書い
 ## Harnessの設定との対応
 
 各ルールにはSEC-で始まるIDを付けている。Harnessは同じIDを使って、該当する変更を見つけ、必要な検証と承認を求める。
-設定は.harness/rules/security.json（変更の見つけ方と必要な検証）と.harness/rules/human-gates.json（実装前の承認が要るルール）にある。
+設定は.harness/rules/security.json（変更の見つけ方と必要な検証）と.harness/rules/human-gates.json（SBI承認で人間が判断するルール）にある。
 Harnessが確かめるのは、IDと文書の対応が取れているかどうかだけで、要件の中身が妥当かどうかは人がレビューする。
 
 ## 変更内容の検査（ローカルのrunとCI）
