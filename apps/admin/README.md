@@ -61,7 +61,7 @@ pnpm api:mock <Issue URL>
 
 ## 認証
 
-認証ProviderはAmazon Cognito（User Pool）を使う。
+認証ProviderはAmazon Cognito（User Pool）を使う（[ADR-0007](../../docs/adr/0007-aws-and-cognito.md)）。
 Provider固有SDK・login画面・token管理・route guardは導入していない。導入時は `src/shared/api/http-client.ts` のAxios interceptorで認証ヘッダーを付与し、HTTP層からProvider固有実装を分離する。
 
 ## Harness

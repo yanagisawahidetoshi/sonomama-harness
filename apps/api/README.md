@@ -67,7 +67,7 @@ api-contract VerifierはRailsを起動せずこのmanifestをOpenAPIと照合し
 
 ## 認証
 
-認証ProviderはAmazon Cognito（User Pool）を使う。
+認証ProviderはAmazon Cognito（User Pool）を使う（[ADR-0007](../../docs/adr/0007-aws-and-cognito.md)）。
 Provider固有gem・JWT / JWKS検証・認証middleware・認可は実装していない。model / column名もProvider固有名にしない。
 
 ## Harness
