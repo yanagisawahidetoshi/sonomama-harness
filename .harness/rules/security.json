@@ -49,7 +49,12 @@
       "requiredVerifiers": [
         "authn-test"
       ],
-      "policyDocument": "docs/security/authorization.md"
+      "policyDocument": "docs/security/authorization.md",
+      "ignoredMetadataPatterns": [
+        "認証(は|が)?(不要|なし|無し)(?!に|化)",
+        "認証(ヘッダ|情報|トークン)(や|も)[^\\n。]{0,30}?(付けない|持たない|送らない)",
+        "未認証(の)?クライアント(でも|が)[^\\n。]{0,20}?(できる|返る|呼べる)"
+      ]
     },
     {
       "id": "SEC-AUTHZ-001",

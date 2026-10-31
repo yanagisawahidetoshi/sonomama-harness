@@ -359,7 +359,8 @@ describe('Security Impact Classifier on infrastructure', () => {
   });
 });
 
-// An SBI that only says a request needs no authentication does not change authentication (#233). A change that makes an
+// An SBI that only says a request needs no authentication does not change authentication (#233). Only the Japanese phrasing the Planner
+// writes is recognised; an English SBI that names authentication still raises the lane Security Gate (lanes.json). A change that makes an
 // existing endpoint public, or that blocks unauthenticated users, still matches, and so does any authentication in the code.
 describe('Security Impact Classifier on an SBI that states no authentication is needed', () => {
   const sbi = (description, ac = 'GET /api/v1/health returns 200') => ({ title: 'Health check', description, risks: [], acceptanceCriteria: [{ id: 'AC-1', description: ac }] });
@@ -370,7 +371,6 @@ describe('Security Impact Classifier on an SBI that states no authentication is 
       ['a request without an authentication header', sbi('疎通確認を実装する。', '認証ヘッダや Cookie を付けないリクエストでも HTTP 200 が返る')],
       ['a client that has no authentication header', sbi('疎通確認を実装する。', '認証ヘッダも Cookie も持たないクライアントでも 200 が返る')],
       ['an unauthenticated client that can reach it', sbi('未認証クライアントが疎通確認できる。')],
-      ['an English endpoint with no authentication required', sbi('A health endpoint with no authentication required.')],
     ]) {
       it(`when it describes ${name} then does not match SEC-AUTH-001`, () => assert.equal(detected(classify(spec), 'SEC-AUTH-001'), false));
     }

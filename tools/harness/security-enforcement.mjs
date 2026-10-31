@@ -33,7 +33,8 @@ export function classifySecurity({ files = [], sbi = {}, legacySbi = false }, ra
     const matches = [];
     if ((sbi.requiredSecurityRules || []).includes(rule.id)) matches.push({ source: 'requiredSecurityRules' });
     if (declared.some(d => rule.categories.some(c => normalize(c) === normalize(d)))) matches.push({ source: 'securityImpact' });
-    if (!(legacySbi && rule.ignoreLegacySbiMetadata) && rule.metadataPatterns.some(p => new RegExp(p,'i').test(metadata))) matches.push({ source: 'SBI/acceptance' });
+    const ruleMetadata = (rule.ignoredMetadataPatterns || []).reduce((text, p) => text.replace(new RegExp(p, 'gi'), ''), metadata);
+    if (!(legacySbi && rule.ignoreLegacySbiMetadata) && rule.metadataPatterns.some(p => new RegExp(p,'i').test(ruleMetadata))) matches.push({ source: 'SBI/acceptance' });
     for (const f of files) {
       const at = f.previousPath ? { path: f.path, previousPath: f.previousPath } : { path: f.path };
       if ([f.path, f.previousPath].filter(Boolean).some(path => rule.pathPatterns.some(p => new RegExp(p,'i').test(path)))) matches.push({ source: 'path', ...at });
