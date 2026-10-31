@@ -1,16 +1,14 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parse } from 'yaml';
 import { fixture, update } from './test-fixture.mjs';
-import { readJson } from './io.mjs';
-import { analyzeImpact, loadImpact } from './impact.mjs';
+import { loadImpact } from './impact.mjs';
 import { git } from './workspace.mjs';
-import { judgeEvidenceJobs, judgeProducer, selectEvidenceRun } from './trusted-judge.mjs';
+import { judgeEvidenceJobs, judgeProducer, runTrustedJudge, selectEvidenceRun } from './trusted-judge.mjs';
 
 // ADR-0008: the pull_request run is untrusted evidence; the Completion Judge on pull_request_target reads it as data with main's code.
-const config = await readJson(new URL('../../.harness/config/harness.json', import.meta.url));
 const head = 'a'.repeat(40), other = 'b'.repeat(40);
 const files = (...paths) => paths.map(path => ({ path }));
 
@@ -61,7 +59,8 @@ describe('Evidence run of the Completion Judge', () => {
 });
 
 describe('Jobs of the evidence run', () => {
-  const impact = analyzeImpact({ config, sbis: [{ id: 'SBI-X', acceptanceCriteria: [], requiredVerifiers: ['rails', 'admin'], affectedAreas: [] }], files: files('apps/api/app/models/lesson.rb') });
+  // The impact main computed for the PR: two verifiers, no full gate, no maestro lane.
+  const impact = { requiredVerifiers: ['admin', 'rails'], fullGate: false, maestro: [] };
   const job = (name, conclusion = 'success') => ({ name, status: 'completed', conclusion });
   const passing = [job('impact'), job('verifiers (rails)'), job('verifiers (admin)'), job('harness-test', 'skipped'), job('harness-demo', 'skipped'), job('maestro', 'skipped'), job('harness')];
 
@@ -159,4 +158,46 @@ describe('Workflow of the trusted Completion Judge', () => {
     const workflow = await load();
     assert.doesNotMatch(text(workflow), /actions\/cache|"cache":/);
   });
+});
+
+describe('Trusted Completion Judge over a PR tree and its evidence run', () => {
+  const branch = async (root, change) => {
+    await git(root, ['worktree', 'add', '-q', '-b', 'feature', join(root, '.pr')]);
+    const workspace = join(root, '.pr');
+    await change(workspace);
+    await git(workspace, ['add', '--all']);
+    await git(workspace, ['commit', '-m', 'change']);
+    return { workspace, headSha: (await git(workspace, ['rev-parse', 'HEAD'])).stdout.trim() };
+  };
+  const job = (name, conclusion = 'success') => ({ name, status: 'completed', conclusion });
+  const judge = ({ root, workspace, headSha, run = { id: 1, head_sha: headSha }, jobs }) => runTrustedJudge({ root, workspace, base: 'main', repository: 'acme/app', headSha,
+    wait: async () => run, readJobs: async () => jobs, download: async () => null, evidenceDir: join(root, '.evidence') });
+
+  it('when a docs change has a completed evidence run with every job passing then passes', () => fixture(async root => {
+    const { workspace, headSha } = await branch(root, ws => writeFile(join(ws, 'docs/note.md'), 'note\n'));
+    const judged = await judge({ root, workspace, headSha, jobs: [job('impact'), job('harness-test', 'skipped'), job('harness-demo', 'skipped')] });
+    assert.deepEqual(judged.reasons, []);
+    assert.equal(judged.status, 'PASS');
+  }));
+
+  it('when the PR adds a workflow whose jobs all pass then fails because it changed the producer of its evidence', () => fixture(async root => {
+    const { workspace, headSha } = await branch(root, async ws => { await mkdir(join(ws, '.github/workflows'), { recursive: true }); await writeFile(join(ws, '.github/workflows/probe.yml'), 'on: pull_request\n'); });
+    const judged = await judge({ root, workspace, headSha, jobs: [job('impact'), job('harness-test (1)'), job('harness-demo'), job('Completion Judge')] });
+    assert.equal(judged.status, 'FAIL');
+    assert.match(judged.reasons.join('\n'), /producer changed: \.github\/workflows\/probe\.yml/);
+  }));
+
+  it('when no evidence run completed for the head then fails', () => fixture(async root => {
+    const { workspace, headSha } = await branch(root, ws => writeFile(join(ws, 'docs/note.md'), 'note\n'));
+    const judged = await judge({ root, workspace, headSha, run: null, jobs: [] });
+    assert.equal(judged.status, 'FAIL');
+    assert.match(judged.reasons.join('\n'), /evidence: no completed pull_request run/);
+  }));
+
+  it('when the PR tree is not the head the event names then fails', () => fixture(async root => {
+    const { workspace } = await branch(root, ws => writeFile(join(ws, 'docs/note.md'), 'note\n'));
+    const judged = await judge({ root, workspace, headSha: other, run: { id: 1, head_sha: other }, jobs: [job('impact'), job('harness-test', 'skipped'), job('harness-demo', 'skipped')] });
+    assert.equal(judged.status, 'FAIL');
+    assert.match(judged.reasons.join('\n'), /is not the head bbbbbbbbbbbb/);
+  }));
 });
