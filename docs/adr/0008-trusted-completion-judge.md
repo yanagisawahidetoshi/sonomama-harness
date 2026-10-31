@@ -1,7 +1,8 @@
-# ADR-0008: Completion Judge を main の workflow で動かし、専用 GitHub App の check として出す
+# ADR-0008: 実行は PR 側の workflow に残し、Completion Judge を main の workflow で動かして専用 GitHub App の check として出す
 
 - 状態: Accepted（2026-10-31、柳沢英俊が承認）
 - 日付: 2026-10-31
+- 改訂: 2026-10-31、柳沢英俊の決定で、実行 job を `pull_request_target` から `pull_request` に戻した（この改訂の PR の merge で承認）
 - 判断者: 柳沢英俊
 - 関連Issue: #168、#147、#148、#100
 - 関連SBI: なし
@@ -42,21 +43,29 @@
 | --- | --- |
 | 今の `pull_request` の workflow の中で main を checkout して判定する | workflow 自体が PR 側なので、PR がその job を差し替えられる |
 | `pull_request_target` / `workflow_run` で判定し、GitHub Actions の check（15368）として出す | spike のとおり、PR 側の同名 check と区別できない |
-| judge の trigger を `workflow_run` にする | どの upstream run がどの PR・head SHA に対応するか、rerun・synchronize・cancel・複数 workflow を相関させる処理が judge に増える。trust boundary の上での利点は `pull_request_target` と変わらない |
-| PR 側の `pull_request` の job が作った artifact を、main 側の judge が読む | PR が workflow ごと差し替えて、結果ファイルを書き換えられる |
+| 実行 job も `pull_request_target` の workflow に置く | PR のコードが base の文脈と同じ runner で動く（GitHub が警告する pwn request の形）。runner 上の PR のコードが Actions の runtime token に届き、main の scope の cache や同じ run の artifact を書き換える手法が知られている |
+| judge の trigger を `workflow_run` にする | 判断者の決定を優先した。実行の run の完了は、judge が poll して待てば足りる |
 | ruleset の承認レビューを必須にして人の Review で防ぐ | 偽装を検出する仕組みにならず、L1 / L2 の自動判定の意味が無くなる |
 
 ## 決定
 
-- **判定と実行を、main の workflow ファイルが握る。** trigger は `pull_request_target` にする（2025-12-08 以降、default branch の workflow だけが使われる）。その中で job を分ける。
-  - 実行 job: PR head を checkout し、Verifier・harness-test・Trusted Acceptance を ADR-0005 の隔離コンテナで動かす。`permissions: {}`、secret なし、environment なし。Actions の cache には書き込まない（`pull_request_target` の cache は main の scope に入り、後の main の run を汚せるため）。結果は同じ run の artifact で渡す。
-  - judge job: main の `tools/harness` と `.harness` で判定する。PR のツリーは checkout せず、PR の code・依存・script・artifact を install も実行もしない。PR から得るもの（metadata・差分・artifact）は判定用のデータとしてだけ扱う。PR の差分（変更ファイルと内容）は API か `git fetch` でデータとして読み、impact も main のコードで計算し直す。artifact は Zod で検証して読む。
+- **実行と判定の trust boundary を分ける。**
+  - 実行: 今の `pull_request` の workflow（`harness.yml`）が PR のコードを checkout し、Verifier・harness-test・harness-demo・maestro・Trusted Acceptance を動かす。その結果は信用しない証拠（untrusted evidence）として扱う。`pull_request` の cache は PR の merge ref の scope に閉じ、main の cache を書き換えない。
+  - 判定: `pull_request_target` の workflow（2025-12-08 以降、default branch の workflow だけが使われる）で、main の `tools/harness` と `.harness` を使う。PR の code・依存・script・artifact を install も実行もしない。PR から得るもの（metadata・差分・artifact・job の結果）は判定用のデータとしてだけ扱う。
+- **judge は実行の run を待ってから、独立に検証する。**
+  - 同じ head SHA・event が `pull_request`・workflow が `harness.yml` の run を探し、完了まで poll する（maestro の上限に合わせて timeout を決める）。同じ PR の古い judge は `concurrency` で取り消す。取り消されて check が出なくても BLOCKED なので fail-closed。
+  - impact は main のコードで PR の差分から計算し直す。要求した verifier ごとに、その run の jobs API で `verifiers (<name>)` の success を求める。head SHA の check run の一覧は使わない（同じ名前の check を別の workflow から出せるため）。PR 側の impact が verifier を減らしても、要求は減らない。
+  - artifact（`acceptance-results-*`、`maestro-results`）はその run から API で取り、Zod の schema と head SHA の照合を通す。欠落・schema の不一致・head SHA の不一致・要求したのに skipped は FAIL。
+  - PR の差分は API か `git fetch` でデータとして読む。fork からの PR は、checkout v7 が `pull_request_target` で fork の fetch を既定で拒否するので judge が出ず、BLOCKED になる。
+- **証拠の作り手（producer）を変えた PR は、自分の証拠だけでは PASS しない。** producer は、実行の workflow が読んで動かすもの: `.github/**`、`tools/harness/**`、`.harness/**`、root の `package.json`・`pnpm-lock.yaml`・`pnpm-workspace.yaml`・`.node-version`・`.npmrc`。lockfile を外すと、依存を差し替えて `harness:verify` を乗っ取れる。判定は main のコードで差分のパスを見て行い、producer の変更があれば、すべての job が success でも Completion Judge は理由のコードを付けて failure にする。
+  - Team / Production では、producer を変えた PR の PASS 条件を「同じ head SHA への、ADR-0001 の GitHub Review が L3 の人数（異なる2人以上）」にする。
+  - Bootstrap では PR の作成者しかおらず、自分の PR は承認できない。ruleset に repo admin の bypass（pull request 経由だけ）を置き、producer を変えた PR は repo owner が内容を確かめて bypass で merge する。
 - **judge の結果は、専用 GitHub App の check run `Completion Judge` として出す。** ruleset の必須チェックをこの App の integration_id に固定し、`harness`@15368 は外す。
-  - App の権限は checks: write、pull_requests: read、contents: read、issues: read（承認コメントの読み取り）だけ。
+  - App の権限は checks: write、pull_requests: read、contents: read、actions: read（run・jobs・artifact の読み取り）、issues: read（承認コメントの読み取り）だけ。
   - 秘密鍵は environment secret に置き、environment の deployment branch を main に限る。
-- **判定コードを変える PR**: 合否は main の判定コードで出す。PR 側の `tools/harness` は harness-test（実行 job）で検証し、L3 の Review を必須にする。PR の `.harness/rules` の変更は merge 後に効く。main 側のルールが要求する検証を PR が消しても、その PR では要求され続ける。
-- **版ずれ**: impact と judge を同じ main のコードで動かすので、producer と judge の版ずれは起きない。artifact が無い・schema に合わない・head SHA が違う・要求した verifier が skipped のときは FAIL にする。
-- **不変条件: judge の workflow・判定コード・ルールの変更は、main に merge されるまで、どの PR の判定にも影響しない。** その PR 自身の判定も、変更前の main のもので行う。
+- **判定コードを変える PR**: 合否は main の判定コードで出す。PR 側の `tools/harness` は harness-test（実行）で検証する。PR の `.harness/rules` の変更は merge 後に効く。main 側のルールが要求する検証を PR が消しても、その PR では要求され続ける。
+- **版ずれ**: impact と judge を同じ main のコードで動かすので、要求する verifier と判定の版ずれは起きない。実行の run が古い workflow で動いて job が足りなければ FAIL にする。
+- **不変条件: judge の workflow・判定コード・ルールの変更は、main に merge されるまで、どの PR の判定にも影響しない。** その PR 自身の判定も、変更前の main のもので行う。実行の workflow の変更はその PR の run で動くが、judge はその PR の証拠を数えない（producer の変更）。
 - **Actions の event policy**: この repo は public で、2026-12-02 から event policy の無い public repo では `pull_request_target` が既定で無効になる。event policy で `pull_request_target` を許可し、対象は judge の workflow ファイルだけに限る。
 - **運用の段階（bootstrap policy）**: 今の bypass の穴は、次の段階の方針として受け入れる。一時的な例外とはしない。
   - Personal / Bootstrap（今）: collaborator は実質1人。承認レビュー数は 0 のまま（PR の作成者は自分の PR を承認できず、作成も同じアカウントで行うため）。`.github/workflows/**` を変える PR は repo owner が目で確かめる。Completion Judge の実装を優先する。
@@ -66,7 +75,8 @@
 ## 理由
 
 check の出し手を、PR が token を持てない App に固定すれば、PR 側の workflow がどんな check を出しても必須チェックは満たせない。
-実行も main の workflow に入れれば、judge が読む artifact を作る手順を PR が変えられない。
+PR のコードは権限のない `pull_request` の文脈だけで動かし、権限を持つ judge はそれをデータとして読むだけにすれば、PR のコードと App の鍵が同じ runner に載らない。
+実行の証拠は PR が workflow や Harness を変えれば偽れるので、その PR の証拠は数えず、人の判断に回す。
 
 ## 影響
 
@@ -74,35 +84,37 @@ check の出し手を、PR が token を持てない App に固定すれば、PR
 
 - 判定コード・ルール・workflow を変える PR でも、合否は main のコードで出る。
 - 必須チェックの偽装（spike の2つの方法）が効かなくなる。
+- PR のコードが、main の文脈や App の鍵と同じ runner で動かない。
 
 ### Negative / Trade-offs
 
 - PR のコードは自分のテストの出力を偽れる（`spec_helper` や Gemfile は PR 側）。App はこれを防がない。ADR-0005 と同じく、保護したテストの digest 照合と PR Review に残る。
+- Harness 自身・workflow・root の依存を変える PR は、自動では PASS しない。Renovate の root の依存更新もここに入る。緩和（実行を固定した image のコンテナで動かすなど）は別の Issue で扱う。
+- judge は実行の run が終わるまで runner を占有して待つ。実行の run を re-run したときは、judge も re-run が要る。
 - GitHub App の作成・鍵の管理と、Actions の event policy の設定が人の作業として増える。
-- PR が `.github` を変えても、その PR では変更後の workflow は動かない（merge 後に効く）。
 
 ## 実装・運用への影響
 
 - 人の作業（この順番で行う。逆にすると全 PR が BLOCKED になる）:
-  1. GitHub App を作り、repo に install する。
-  2. environment（main 限定）に App id と秘密鍵を登録する。
+  1. environment を作り、deployment branch を main に限る（workflow が参照する environment が無いと、保護の無い environment が自動で作られるため、先に作る）。
+  2. GitHub App を作り、repo に install する。environment に App id と秘密鍵を登録する。
   3. Actions の event policy で、judge の workflow ファイルにだけ `pull_request_target` を許可する。
-  4. workflow の PR を merge し、`Completion Judge` が出ることを確かめる。
-  5. ruleset の必須チェックを `Completion Judge`@App に変え、`harness`@15368 を外す。
+  4. judge の workflow の PR を merge し、`Completion Judge` が出ることを確かめる。
+  5. ruleset の必須チェックを `Completion Judge`@App に変え、`harness`@15368 を外す。Bootstrap の間は repo admin の bypass（pull request 経由だけ）を付ける。
 - `tools/harness/github-pr.mjs` は ruleset の integration_id を読むので、id のハードコードは要らない。
 - #147 の L3 の floor（生成した Trusted Acceptance を含む PR）は、この方式が動いてから外す。
 
 ## 検証方法
 
-- 回帰テスト（実装 PR で先に書く）: judge job の checkout が main であること、judge が PR のツリーから `tools/harness` を読まないこと、PR が判定コードを変えた fixture で合否が変わらないこと、artifact の欠落・head SHA の不一致・不明な skipped が FAIL になること。
-- 回帰テスト: 実行 job が secret・environment・cache の書き込みを持たないこと、judge の workflow を変えた PR の判定に変更前の main の workflow が使われること。
-- 切替後に、PR 側の workflow で job 名 `Completion Judge` の SUCCESS を出しても、`GITHUB_TOKEN` で同名の check run を作っても、BLOCKED のままであることを確かめる。
+- 回帰テスト（実装 PR で先に書く）: producer を変えていない PR で、要求した verifier の job がすべて success なら PASS。要求した verifier の job が実行の run に無く、同じ名前の check run だけがあるときは FAIL。差分に producer のパスがあれば、すべて success でも PASS しない。head SHA・event・workflow が違う run は使わない。artifact の欠落・head SHA の不一致・不明な skipped は FAIL。judge が PR の tree を判定コードとして読まないこと。
+- 切替後に、PR 側の workflow で job 名 `Completion Judge` の SUCCESS を出しても、`GITHUB_TOKEN` で同名の check run を作っても、BLOCKED のままであることを確かめる（spike と同じ2つの方法）。
 
 ## 再検討条件 / 撤回条件
 
 - GitHub が、同じ App の check を workflow ファイル単位で区別して必須にできるようになったとき
 - Actions の event policy の仕様が変わり、`pull_request_target` が使えなくなったとき
 - Team / Production への移行の条件のどれかが起きたとき（ruleset とこの ADR の段階を見直す）
+- judge の re-run の手間や、待つ間の runner の占有が問題になったとき（trigger を `workflow_run` にするかを見直す）
 
 ## 関連資料
 
