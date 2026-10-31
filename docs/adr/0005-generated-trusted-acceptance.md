@@ -2,8 +2,9 @@
 
 - 状態: Accepted（2026-10-30、柳沢英俊が承認）
 - 日付: 2026-10-30
+- 改訂: Accepted（PR #200 のマージで承認。2026-10-31、#194の決定に合わせてspec digestの対象とlegacy `ready`の扱いを改めた）
 - 判断者: 柳沢英俊（判断点は Issue #147 で決定済み。状態を Accepted にするのは判断者）
-- 関連Issue: #147、#168
+- 関連Issue: #147、#168、#194
 - 関連SBI: なし
 - 関連Design Docs: [.ai/workflows/pbi-sbi-planner.md](../../.ai/workflows/pbi-sbi-planner.md)、[.ai/workflows/implementation.md](../../.ai/workflows/implementation.md)
 - Supersedes:
@@ -30,15 +31,16 @@
 | 生成したテストを別の「登録 PR」で先に main へ入れる | `.harness/**` の変更なので L3 になり、すべての SBI で追加の承認が要る。速度の目的に反する |
 | 生成 Agent に `.harness/verification` への書き込み権限を与える | 候補の生成と、信頼する登録を分けられない |
 | 仕様の承認を `ready` label のまま使う | 「登録済み」と「仕様確定」を区別できず、順序が循環する |
-| label だけで仕様の承認とみなす | label は誰が付けたかを判定に使えず、内容（digest）に結びつかない |
+| label だけで仕様の承認とみなす | label だけでは内容（digest）に結びつかない。legacy `ready` は、付けた人と時点を GitHub の監査履歴で確かめて内容に束縛する（#194） |
 
 ## 決定
 
 - **仕様の承認と、テストの準備を分ける。**
   - 仕様の承認の正本は、SBI Issue への `harness-spec: <spec digest>` コメントにする。write 以上の権限を持つ人間が投稿したもので、編集されていないものだけを数える。撤回は `harness-spec-revoke: <spec digest>`。
-  - spec digest は、受け入れ要件・Gherkin・想定変更範囲・Risk / Security Impact の正規化したテキストの sha256。どれかが変われば、それまでの承認は無効になる。チェックボックスの状態は含めない。
+  - spec digest は、Agent への指示・Risk・Security 分類・実行範囲に使う承認対象の情報全体を正規化したテキストの sha256。今は title・目的・種類・受け入れ要件・Gherkin・想定変更範囲・想定変更ファイル数・検証方法・Risk / Security Impact を含む（#194 で title・目的・種類・想定変更ファイル数・検証方法を追加）。どれかが変われば、それまでの承認は無効になる。チェックボックスの状態は含めない。runが新しい項目を読むようになったら、その項目も digest に入れる。
   - `spec-approved` label は表示用だけで、判定には使わない。
-  - `ready` は、手書きの Trusted Acceptance を登録した旧方式の SBI の意味で残す（互換）。
+  - `ready` は生成方式の仕様承認には使わない。version 1 の手書き Trusted Acceptance を登録した SBI の legacy 互換経路としてだけ残す。
+  - legacy `ready` では「label が付いていること」だけを信用しない（#194）。write 以上の権限を持つ人間（bot は数えない）が `ready` を付けた時点の Issue 内容を、GitHub の監査履歴（timeline の `labeled`・`renamed` と本文の編集履歴）に束縛する。最後に `ready` を付けた人で判定し、権限や付けた人を読めなければ無効にする。`ready` の後に本文か title が変わった場合は、A→B→A で元に戻しても無効にする。再承認は `ready` を外して付け直すことで行う。
 - **生成と検査は二段階（G / I）にする。** 生成時点で「完成した実装に対して PASS」を求めない。G（生成時）で、制御した違反を検出できることを確かめ、I（実装後）で完成した実装を検証する。
 - **生成したテストは実装 PR に同梱する。** 専用の acceptance test のディレクトリに置き、実装 Agent からは書き換えられないように保護する。
 - **L3 の floor を外すのは、main 側の信頼できる CI で G / I を再検証して PASS したときだけにする。** ローカルの証跡だけでは外さない。main 側で判定する CI（#168）ができるまでは、生成した登録を含む PR は L3 のままにする。
@@ -73,6 +75,7 @@ G / I の二段階にすれば、まだ実装が無い時点でもテストの�
 
 - 仕様の項目を変えると spec digest が変わり、古い承認では run が始まらない。
 - 編集されたコメント、bot、read 権限、権限を読めない人、撤回された承認では始まらない。
+- legacy `ready`: bot・write 未満の人が付けた、付けた人や権限を読めない、付けた後に本文か title が変わった（A→B→A を含む）ときは、`harness:run`・`harness:reverify`・CI のどれでも通らない。
 - 生成の PR 以降: 制御した違反を検出できないテストは登録されない。登録後のテストの改変を CI で検出する。
 
 ## 再検討条件 / 撤回条件
@@ -82,6 +85,6 @@ G / I の二段階にすれば、まだ実装が無い時点でもテストの�
 
 ## 関連資料
 
-- Issue #147（設計案と判断点）、#168
+- Issue #147（設計案と判断点）、#168、#194（legacy `ready` の束縛とspec digestの対象）
 
 ADRへの変更はHuman Gate対象。AIだけで確定しない。

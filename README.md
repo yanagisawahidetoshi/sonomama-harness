@@ -34,7 +34,7 @@ pnpm harness:reverify https://github.com/<owner>/<repo>/pull/<PR番号>  # main�
 
 providerの既定はClaude。Codexだけ使える場合は各コマンドに`--provider codex`を付ける。
 PRのmergeは人間がGitHub Reviewのあとで行う。RUN_IDのコピー、`harness:resume`・`harness:pr`の実行は通常フローでは要らない。
-`harness:run`はIssueがopen・`sbi`と`ready`付き・`needs-review`なしで、Planner markerがあり、`ready`を付けた後に本文・titleが編集されていないときだけ開始する（#194）。
+`harness:run`はIssueがopen・`sbi`と`ready`付き・`needs-review`なしで、Planner markerがあり、write以上の人間が付けた`ready`の後に本文・titleが編集されていないときだけ開始する（#194・#200）。
 Issue本文から実行SBIを組み立て、Run開始時点の内容を`.harness/runs/<id>/sbi-snapshot.json`に保存し、PRへ`.harness/state/sbi-<Issue番号>.json`としてcommitする。
 想定変更範囲は末尾`/`付きのディレクトリ許可（allowedDirs）になる。`apps/admin/`は`apps/admin-other/`を含まず、予約パスは範囲内でも書けない。
 ACごとのTrusted Acceptanceは、人間が`.harness/verification/`にscriptを書き、
