@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { hasCommand } from './lib/commands.mjs';
+import { assertAuthSection } from './lib/readme.mjs';
 // Trusted acceptance for SBI-MOBILE-ENV (#22, #135). Reads the worktree only; the expo application verifier runs the commands.
 const root = process.argv[2];
 const app = join(root, 'apps/mobile');
@@ -117,7 +118,8 @@ try {
       const readme = read('apps/mobile/README.md');
       for (const term of ['Node', 'pnpm install', 'SDK 58', 'pnpm --filter mobile start', 'pnpm --filter mobile ios', 'pnpm --filter mobile android',
         'pnpm --filter mobile test', 'pnpm --filter mobile check', 'pnpm --filter mobile typecheck', 'expo-doctor', 'brew install', 'EXPO_PUBLIC_API_BASE_URL',
-        'pnpm api:mock', '10.0.2.2', 'LAN', '未決定']) assert.ok(readme.includes(term), term);
+        'pnpm api:mock', '10.0.2.2', 'LAN']) assert.ok(readme.includes(term), term);
+      assertAuthSection(readme);
     }],
     ['MOBILE-AC-21', 'Given the package, When starting daily development, Then expo start targets Expo Go explicitly', () => {
       const start = tokens(pkg().scripts.start);
