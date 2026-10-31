@@ -7,7 +7,7 @@
   "rules": [
     {
       "id": "SEC-AUTH-001",
-      "description": "AuthNへの影響を検知し着手承認・必須検証・HIGHを強制する。API契約テスト基盤がOpenAPIの構造名として列挙するsecuritySchemesは本文の検出から除く（docs/security/authorization.md）",
+      "description": "AuthNへの影響を検知し着手承認・必須検証・HIGHを強制する。API契約テスト基盤がOpenAPIの構造名として列挙するsecuritySchemesと、Legacy SBI・Trusted Acceptanceの語は検出から除く（docs/security/authorization.md）",
       "categories": [
         "AuthN",
         "APIAuthentication"
@@ -27,8 +27,19 @@
           "ignoredPatterns": [
             "\\bsecuritySchemes\\b"
           ]
+        },
+        {
+          "pathPatterns": [
+            "^\\.harness/state/sbi-(?!\\d+\\.json$)[^/]+\\.json$",
+            "^\\.harness/verification/(lib/)?[^/]+\\.mjs$"
+          ],
+          "ignoredPatterns": [
+            "\\b(authentication|authenticate|sign_in)\\b",
+            "\\b(securitySchemes|bearerAuth|oauth2|jwt)\\b"
+          ]
         }
       ],
+      "ignoreLegacySbiMetadata": true,
       "metadataPatterns": [
         "\\bauthn\\b|\\bauthentication\\b|認証"
       ],

@@ -229,9 +229,16 @@ describe('Security Impact Classifier on OpenAPI structure names in the API contr
     });
   });
   describe('given the security policy', () => {
-    it('when it is read then only SEC-AUTH-001 ignores content in the contract test support, and only the securitySchemes name', () => {
+    it('when it is read then only SEC-AUTH-001 has content exceptions: the securitySchemes name in the contract test support, and its words in legacy SBIs and Trusted Acceptance', () => {
       for (const rule of policy.rules.filter(r => r.id !== 'SEC-AUTH-001')) assert.equal(rule.contentExceptions, undefined, rule.id);
-      assert.deepEqual(policy.rules.find(r => r.id === 'SEC-AUTH-001').contentExceptions, [{ pathPatterns: ['^apps/api/spec/support/api_contract/[^/]+\\.rb$'], ignoredPatterns: ['\\bsecuritySchemes\\b'] }]);
+      const auth = policy.rules.find(r => r.id === 'SEC-AUTH-001');
+      assert.deepEqual(auth.contentExceptions, [
+        { pathPatterns: ['^apps/api/spec/support/api_contract/[^/]+\\.rb$'], ignoredPatterns: ['\\bsecuritySchemes\\b'] },
+        { pathPatterns: ['^\\.harness/state/sbi-(?!\\d+\\.json$)[^/]+\\.json$', '^\\.harness/verification/(lib/)?[^/]+\\.mjs$'], ignoredPatterns: auth.contentPatterns },
+      ]);
+    });
+    it('when it is read then only SEC-AUTH-001 ignores the words of a legacy SBI', () => {
+      for (const rule of policy.rules) assert.equal(rule.ignoreLegacySbiMetadata, rule.id === 'SEC-AUTH-001' ? true : undefined, rule.id);
     });
     for (const [field, pattern] of [['ignoredPatterns', '[\\s\\S]*'], ['ignoredPatterns', ''], ['pathPatterns', '^'], ['pathPatterns', '.*']]) {
       it(`when a content exception has ${field} ${JSON.stringify(pattern)} that matches empty text then rejects the policy`, () => {
@@ -240,6 +247,61 @@ describe('Security Impact Classifier on OpenAPI structure names in the API contr
         assert.throws(() => securityPolicySchema.parse(broken));
       });
     }
+  });
+});
+
+describe('Security Impact Classifier on a legacy SBI and Trusted Acceptance that only describe authentication (#217)', () => {
+  const legacy = { id: 'SBI-API-ENV', title: 'API開発環境', description: '認証Providerの決定とProvider固有実装を分ける', risks: [],
+    acceptanceCriteria: [{ id: 'API-AC-18', description: 'JWT / Cognito / Firebase等の認証実装をしていない', verifier: 'api-acceptance' }] };
+  const classify = (sbi, legacySbi, files = []) => classifySecurity({ files, sbi, legacySbi }, policy);
+  describe('given a legacy hand-written SBI whose words mention 認証', () => {
+    it('when it is classified as a legacy SBI then does not match SEC-AUTH-001 or require the authentication test', () => {
+      const result = classify(legacy, true);
+      assert.equal(detected(result, 'SEC-AUTH-001'), false);
+      assert.equal(result.requiredVerifiers.includes('authn-test'), false);
+    });
+    it('when the same SBI is not a legacy SBI then still matches SEC-AUTH-001 by its words', () => {
+      assert.ok(detected(classify(legacy, false), 'SEC-AUTH-001'));
+    });
+    it('when the legacy SBI declares SEC-AUTH-001 then still matches it and requires the authentication test', () => {
+      const result = classify({ ...legacy, requiredSecurityRules: ['SEC-AUTH-001'] }, true);
+      assert.ok(detected(result, 'SEC-AUTH-001'));
+      assert.ok(result.requiredVerifiers.includes('authn-test'));
+    });
+    it('when the legacy SBI declares the AuthN impact then still matches SEC-AUTH-001', () => {
+      assert.ok(detected(classify({ ...legacy, securityImpact: ['AuthN'] }, true), 'SEC-AUTH-001'));
+    });
+    it('when its words mention 権限 then still matches SEC-AUTHZ-001, because only SEC-AUTH-001 ignores the words of a legacy SBI', () => {
+      assert.ok(detected(classify({ ...legacy, description: '権限を確認する' }, true), 'SEC-AUTHZ-001'));
+    });
+  });
+  describe('given a legacy SBI or Trusted Acceptance adds authentication words', () => {
+    for (const path of ['.harness/state/sbi-api-env.json', '.harness/verification/api-env.mjs', '.harness/verification/lib/readme.mjs']) {
+      for (const added of ['"description": "JWT / Cognito / Firebase等の認証実装をしていない"', "'Then no JWT, Cognito or Firebase authentication is implemented'", 'bearerAuth oauth2 sign_in authenticate']) {
+        it(`when ${path} adds ${added} then does not match SEC-AUTH-001`, () => {
+          assert.equal(detected(assess([{ path, status: 'M', added }]), 'SEC-AUTH-001'), false);
+        });
+      }
+    }
+    it('when they add authorization then still matches SEC-AUTHZ-001', () => {
+      assert.ok(detected(assess([{ path: '.harness/verification/api-env.mjs', status: 'M', added: '// requires authorization' }]), 'SEC-AUTHZ-001'));
+    });
+    it('when a Trusted Acceptance file is named after authentication then still matches SEC-AUTH-001 by its path', () => {
+      assert.ok(detected(assess([{ path: '.harness/verification/auth-env.mjs', status: 'A', added: 'export {};' }]), 'SEC-AUTH-001'));
+    });
+  });
+  describe('given the same words outside legacy SBIs and Trusted Acceptance', () => {
+    for (const path of ['.harness/state/sbi-12.json', '.harness/verification/fixtures/api-env.mjs', 'apps/api/app/controllers/application_controller.rb', 'tools/harness/api-env.mjs']) {
+      for (const added of ['JWT', 'authentication']) {
+        it(`when ${path} adds ${added} then still matches SEC-AUTH-001`, () => {
+          assert.ok(detected(assess([{ path, status: 'M', added }]), 'SEC-AUTH-001'));
+        });
+      }
+    }
+    it('when a file moves out of Trusted Acceptance with the words then still matches SEC-AUTH-001', () => {
+      const moved = [{ path: 'apps/api/app/lib/auth_words.rb', previousPath: '.harness/verification/api-env.mjs', status: 'R', added: 'authentication', deleted: 'authentication' }];
+      assert.ok(detected(assess(moved), 'SEC-AUTH-001'));
+    });
   });
 });
 
