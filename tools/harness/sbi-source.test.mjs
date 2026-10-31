@@ -166,9 +166,15 @@ describe('Source SBI verification in the PR', () => {
       assert.ok(source.reasons.some(r => r.includes(ref.url) && r.includes('edited after ready')), source.reasons.join('; '));
     })));
 
+    it('when a person with read access added ready then fails, since only a human with write access approves the Issue', () => mockGitHub({ issueTimelines: { 7: [{ event: 'labeled', label: { name: 'ready' }, created_at: '2026-01-01T00:00:00Z', actor: { login: 'carol', type: 'User' } }] }, permissions: { carol: 'read' } }, () => repository(async root => {
+      const source = await verifySnapshot(root, snapshot());
+      assert.equal(source.status, 'FAIL');
+      assert.ok(source.reasons.some(r => r.includes(ref.url) && r.includes('ready was added by carol')), source.reasons.join('; '));
+    })));
+
     it('when the edit history of the Issue cannot be read then fails closed', () => mockGitHub({}, () => repository(async root => {
       const files = await commit(root, { [admin]: 'export {};', [snapshotPath(snapshot())]: snapshot() }, `feat: home${trailers()}`);
-      const github = { fetchIssue: async () => readyIssue, issueTimeline: async () => [{ event: 'labeled', label: { name: 'ready' }, created_at: '2026-01-01T00:00:00Z' }], bodyEdits: async () => { throw new Error('GraphQL: edit history of acme/app#7 is unavailable'); } };
+      const github = { fetchIssue: async () => readyIssue, issueTimeline: async () => [{ event: 'labeled', label: { name: 'ready' }, created_at: '2026-01-01T00:00:00Z', actor: { login: 'alice', type: 'User' } }], collaboratorPermission: async () => ({ permission: 'write', role_name: 'write' }), bodyHistory: async () => { throw new Error('GraphQL: edit history of acme/app#7 is unavailable'); } };
       const source = await verifyIn(root, files, { github });
       assert.equal(source.status, 'FAIL');
       assert.ok(source.reasons.some(r => r.includes(ref.url) && r.includes('edit history')), source.reasons.join('; '));

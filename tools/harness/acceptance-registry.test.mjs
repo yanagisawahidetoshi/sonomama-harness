@@ -128,8 +128,8 @@ async function pullRequest(root, registered = [7, 8]) {
 }
 
 describe('Trusted Acceptance registry of SBI Issues in CI', () => {
-  // #194: the Issue was marked ready and left unedited, so the ready label still covers what the Run took from it.
-  const readyGitHub = { fetchIssue: async () => readyIssue, issueTimeline: async () => [{ event: 'labeled', label: { name: 'ready' }, created_at: '2026-10-01T00:00:00Z' }], bodyEdits: async () => [] };
+  // #194: a person with write access marked the Issue ready and left it unedited, so the ready label still covers what the Run took from it.
+  const readyGitHub = { fetchIssue: async () => readyIssue, issueTimeline: async () => [{ event: 'labeled', label: { name: 'ready' }, created_at: '2026-10-01T00:00:00Z', actor: { login: 'alice', type: 'User' } }], bodyHistory: async () => ({ lastEditedAt: null, edits: [] }), collaboratorPermission: async () => ({ permission: 'write', role_name: 'write' }) };
   describe('given registrations of Issue #7 and #8 on main and a PR with the Run snapshot of Issue #7', () => {
     it('when the impact is loaded then the configuration has the Trusted Acceptance of Issue #7 only', () => fixture(async root => {
       await pullRequest(root);

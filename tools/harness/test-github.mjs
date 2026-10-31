@@ -26,8 +26,10 @@ export const githubMock = defaults => async (state, test) => {
       if (args[0] === 'api' && args.includes('graphql')) {
         const { variables } = JSON.parse(input), edits = (state.issueEdits || {})[variables.number] || [];
         const start = variables.after ? Number(variables.after) : 0, nodes = edits.slice(start, start + 100);
+        // GitHub reports the newest edit as lastEditedAt; edits are newest first.
+        const lastEditedAt = (state.issueLastEditedAt || {})[variables.number] ?? (edits[0] ? edits[0].editedAt : null);
         fs.appendFileSync(path.join(dir, 'calls.jsonl'), '');
-        process.stdout.write(JSON.stringify({ data: { repository: { issue: { userContentEdits: { nodes, pageInfo: { hasNextPage: start + 100 < edits.length, endCursor: String(start + 100) } } } } } }));
+        process.stdout.write(JSON.stringify({ data: { repository: { issue: { lastEditedAt, userContentEdits: { nodes, pageInfo: { hasNextPage: start + 100 < edits.length, endCursor: String(start + 100) } } } } } }));
         process.exit(0);
       }
       const method = args.includes('-X') ? args[args.indexOf('-X') + 1] : 'GET';
@@ -73,9 +75,10 @@ export const githubMock = defaults => async (state, test) => {
       } else if (method === 'GET' && (m = endpoint.match(/^repos\\/acme\\/app\\/issues\\/(\\d+)\\/dependencies\\/blocked_by$/))) {
         process.stdout.write(JSON.stringify(page(state.blockedBy[m[1]] || [])));
       } else if (method === 'GET' && (m = endpoint.match(/^repos\\/acme\\/app\\/issues\\/(\\d+)\\/timeline$/))) {
-        // Without issueTimelines, the labels of the Issue were added before any edit (issueEdits), as a human marks an SBI ready and leaves it.
+        // Without issueTimelines, sbi-approver (a person with write access) added the labels of the Issue before any edit (issueEdits),
+        // as a human marks an SBI ready and leaves it.
         const issue = state.issue && issueByNumber(Number(m[1]));
-        const labeled = issue ? issue.labels.map(l => ({ event: 'labeled', label: { name: l.name }, created_at: '2026-01-01T00:00:00Z' })) : [];
+        const labeled = issue ? issue.labels.map(l => ({ event: 'labeled', label: { name: l.name }, created_at: '2026-01-01T00:00:00Z', actor: { login: 'sbi-approver', type: 'User' } })) : [];
         process.stdout.write(JSON.stringify(page((state.issueTimelines || {})[m[1]] || labeled)));
       } else if (method === 'PATCH' && (m = endpoint.match(/^repos\\/acme\\/app\\/issues\\/(\\d+)$/))) {
         const issue = issueByNumber(Number(m[1])); if (!issue) fail('gh: Not Found (HTTP 404)');
@@ -124,7 +127,7 @@ export const githubMock = defaults => async (state, test) => {
         const runs = state.checkRuns[m[1]] || [];
         process.stdout.write(JSON.stringify({ total_count: runs.length, check_runs: page(runs) }));
       } else if (method === 'GET' && (m = endpoint.match(/^repos\\/acme\\/app\\/collaborators\\/([^/]+)\\/permission$/))) {
-        const permission = state.permissions[decodeURIComponent(m[1])];
+        const login = decodeURIComponent(m[1]), permission = state.permissions[login] ?? (login === 'sbi-approver' ? 'write' : undefined);
         if (permission === 'forbidden') fail('gh: Must have push access to view collaborator permission. (HTTP 403)');
         process.stdout.write(JSON.stringify({ permission: permission ?? 'none', role_name: permission ?? '' }));
       } else if (method === 'GET' && (m = endpoint.match(/^repos\\/acme\\/app\\/rules\\/branches\\/(.+)$/))) {
