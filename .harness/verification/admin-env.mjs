@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { hasCommand } from './lib/commands.mjs';
+import { assertAuthSection } from './lib/readme.mjs';
 // Trusted acceptance for SBI-ADMIN-ENV (#20). Reads the worktree only; the admin application verifier runs the commands.
 const root = process.argv[2];
 const app = join(root, 'apps/admin');
@@ -95,7 +96,8 @@ try {
     ['ADMIN-AC-16', 'Given the README, When onboarding, Then the development steps are documented', () => {
       const readme = read('apps/admin/README.md');
       for (const term of ['Node', 'pnpm install', 'pnpm --filter admin dev', 'pnpm --filter admin build', 'pnpm --filter admin test',
-        'pnpm --filter admin check', 'pnpm --filter admin typecheck', 'VITE_API_BASE_URL', 'pnpm api:mock', '未決定']) assert.ok(readme.includes(term), term);
+        'pnpm --filter admin check', 'pnpm --filter admin typecheck', 'VITE_API_BASE_URL', 'pnpm api:mock']) assert.ok(readme.includes(term), term);
+      assertAuthSection(readme);
     }],
   ];
   const acceptance = [];

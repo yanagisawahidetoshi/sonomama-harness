@@ -2,7 +2,7 @@
   "id": "SBI-MOBILE-ENV",
   "title": "受講生アプリ用React Native Expo開発環境を apps/mobile に構築する",
   "description": "Issue #22。apps/mobileにExpo SDK 58 + React Native + TypeScriptの開発環境を構築し、Expo Router、TanStack Query、Axios、React Hook Form + Zod、Biome、jest-expo + RNTL、Maestro smoke flowを用意する。業務画面・認証・未使用native libraryは導入しない。",
-  "gherkin": "Feature: 受講生アプリの開発環境\n  Scenario: 後続SBIが機能を追加できる\n    Given apps/mobileにExpo SDK 58環境がある\n    When pnpm --filter mobile の typecheck / check / test / doctor を実行する\n    Then すべてPASSする\n  Scenario: ローカルでsmoke E2Eを実行できる\n    Given development buildがSimulatorにインストールされている\n    When maestro test apps/mobile/.maestro/smoke.yaml を実行する\n    Then 初期画面のtestIDが表示される\n  Scenario: 未決定の技術を固定しない\n    Given 認証ProviderとDesign Systemが未決定である\n    When 依存関係を確認する\n    Then 認証Provider SDK・UI component library・未使用native library・ESLint・Prettierは存在しない",
+  "gherkin": "Feature: 受講生アプリの開発環境\n  Scenario: 後続SBIが機能を追加できる\n    Given apps/mobileにExpo SDK 58環境がある\n    When pnpm --filter mobile の typecheck / check / test / doctor を実行する\n    Then すべてPASSする\n  Scenario: ローカルでsmoke E2Eを実行できる\n    Given development buildがSimulatorにインストールされている\n    When maestro test apps/mobile/.maestro/smoke.yaml を実行する\n    Then 初期画面のtestIDが表示される\n  Scenario: 認証Providerの決定とProvider固有実装を分ける\n    Given 認証ProviderはADR-0007でAmazon Cognitoに決まっている\n    And Provider固有SDKの追加とCognito固有実装への直接依存は承認が必要である\n    And Design Systemが未決定である\n    When 依存関係とREADMEの認証節を確認する\n    Then READMEの認証節はAmazon CognitoとADR-0007を示し、承認なしにProvider固有実装を導入しない方針を書いている\n    And 認証Provider SDK・UI component library・未使用native library・ESLint・Prettierは存在しない",
   "acceptanceCriteria": [
     {
       "id": "MOBILE-AC-1",
@@ -101,7 +101,7 @@
     },
     {
       "id": "MOBILE-AC-20",
-      "description": "READMEに開発手順が記載されている",
+      "description": "READMEに開発手順が記載されている。認証節はAmazon Cognito（ADR-0007）と、承認なしにProvider固有実装を導入しない方針を示す",
       "verifier": "mobile-acceptance"
     }
   ],

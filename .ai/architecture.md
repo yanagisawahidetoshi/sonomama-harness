@@ -9,7 +9,7 @@
 - API契約のSSOTはpackages/api-schemaのOpenAPI。Rails・Expo・adminは同じスキーマを参照する。
 - アプリ内の依存方向はapp → features → shared。feature間の直接依存は禁止。apps/admin・apps/mobileのsrc直下はapp / features / shared / providersとentrypoint・test setup・d.tsだけ。未分類のtop-level（src/lib等）はarchitecture checkでFAILする。
 - apps/adminのUIはSparkle Design（sparkle-design）+ Tailwind CSS v4。sparkle-designのimportはsrc/shared/components/ui/**だけに置き、Page・Feature・routeは@/shared/components/ui/<ComponentName>の薄いwrapperを使う。architecture checkで検査する。
-- Auth providerは未決定。明示的な承認なしにCognito / Firebase / Google等のProvider固有SDKを追加しない。
+- Auth providerはAmazon Cognito（User Pool）（[ADR-0007](../docs/adr/0007-aws-and-cognito.md)）。Cognitoの採用とアプリケーション層のCognito固有実装への結合は別で、Provider固有SDK・gemの追加とCognito固有実装への直接依存は、明示的な承認なしに行わない。
 
 ## Harness v1
 
@@ -33,7 +33,7 @@ Local modeは独立したローカルGit workspaceと人間用CLIの署名台帳
 - authenticatedRecords: purpose、SHA、context、取り消しを含む署名済み承認履歴。
 - assessRisk: 差分、SBI/AC、Human Gate risk、AIの上方リスク提案を入力にRulesを評価する。
 - mergeDecision: 必須チェック、Risk、認証済み承認を入力に可否だけを返す。
-- runHarness/resumeRunのsemanticReviewer: AI Review（全LEVELで必須）のadapter接続点（本物は#187）。PASS/FAILと任意のriskLevelを返す。未接続はNOT_CONFIGURED、fake providerだけfake adapter（ai-review.mjs）。
+- runHarness/resumeRunのsemanticReviewer: AI Review（全LEVELで必須）のadapter接続点。本物はagents/ai-review-adapter.mjs（#187）でCLIが渡す。reviewProviderは実装providerと別で、trustedはclaudeだけ（fallbackなし）。PASS/FAIL・レビューしたheadSha・任意のriskLevelを返し、headShaが違えばFAIL。未接続はNOT_CONFIGURED、fake providerだけfake adapter（ai-review.mjs）。
 
 ### GitHub PR Adapterが保証すること
 

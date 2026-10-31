@@ -11,6 +11,7 @@ import { relativePath } from './schemas.mjs';
 import { describeImpact, describeJudge, loadImpact, runCompletionJudge, runVerifier } from './impact.mjs';
 import { checkConclusion, runTrustedJudge } from './trusted-judge.mjs';
 import { runPushGate } from './push-gate.mjs';
+import { providerAiReviewer } from './agents/ai-review-adapter.mjs';
 import { describeSbiSource } from './sbi-source.mjs';
 import { collectPbiStatus, renderPbiStatus, acceptPbi } from './pbi-status.mjs';
 import { writePbiPlan, approvePbiPlan } from './pbi-plan.mjs';
@@ -214,7 +215,7 @@ try {
     process.exitCode = runExitCode(run);
   } else if (command === 'reverify') {
     if (!positional) throw new Error('reverify requires a pull request URL: reverify https://github.com/<owner>/<repo>/pull/<number>');
-    const run = await reverifyPullRequest({ root, pullUrl: positional });
+    const run = await reverifyPullRequest({ root, pullUrl: positional, semanticReviewer: providerAiReviewer() });
     if (run.alreadyVerified) {
       console.log(`Already verified: ${run.pullRequest.url} HEAD ${run.headSha} on ${run.pullRequest.base} ${run.baselineSha} is bound to run ${run.id}. Nothing was run, committed, pushed or updated.`);
       console.log(`Evidence: ${run.runDir}/summary.json`);
@@ -238,15 +239,15 @@ try {
     const decisions = { approve: 'APPROVE', revoke: 'REVOKE', 'request-changes': 'REQUEST_CHANGES' };
     const decision = decisions[options['--decision'] || 'approve'];
     if (!decision) throw new Error('Unknown approval decision');
-    const run = await approveRun({ root, runId: options['--run'], issueUrl: positional, purpose: 'merge', decision });
+    const run = await approveRun({ root, runId: options['--run'], issueUrl: positional, purpose: 'merge', decision, semanticReviewer: providerAiReviewer() });
     console.log(`Recorded ${decision}; run ${run.id}: ${run.status}`);
     printPullRequest(run);
     console.log(`Evidence: ${run.runDir}/summary.json`);
     process.exitCode = runExitCode(run);
   } else {
     if (command === 'resume' && !options['--run']) throw new Error('resume requires --run ID');
-    const run = command === 'resume' ? await resumeRun({ root, runId: options['--run'] })
-      : await runHarness({ root, provider: command === 'demo' ? 'fake' : options['--provider'], sbiPath: options['--sbi'], issueUrl: positional, full:options['--full'] === true, publish: command === 'run' });
+    const run = command === 'resume' ? await resumeRun({ root, runId: options['--run'], semanticReviewer: providerAiReviewer() })
+      : await runHarness({ root, provider: command === 'demo' ? 'fake' : options['--provider'], sbiPath: options['--sbi'], issueUrl: positional, full:options['--full'] === true, publish: command === 'run', semanticReviewer: providerAiReviewer() });
     printPullRequest(run);
     printDecision(run);
     console.log(`Evidence: ${run.runDir}/summary.json`);
