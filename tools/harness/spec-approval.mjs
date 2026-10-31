@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto';
 import { sections } from './sbi-issue.mjs';
 import { parseIssueUrl, markerPattern } from './planner.mjs';
-import { commentApprovals } from './github-approval-records.mjs';
-// #147: a human confirms the specification of an SBI Issue by posting `harness-spec: <spec digest>` on the Issue. This is the source of truth;
-// the spec-approved label is only a projection. The digest covers what decides the tests and, since #194, everything the run gives the Agent or
-// uses for Risk, Security, its scope and its start (the title, the Planner marker, 目的, 種類, 依存SBI, 想定変更ファイル数, 検証方法), so editing any
-// of it voids earlier approvals; ticking a checkbox does not. ADR-0005 lists the same items (specDigestItems).
+// #147, ADR-0009: a human confirms the specification of an SBI Issue by moving it from needs-review to spec-approved on GitHub (MVP: the label
+// is the approval and who added it is not checked). The run takes the spec digest of the Issue as it is then, and the generated Trusted
+// Acceptance stays bound to that digest (acceptance-generation.mjs). The digest covers what decides the tests and, since #194, everything the
+// run gives the Agent or uses for Risk, Security, its scope and its start (the title, the Planner marker, 目的, 種類, 依存SBI, 想定変更ファイル数,
+// 検証方法), so editing any of it voids the generated Trusted Acceptance; ticking a checkbox does not. ADR-0005 lists the same items (specDigestItems).
 const specSections = ['目的', '種類', '受け入れ要件', 'Gherkin', '依存SBI', '想定変更範囲', '想定変更ファイル数', '検証方法', 'Risk / Security Impact'];
 export const specDigestItems = ['title', 'Planner marker', ...specSections];
 
@@ -21,34 +21,24 @@ export function specDigest({ title, body }) {
   return createHash('sha256').update(normalized).digest('hex');
 }
 
-export const specApprovalLine = digest => `harness-spec: ${digest}`;
-// Latest wins per person; the rules are shared with the PBI plan approval (github-approval-records.mjs).
-export const specApprovals = ({ comments, permissions, digest }) => digest ? commentApprovals({ comments, prefix: 'harness-spec', digest, permissions }) : { approved: false, approvers: [] };
-
-// Reads the approval records of an Issue from GitHub; a permission that cannot be read never approves.
-export async function readSpecApproval({ ref, issue, github }) {
+export const specApprovalLabel = 'spec-approved';
+export const specApproval = issue => {
   const digest = specDigest(issue);
-  const comments = await github.listComments(ref);
-  const permissions = {};
-  for (const login of new Set(comments.map(c => c.user?.login).filter(Boolean))) {
-    try { permissions[login] = await github.permission(ref, login); } catch { permissions[login] = 'unknown'; }
-  }
-  return { digest, ...specApprovals({ comments, permissions, digest }) };
-}
+  return { approved: Boolean(digest) && (issue.labels ?? []).some(l => l.name === specApprovalLabel), digest };
+};
 
-// harness:spec-approve: the human posts with their own gh login, so GitHub authenticates who approved. The label only mirrors it.
+// harness:spec-approve: the same label change a human makes on GitHub, for a human who prefers the terminal.
 export async function postSpecApproval({ issueUrl, decision = 'approve', github }) {
   if (!['approve', 'revoke'].includes(decision)) throw new Error('spec-approve --decision must be approve or revoke');
   const ref = parseIssueUrl(issueUrl);
   const issue = await github.fetchIssue(ref);
   const digest = specDigest(issue);
   if (!digest) throw new Error(`${ref.url} に ## Gherkin が無いため spec digest を作れません。仕様を承認できません`);
-  // Only a comment that is exactly the line counts (github-approval-records.mjs), so nothing else is posted with it.
-  const comment = await github.addComment(ref, decision === 'approve' ? specApprovalLine(digest) : `harness-spec-revoke: ${digest}`);
   const names = (issue.labels ?? []).map(l => l.name);
-  try {
-    if (decision === 'approve') { await github.ensureLabels(ref, ['spec-approved']); if (!names.includes('spec-approved')) await github.addLabels(ref, ['spec-approved']); }
-    else if (names.includes('spec-approved')) await github.removeLabel(ref, 'spec-approved');
-  } catch (error) { throw new Error(`承認は ${comment.html_url} に記録しました。spec-approved ラベルの反映に失敗しました: ${error.message}`); }
-  return { digest, comment: comment.html_url };
+  if (decision === 'approve') {
+    await github.ensureLabels(ref, [specApprovalLabel]);
+    if (!names.includes(specApprovalLabel)) await github.addLabels(ref, [specApprovalLabel]);
+    if (names.includes('needs-review')) await github.removeLabel(ref, 'needs-review');
+  } else if (names.includes(specApprovalLabel)) await github.removeLabel(ref, specApprovalLabel);
+  return { digest };
 }

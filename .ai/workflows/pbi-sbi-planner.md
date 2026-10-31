@@ -5,14 +5,14 @@
 3. `pnpm planner:sbi https://github.com/<owner>/<repo>/issues/<number>`を実行する。
    providerの既定はclaude。Codexだけ使える場合は`--provider codex`を付ける。CLIはインストール・ログイン済みでPATHから起動できることが必要。
 4. SBI Quality JudgeがFAILならIssueは作成されず、exit 1で修正理由が表示される。PBIを直して再実行する。
-5. PASSなら依存順にSBI Issueを作成し、`sbi`と`needs-review`を付与する。元PBIの本文に`## SBI構成`（SBI ID・Issue番号・kind・依存の完全な集合）を書き、`## Generated SBI`一覧をコメントする。
+5. PASSなら依存順にSBI Issueを作成し、`sbi`と`needs-review`を付与する。承認に使う`spec-approved`・`plan-approved`ラベルもリポジトリに作るが、どのIssueにも付けない。元PBIの本文に`## SBI構成`（SBI ID・Issue番号・kind・依存の完全な集合）を書き、`## Generated SBI`一覧をコメントする。
 6. 人間がSBI Issueをレビューする。見るのは分割粒度、受け入れ要件、Gherkin、依存関係、Security影響、検証方法。
 7. 採用するSBIは、ACごとのTrusted Acceptanceを人間が書いてレビューし、
    `.harness/acceptance/sbi-<SBI番号>.json`に`{ "version": 1, "sbiIssue": <SBI番号>, "verifiers": [{ "id", "trustedScript", "planned", "acceptanceIds": [IssueのAC ID] }] }`で登録する。
 8. 全ACの対応を確認したら`needs-review`を外して`ready`を付ける。`gh issue edit <number> --remove-label needs-review --add-label ready`。
    `ready`は、write以上の権限を持つ人間（botは数えない）が付けたときだけ、付けた時点のIssueを承認する（#194・#200）。最後に`ready`を付けた人で判定する。付けた後に本文を編集するかtitleを変えると、元に戻してもrunは開始せず、CIも通らない。見直してから`ready`を外し、付け直す。判定はGitHubのtimeline（labeled・renamed）と本文の編集履歴の日時で行い、同じ秒の編集も後とみなす。
-   新方式（#147、[ADR-0005](../../docs/adr/0005-generated-trusted-acceptance.md)）: Trusted Acceptanceを手書きせず、`needs-review`を外して`pnpm harness:spec-approve <SBI Issue URL>`で仕様を承認する。正本はIssueの`harness-spec: <spec digest>`コメント（write以上・未編集・本文がその1行だけ）で、`spec-approved` labelは表示だけ。title・Planner marker・目的・種類・受け入れ要件・Gherkin・依存SBI・想定変更範囲・想定変更ファイル数・検証方法・Risk / Security Impactを編集すると承認は無効になる（#194・#200でAgentへの指示・Risk・Security分類・実行範囲に使う項目を追加）。runがテストを生成し、`.harness/acceptance/sbi-<番号>.json`（version 2）と一緒に実装PRに入れる。今はRailsのrequest specだけを生成できる。
-9. PBIの`## SBI構成`を確認し、`pnpm harness:pbi-plan-approve <PBI URL>`で一度だけ承認する（下記「PBI plan」）。
+   新方式（#147、[ADR-0005](../../docs/adr/0005-generated-trusted-acceptance.md)・[ADR-0009](../../docs/adr/0009-label-human-approval.md)）: Trusted Acceptanceを手書きせず、GitHub上でIssueの`needs-review`を外して`spec-approved`ラベルを付ける。これが仕様の承認で、付けた人は確かめない（MVP）。`pnpm harness:spec-approve <SBI Issue URL>`も同じラベル操作をする。runは開始時点のIssueからspec digest（title・Planner marker・目的・種類・受け入れ要件・Gherkin・依存SBI・想定変更範囲・想定変更ファイル数・検証方法・Risk / Security Impact）を計算してテストを生成し、`.harness/acceptance/sbi-<番号>.json`（version 2）と一緒に実装PRに入れる。生成後にこれらを編集すると、CIで生成済みのTrusted Acceptanceが無効になる。今はRailsのrequest specだけを生成できる。
+9. PBIの`## SBI構成`を確認し、GitHub上でPBIに`plan-approved`ラベルを付けて承認する（下記「PBI plan」）。
 10. `pnpm harness:run <SBI Issue URL>`で実行する。SBI JSONは書かない。HarnessがIssueを取得・検証し、Run snapshotを保存して実装・検証・PR作成まで進める。
 
 ## SBIの種類
@@ -30,12 +30,11 @@ Maestroのlane（実装SBIはモックAPI、最終確認SBIは実API）とComple
 
 ### PBI plan（PBIのSBI集合）
 
-PBIのSBI集合の正本は、Plannerが書いた`## SBI構成`と、それに対する人間の承認コメントの組。
-`pnpm harness:pbi-plan-approve <PBI URL>`は、`## SBI構成`がGitHub上のSBI Issue（`sbi`ラベルとPlannerのmarker）と一致するときだけ、人の`gh`でPBIに`harness-pbi-plan: <approval key>`をコメントする。撤回は`--decision revoke`（`harness-pbi-plan-revoke: <approval key>`）。
+PBIのSBI集合の正本は、Plannerが書いた`## SBI構成`と、PBIの`plan-approved`ラベル（ADR-0009。付けた人は確かめない）の組。
+`pnpm harness:pbi-plan-approve <PBI URL>`は、`## SBI構成`がGitHub上のSBI Issue（`sbi`ラベルとPlannerのmarker）と一致するときだけ、PBIに`plan-approved`ラベルを付ける。撤回は`--decision revoke`でラベルを外す。
 
-- digestは、PBI番号と、SBIごとのSBI ID・Issue番号・kind・依存（ID順に並べ、依存も並べる）のsha256。`## SBI構成`を書き換える、SBIを足す・外すとdigestが変わり、承認は無効になる。
-- revisionは、GitHubが保持するPBI本文の編集履歴（GraphQL `userContentEdits`）と現在の本文を古い順に並べ、`## SBI構成`の内容が変わった回数＋1。人は書かない。節の外の編集では変わらない。履歴から削除された版は中身を読めないので「変わった」と数える。approval key = sha256(`<digest>:<revision>`)。A → B → Aと戻すとrevisionは3になり、最初のA（revision 1）への承認は戻らない。
-- 承認として数えるのは、write以上の権限を持つ人の、本文全体（前後の空白を除く）が承認の1行と一致するコメントだけ。説明文付き・引用・HTMLコメント・コードブロックの中の行は数えない（`harness-spec`も同じ）。botは数えない。権限を読めない人、編集されたコメントも数えない。人ごとに最新の判断を使い、1人で足りる。検証は`github-approval-records.mjs`（#147の`harness-spec`と共有）。
+- digestは、PBI番号と、SBIごとのSBI ID・Issue番号・kind・依存（ID順に並べ、依存も並べる）のsha256。`harness:pbi-status`は、`## SBI構成`とGitHub上のSBI Issueが一致しなければラベルがあってもNOT_DONEにする。
+- revisionは、GitHubが保持するPBI本文の編集履歴（GraphQL `userContentEdits`）と現在の本文を古い順に並べ、`## SBI構成`の内容が変わった回数＋1。人は書かない。節の外の編集では変わらない。履歴から削除された版は中身を読めないので「変わった」と数える。approval key = sha256(`<digest>:<revision>`)。A → B → Aと戻すとrevisionは3になる。approval keyはPBI Human Acceptanceの署名付きmanifestに記録し、変わればmanifestは無効になる。
 - `## SBI構成`が無い既存のPBIは、`pnpm harness:pbi-plan <PBI URL>`でGitHub上のSBI IssueからPBI本文に書いてから承認する。Plannerは再実行しない。
 
 ### PBIの完了判定
@@ -49,7 +48,7 @@ pnpm harness:pbi-accept <PBI URL> --evidence <digest> [--decision approve|revoke
 
 | 入力 | 取得元 |
 | --- | --- |
-| PBI plan | PBI本文の`## SBI構成`と`harness-pbi-plan`コメント。無い・未承認・承認が読めないときはNOT_DONE |
+| PBI plan | PBI本文の`## SBI構成`とPBIの`plan-approved`ラベル。無い・未承認のときはNOT_DONE |
 | SBI | `sbi`ラベルのIssueのうち、Plannerのmarkerがこのpbi URLを指すもの。kindは`## 種類`、依存は`## 依存SBI`。承認済みPBI planと完全に一致しなければNOT_DONE（「SBI #N が見つかりません」「SBI #N が承認済みPBI planに登録されていません」）。同じSBI IDのIssueが2件あってもNOT_DONE |
 | merge | 依存SBIの確認と同じ。mainへmergeされ、`Closes #N`と`SBI-Issue:` trailerを持つHarness PR。Issueを手で閉じただけでは数えない |
 | 必須Verifier | merged PRのhead SHAのcheck run。`github.requiredChecks`とmainのRulesetのrequired status checksがすべてsuccess |
