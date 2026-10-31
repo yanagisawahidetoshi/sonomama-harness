@@ -192,8 +192,8 @@ describe('Trusted Completion Judge over a PR tree and its evidence run', () => {
     return { workspace, headSha: (await git(workspace, ['rev-parse', 'HEAD'])).stdout.trim() };
   };
   const job = (name, conclusion = 'success') => ({ name, status: 'completed', conclusion });
-  const judge = ({ root, workspace, headSha, run = { id: 1, head_sha: headSha }, jobs }) => runTrustedJudge({ root, workspace, base: 'main', repository: 'acme/app', headSha,
-    wait: async () => run, readJobs: async () => jobs, download: async () => null, evidenceDir: join(root, '.evidence') });
+  const judge = ({ root, workspace, headSha, run = { id: 1, head_sha: headSha }, jobs, ...extra }) => runTrustedJudge({ root, workspace, base: 'main', repository: 'acme/app', headSha,
+    wait: async () => run, readJobs: async () => jobs, download: async () => null, evidenceDir: join(root, '.evidence'), ...extra });
 
   it('when a docs change has a completed evidence run with every job passing then passes', () => fixture(async root => {
     const { workspace, headSha } = await branch(root, ws => writeFile(join(ws, 'docs/note.md'), 'note\n'));
@@ -207,6 +207,14 @@ describe('Trusted Completion Judge over a PR tree and its evidence run', () => {
     const judged = await judge({ root, workspace, headSha, jobs: [job('impact'), job('verifiers (prototype-web)'), job('harness-test', 'skipped'), job('harness-demo', 'skipped')] });
     assert.deepEqual(judged.reasons, []);
     assert.equal(judged.status, 'PASS');
+  }));
+
+  // #220: pull_request_target always has a PR number; without one the Judge cannot tell a Harness PR apart and must not skip that check.
+  it('when the pull_request_target event gives no pull request number then fails closed, though every job passed', () => fixture(async root => {
+    const { workspace, headSha } = await branch(root, ws => writeFile(join(ws, 'docs/note.md'), 'note\n'));
+    const judged = await judge({ root, workspace, headSha, jobs: [job('impact'), job('harness-test', 'skipped'), job('harness-demo', 'skipped')], eventName: 'pull_request_target' });
+    assert.equal(judged.status, 'FAIL');
+    assert.ok(judged.reasons.some(r => r.startsWith('harness pr:')), judged.reasons.join('; '));
   }));
 
   it('when the PR adds a workflow whose jobs all pass then it is not failed but left to a human review', () => fixture(async root => {

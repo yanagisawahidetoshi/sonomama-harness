@@ -534,6 +534,23 @@ describe('CI Completion Judge for the source SBI Issue', () => {
       assert.ok(judged.reasons.some(r => r.includes('#201') && r.includes('HTTP 404')), judged.reasons.join('; '));
     })));
 
+    // A pull_request or pull_request_target event always has a PR number. Without it the Judge cannot tell a Harness PR apart, so it fails closed.
+    for (const eventName of ['pull_request', 'pull_request_target']) {
+      it(`when a ${eventName} event gives no pull request number then the Judge fails closed instead of skipping the Harness PR check`, () => mockGitHub({ pulls: [pull(`harness/${runId}`)] }, () => fixture(async root => {
+        await prepare(root);
+        await commit(root, { [prototypePage]: 'export {};' }, 'SBI SBI-001, iteration 1');
+        const judged = await run(root, { eventName });
+        assert.equal(judged.status, 'FAIL');
+        assert.ok(judged.reasons.some(r => r.startsWith('harness pr:') && r.includes(eventName)), judged.reasons.join('; '));
+      })));
+    }
+    it('when a push event gives no pull request number then there is no PR to check and the Judge passes as before', () => mockGitHub({}, () => fixture(async root => {
+      await prepare(root);
+      await commit(root, { [prototypePage]: 'export {};' }, 'feat: prototype');
+      const judged = await run(root, { eventName: 'push' });
+      assert.equal(judged.status, 'PASS', judged.reasons.join('; '));
+    })));
+
     it('when a PR from another branch changes only a prototype then the Judge passes without an SBI, as before', () => mockGitHub({ pulls: [pull('claude/prototype-home')] }, () => fixture(async root => {
       await prepare(root);
       await commit(root, { [prototypePage]: 'export {};' }, 'feat: prototype');
