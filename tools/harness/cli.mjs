@@ -9,6 +9,7 @@ import { startApiMock, waitForApiMock } from './api-mock.mjs';
 import { startApiDocs } from './api-docs.mjs';
 import { relativePath } from './schemas.mjs';
 import { describeImpact, describeJudge, loadImpact, runCompletionJudge, runVerifier } from './impact.mjs';
+import { runTrustedJudge } from './trusted-judge.mjs';
 import { runPushGate } from './push-gate.mjs';
 import { describeSbiSource } from './sbi-source.mjs';
 import { collectPbiStatus, renderPbiStatus, acceptPbi } from './pbi-status.mjs';
@@ -72,12 +73,12 @@ async function printVerifier({ root: workspace = root, base, all, id }) {
 await withEvidenceProtection(root, async () => {
 try {
   const [command, ...args] = process.argv.slice(2);
-  const allowed = { check: ['--sbi'], demo: ['--sbi', '--full'], run: ['--provider', '--sbi', '--full'], plan: ['--provider'], 'spec-approve': ['--decision'], 'api-schema': ['--provider'], 'api-schema-approve': ['--decision'], 'api-schema-status': [], 'api-mock': ['--dynamic'], 'api-docs': ['--port'], cleanup:['--run'], impact: ['--base', '--all'], verify: ['--base', '--all', '--verifier'], judge: ['--base', '--all'], 'push-gate': [], resume: ['--run'], pr: ['--run'], reverify: [], approve: ['--run', '--phase', '--decision'], export: ['--run','--out'], 'pbi-status': ['--json'], 'pbi-accept': ['--evidence', '--decision'], 'pbi-plan': [], 'pbi-plan-approve': ['--decision'] };
+  const allowed = { check: ['--sbi'], demo: ['--sbi', '--full'], run: ['--provider', '--sbi', '--full'], plan: ['--provider'], 'spec-approve': ['--decision'], 'api-schema': ['--provider'], 'api-schema-approve': ['--decision'], 'api-schema-status': [], 'api-mock': ['--dynamic'], 'api-docs': ['--port'], cleanup:['--run'], impact: ['--base', '--all'], verify: ['--base', '--all', '--verifier'], judge: ['--base', '--all', '--trusted'], 'push-gate': [], resume: ['--run'], pr: ['--run'], reverify: [], approve: ['--run', '--phase', '--decision'], export: ['--run','--out'], 'pbi-status': ['--json'], 'pbi-accept': ['--evidence', '--decision'], 'pbi-plan': [], 'pbi-plan-approve': ['--decision'] };
   if (!allowed[command]) throw new Error(usage);
   const options = {};
   const positional = ['plan', 'spec-approve', 'api-schema', 'api-schema-approve', 'api-schema-status', 'api-mock', 'run', 'approve', 'reverify', 'pbi-status', 'pbi-accept', 'pbi-plan', 'pbi-plan-approve'].includes(command) && args.length && !args[0].startsWith('--') ? args.shift() : null;
   for (let i = 0; i < args.length; i += 2) {
-    if (['--full', '--dynamic', '--all', '--json'].includes(args[i]) && allowed[command].includes(args[i]) && !options[args[i]]) { options[args[i]]=true; i--; continue; }
+    if (['--full', '--dynamic', '--all', '--json', '--trusted'].includes(args[i]) && allowed[command].includes(args[i]) && !options[args[i]]) { options[args[i]]=true; i--; continue; }
     if (!allowed[command].includes(args[i]) || !args[i + 1] || args[i + 1].startsWith('--') || options[args[i]]) throw new Error(`Invalid arguments for ${command}`);
     options[args[i]] = args[i + 1];
   }
@@ -163,6 +164,24 @@ try {
     } else if (command === 'verify') {
       if (!options['--verifier']) throw new Error('verify requires --verifier ID');
       process.exitCode = await printVerifier({ base, all, id: options['--verifier'] }) ? 0 : 1;
+    } else if (options['--trusted']) {
+      // ADR-0008: this checkout is main; HARNESS_WORKSPACE is the PR head checked out beside it as data, and the pull_request run is the evidence.
+      const workspace = process.env.HARNESS_WORKSPACE ? resolve(process.env.HARNESS_WORKSPACE) : '';
+      if (!workspace || workspace === resolve(root)) throw new Error('judge --trusted requires HARNESS_WORKSPACE, a PR tree apart from the Harness root');
+      if (!base) throw new Error('judge --trusted requires --base REF');
+      const judged = await runTrustedJudge({ root, workspace, base, repository: process.env.GITHUB_REPOSITORY, pullNumber: process.env.HARNESS_PULL_REQUEST || undefined,
+        headSha: process.env.HARNESS_HEAD_SHA ?? '', log: line => console.log(redactText(line)) });
+      if (judged.run) console.log(`Evidence: run ${judged.run.id} attempt ${judged.run.run_attempt} of ${judged.run.path}`);
+      if (judged.checks) {
+        for (const line of describeImpact(judged.impact)) console.log(redactText(line));
+        for (const line of describeSbiSource(judged.source)) console.log(redactText(line));
+        for (const c of [...judged.checks, ...judged.security.checks.filter(c => c.required)]) console.log(redactText(`${c.id}: ${c.status}${c.reason ? ` (${c.reason})` : ''}`));
+        for (const [job, value] of Object.entries(judged.needs)) console.log(`job ${job}: ${value.result}`);
+      }
+      const summary = `Completion Judge: ${judged.status}${judged.reasons.length ? ` (${judged.reasons.join('; ')})` : ''}`;
+      console.log(redactText(summary));
+      await output([`conclusion=${judged.status === 'PASS' ? 'success' : 'failure'}`, `summary=${redactText(summary).replace(/\s+/g, ' ').slice(0, 60000)}`]);
+      process.exitCode = judged.status === 'PASS' ? 0 : 1;
     } else {
       const needs = JSON.parse(process.env.HARNESS_NEEDS || '{}');
       // Set only on pull_request events; a trusted dependency bot PR is read from GitHub by this number.

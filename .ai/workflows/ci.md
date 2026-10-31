@@ -10,6 +10,22 @@
 | `maestro` | `impact` の `maestro` が空でないときだけ、Android EmulatorでMaestroを実行する（下記）。mainへのpushではDevelopment BuildのAPK cacheだけを作る |
 | `harness` | Completion Judge。変更されたSBIのTrusted AcceptanceとSecurity Verifierを実行し、各jobの結果を集約する。必須チェック名なのでjob idを変えない |
 
+## 信頼できるCompletion Judge（ADR-0008）
+
+`harness.yml`は`pull_request`でPRのコードを動かすので、その結果は信用しない証拠として扱う。
+`.github/workflows/completion-judge.yml`は`pull_request_target`で動き、workflowは常にmainのものになる。mainのHarnessで判定して、専用GitHub Appのcheck run `Completion Judge`を出す。
+
+| job | 内容 |
+| --- | --- |
+| `judge` | mainをcheckoutし、PRのheadをcheckoutの外（`runner.temp/pr`）にdetached worktreeで置く。PRのものはinstallも実行もしない。`pnpm harness:judge --trusted`が、同じhead SHAの`pull_request` runが終わるまで待つ。impactをmainのコードで計算し直し、そのrunのjobs APIとartifactで判定する。secretもenvironmentも持たない |
+| `publish` | environment `completion-judge`のApp鍵でtokenを作り、`judge`の結果をcheck runにする。checkoutもHarnessの実行もしない。`judge`が失敗・取消・結果なしなら`failure`を出す |
+
+- 要求したverifierごとに、runの`verifiers (<id>)` jobのsuccessを求める。head SHAのcheck run一覧は使わない。PR側の`harness` jobは数えない。
+- 証拠の作り手（`.github/**`、`tools/harness/**`、`.harness/**`、rootの`package.json`・`pnpm-lock.yaml`・`pnpm-workspace.yaml`・`.node-version`・`.npmrc`）を変えたPRは、すべてのjobが通っても`producer changed`でFAILする。SBIのJSONと生成したTrusted Acceptanceの登録は除く。
+- 手書きのTrusted Acceptanceの登録（version 1）はmain側のものだけを使う。生成した登録（version 2）はPRのものを使い、spec digestで検査する。
+- 実行の`pull_request` runをre-runしたときは、`Completion Judge` workflowもre-runする。
+- ruleset を`Completion Judge`に切り替えるまでは、今の`harness` jobが必須チェックのまま。
+
 ## Maestro（mobile E2E）
 
 Maestroは通常の`expo` Verifierに入れない。Impact Analysisの`maestro`（lane）は、PRのSBIから決める（`tools/harness/maestro.mjs`）。

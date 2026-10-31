@@ -1,10 +1,13 @@
-import { mkdir } from 'node:fs/promises';
+import { mkdir, mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { z } from 'zod';
 import { api } from './planner-github.mjs';
 import { execute } from './io.mjs';
 import { redactText } from './evidence-protection.mjs';
 import { sbiFilePattern } from './sbi-source.mjs';
+import { loadImpact, runCompletionJudge } from './impact.mjs';
 // ADR-0008: the pull_request run executes the PR and is untrusted evidence. The Completion Judge on pull_request_target reads it as data
 // with main's code, and does not pass a PR that changed the producer of that evidence on its own evidence.
 export const evidenceWorkflow = '.github/workflows/harness.yml';
@@ -80,4 +83,25 @@ export async function downloadEvidence({ repository, run, name, dir }) {
   await mkdir(dir, { recursive: true });
   const result = await execute('gh', ['run', 'download', String(run.id), '--repo', repository, '--name', name, '--dir', dir], { timeoutMs: 300000 });
   return result.ok ? null : redactText(result.stderr.trim() || result.error || `exit ${result.code}`);
+}
+
+// The trusted Judge: main's impact of the PR tree, the producer paths, the jobs of the evidence run and its artifacts, then the same
+// Completion Judge as before on the PR tree. Nothing of the PR is installed or run here except the hand-written Trusted Acceptance
+// scripts the Completion Judge runs under the Node permission model, which is why this job holds no secret.
+export async function runTrustedJudge({ root, workspace, base, repository, pullNumber, headSha, github = { api }, wait = waitForEvidenceRun, readJobs = readEvidenceJobs,
+  download = downloadEvidence, evidenceDir, log = () => {} }) {
+  const { impact, files } = await loadImpact({ root, workspace, base });
+  const producer = judgeProducer(files);
+  const run = await wait({ repository, headSha, github, log });
+  if (!run) return { impact, producer, run: null, status: 'FAIL', reasons: [...producer.reasons, `evidence: no completed pull_request run of ${evidenceWorkflow} for ${headSha.slice(0, 12)}`] };
+  const evidence = judgeEvidenceJobs({ jobs: await readJobs({ repository, run, github }), impact });
+  const dir = evidenceDir ?? await mkdtemp(join(tmpdir(), 'harness-evidence-'));
+  const acceptanceResults = join(dir, 'acceptance-results'), maestroResults = join(dir, 'maestro-results');
+  for (const id of impact.requiredVerifiers.filter(id => id.startsWith('generated-acceptance-'))) await download({ repository, run, name: `acceptance-results-${id}`, dir: acceptanceResults });
+  if ((impact.maestro ?? []).length) await download({ repository, run, name: 'maestro-results', dir: maestroResults });
+  // The run's head stands for the head its impact job analyzed; judgeTestedCommit compares it and the PR tree with the event head.
+  const needs = { ...evidence.needs, impact: { ...evidence.needs.impact, outputs: { head_sha: run.head_sha } } };
+  const judged = await runCompletionJudge({ root, workspace, base, needs, repository, pullNumber, maestroResults, acceptanceResults, expectedHeadSha: headSha });
+  const reasons = [...producer.reasons, ...evidence.reasons, ...judged.reasons];
+  return { ...judged, needs, run, producer, status: reasons.length ? 'FAIL' : 'PASS', reasons };
 }
