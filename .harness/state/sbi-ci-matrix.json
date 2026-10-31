@@ -1,8 +1,8 @@
 {
   "id": "SBI-CI-MATRIX",
   "title": "SBIの影響範囲に応じてVerifierを動的選択・並列実行しCIを高速化する",
-  "description": "Issue #34。SBIのaffectedAreas・requiredVerifiersとGit diffからrequired verifierを決め、GitHub Actionsのdynamic matrixで並列実行し、Completion Judge（harness job）で集約する。Harness本体の変更時だけFull Gate（harness:test / harness:demo --full）を並列で実行する。api-contract verifierはOpenAPI 3.1の検証とbaseとの破壊的変更検出を行い、OpenAPIが未作成の間はplaceholderとしてSKIPする。",
-  "gherkin": "Feature: SBIに応じたVerifierの選択と並列実行\n  Scenario: 複数領域のSBI\n    Given affectedAreasがapiとmobileのSBIがある\n    When Impact Analysisを実行する\n    Then rails / expo / api-contractがrequiredになり、理由がCIログに出る\n  Scenario: SBIとdiffの矛盾\n    Given adminのSBIでapps/mobileも変更されている\n    When Impact Analysisを実行する\n    Then expoが安全側に追加される\n  Scenario: Completion Judge\n    Given required verifierのmatrixで1つがFAILした\n    When harness jobが集約する\n    Then FAILになる\n  Scenario: Full Gate\n    Given tools/harnessが変更されている\n    When CIを実行する\n    Then harness:testとharness:demo --fullが並列に実行される",
+  "description": "Issue #34。SBIのaffectedAreas・requiredVerifiersとGit diffからrequired verifierを決め、GitHub Actionsのdynamic matrixで並列実行し、Completion Judge（harness job）で集約する。Harness本体の変更時だけFull Gate（harness:test / harness:demo）を並列で実行し、実アプリVerifierまで回す--fullはPR以外（mainへのpush）に限る。api-contract verifierはOpenAPI 3.1の検証とbaseとの破壊的変更検出を行い、OpenAPIが未作成の間はplaceholderとしてSKIPする。",
+  "gherkin": "Feature: SBIに応じたVerifierの選択と並列実行\n  Scenario: 複数領域のSBI\n    Given affectedAreasがapiとmobileのSBIがある\n    When Impact Analysisを実行する\n    Then rails / expo / api-contractがrequiredになり、理由がCIログに出る\n  Scenario: SBIとdiffの矛盾\n    Given adminのSBIでapps/mobileも変更されている\n    When Impact Analysisを実行する\n    Then expoが安全側に追加される\n  Scenario: Completion Judge\n    Given required verifierのmatrixで1つがFAILした\n    When harness jobが集約する\n    Then FAILになる\n  Scenario: Full Gate\n    Given tools/harnessが変更されている\n    When CIを実行する\n    Then harness:testとharness:demoが並列に実行される\n    And PRのharness:demoには--fullが付かない",
   "acceptanceCriteria": [
     {
       "id": "CI-AC-1",
