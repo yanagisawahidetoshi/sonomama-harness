@@ -23,6 +23,7 @@
 - 要求したverifierごとに、runの`verifiers (<id>)` jobのsuccessを求める。head SHAのcheck run一覧は使わない。PR側の`harness` jobは数えない。
 - 証拠の作り手（`.github/**`、`tools/harness/**`、`.harness/**`、rootの`package.json`・`pnpm-lock.yaml`・`pnpm-workspace.yaml`・`.node-version`・`.npmrc`）を変えたPRは、すべてのjobが通っても`producer changed`でFAILする。SBIのJSONと生成したTrusted Acceptanceの登録は除く。
 - 手書きのTrusted Acceptanceの登録（version 1）はmain側のものだけを使う。生成した登録（version 2）はPRのものを使い、spec digestで検査する。
+- forkからのPRは`judge`を動かさず、`publish`が`failure`を出す（BLOCKED）。
 - 実行の`pull_request` runをre-runしたときは、`Completion Judge` workflowもre-runする。
 - ruleset を`Completion Judge`に切り替えるまでは、今の`harness` jobが必須チェックのまま。
 

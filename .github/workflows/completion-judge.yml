@@ -13,7 +13,9 @@ concurrency:
 jobs:
   # Holds no secret and no environment: the hand-written Trusted Acceptance scripts read the PR tree, and ci-matrix imports its Harness,
   # under the Node permission model. The PR head is checked out beside main as data only; nothing of it is installed.
+  # A fork's head is never judged here (its Harness would run in the Trusted Acceptance sandbox of this privileged event); publish then reports failure.
   judge:
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:

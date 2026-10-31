@@ -97,8 +97,9 @@ export async function runTrustedJudge({ root, workspace, base, repository, pullN
   const evidence = judgeEvidenceJobs({ jobs: await readJobs({ repository, run, github }), impact });
   const dir = evidenceDir ?? await mkdtemp(join(tmpdir(), 'harness-evidence-'));
   const acceptanceResults = join(dir, 'acceptance-results'), maestroResults = join(dir, 'maestro-results');
-  for (const id of impact.requiredVerifiers.filter(id => id.startsWith('generated-acceptance-'))) await download({ repository, run, name: `acceptance-results-${id}`, dir: acceptanceResults });
-  if ((impact.maestro ?? []).length) await download({ repository, run, name: 'maestro-results', dir: maestroResults });
+  const fetch = async (name, into) => { const error = await download({ repository, run, name, dir: into }); if (error) log(`artifact ${name}: ${error}`); };
+  for (const id of impact.requiredVerifiers.filter(id => id.startsWith('generated-acceptance-'))) await fetch(`acceptance-results-${id}`, acceptanceResults);
+  if ((impact.maestro ?? []).length) await fetch('maestro-results', maestroResults);
   // The run's head stands for the head its impact job analyzed; judgeTestedCommit compares it and the PR tree with the event head.
   const needs = { ...evidence.needs, impact: { ...evidence.needs.impact, outputs: { head_sha: run.head_sha } } };
   const judged = await runCompletionJudge({ root, workspace, base, needs, repository, pullNumber, maestroResults, acceptanceResults, expectedHeadSha: headSha });
