@@ -210,7 +210,7 @@ export const githubTimelineSchema = z.array(z.object({ event: z.string().nullabl
 export const githubPullSchema = z.object({
   number: z.number().int().positive(), merged_at: z.string().nullable(), merge_commit_sha: z.string().nullable().optional(), base: z.object({ ref: z.string() }), body: z.string().nullable().default(null),
   user: z.object({ login: z.string(), type: z.string() }).nullable().optional(),
-  head: z.object({ sha: z.string(), repo: z.object({ full_name: z.string() }).nullable() }).optional(),
+  head: z.object({ ref: z.string().optional(), sha: z.string(), repo: z.object({ full_name: z.string() }).nullable() }).optional(),
 });
 export const githubPullCommitsSchema = z.array(z.object({
   commit: z.object({ message: z.string(), verification: z.object({ verified: z.boolean() }).optional() }),

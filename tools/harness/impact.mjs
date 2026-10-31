@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { isSafeEnvTemplate } from './evidence-protection.mjs';
 import { classifyChangeType, describeChangeType, needsContent } from './change-type.mjs';
 import { readJson } from './io.mjs';
-import { readSbiFiles, sbiFilePattern, snapshotFilePattern, verifySbiSource } from './sbi-source.mjs';
+import { judgeHarnessPull, readHarnessPull, readSbiFiles, sbiFilePattern, snapshotFilePattern, verifySbiSource } from './sbi-source.mjs';
 import { judgeChangedFileCount } from './planner-judge.mjs';
 import { dependencyBotExemption } from './dependency-bot.mjs';
 import { githubCli } from './planner-github.mjs';
@@ -238,9 +238,13 @@ export async function runCompletionJudge({ root, base, all = false, needs, repos
   // The SBI source is a separate axis from the change type: a changed, broken or deleted snapshot is always verified,
   // while the Run trailers alone are no source and never change the change type.
   const snapshotChanged = files.some(f => sbiFilePattern.test(f.path));
-  const required = exemption?.exempt ? [] : impact.sbiRequiredReasons.length ? impact.sbiRequiredReasons : snapshotChanged ? ['sbi-snapshot'] : [];
+  // #220: a Harness PR (harness/<run-id>) needs the snapshot of its own run whatever the diff, and no exemption lifts that.
+  const harnessPull = all ? null : await readHarnessPull({ repository, pullNumber, github });
+  const sourceRequired = exemption?.exempt ? [] : impact.sbiRequiredReasons.length ? impact.sbiRequiredReasons : snapshotChanged ? ['sbi-snapshot'] : [];
+  const required = [...(harnessPull ? [`harness-pr:${harnessPull.branch ?? `#${pullNumber}`}`] : []), ...sourceRequired];
   const verified = await verifySbiSource({ root, base, files, required, config, repository, github: issueGithub });
-  const source = { ...verified, ...(exemption ? { exemption } : {}) };
+  const pullReasons = judgeHarnessPull({ pull: harnessPull, snapshots, source: verified });
+  const source = { ...verified, reasons: [...pullReasons, ...verified.reasons], status: pullReasons.length ? 'FAIL' : verified.status, ...(exemption ? { exemption } : {}) };
   // A destructive migration that migration-safety let through as an exception request still needs two reviews on headSha.
   const migrationExceptions = all ? { status: 'PASS', exceptions: [], reasons: [] }
     : await verifyMigrationExceptions({ root, base, files, headSha, repository, pullNumber, ...(githubPr ? { githubPr } : {}) });
