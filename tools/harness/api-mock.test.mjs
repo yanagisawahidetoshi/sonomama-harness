@@ -223,8 +223,10 @@ describe('Prism lifecycle', () => {
   });
   describe('given a Prism command that cannot be spawned', () => {
     it('when waiting for it then rejects with the spawn error', async () => {
+      // The URL is made first: an 'error' emitted before waitForApiMock listens would be an uncaught exception of the test itself.
+      const url = `http://127.0.0.1:${await closedPort()}`;
       const child = spawn('/nonexistent/prism', [], { stdio: ['ignore', 'ignore', 'pipe'] });
-      await assert.rejects(waitForApiMock({ url: `http://127.0.0.1:${await closedPort()}`, child, timeoutMs: 20000 }), /Prismを起動できません[\s\S]*ENOENT/);
+      await assert.rejects(waitForApiMock({ url, child, timeoutMs: 20000 }), /Prismを起動できません[\s\S]*ENOENT/);
     });
   });
   describe('given a Prism that keeps running without listening', () => {
