@@ -26,10 +26,10 @@ export function readyBinding({ url, issue, timeline, edits }) {
   return reasons;
 }
 
-// Read after the Issue itself, so an edit made in between shows up here and refuses rather than slipping past.
+// Read after the Issue itself, so an edit made in between shows up here and refuses rather than slipping past. One gh call at a time, as elsewhere.
 export async function readReadyBinding({ ref, issue, github }) {
   let timeline, edits;
-  try { [timeline, edits] = await Promise.all([github.issueTimeline(ref), github.bodyEdits(ref)]); }
+  try { timeline = await github.issueTimeline(ref); edits = await github.bodyEdits(ref); }
   catch (error) { return [`${ref.url} timeline or edit history could not be read (${error.message}), so ready cannot be bound to the content it approved`]; }
   return readyBinding({ url: ref.url, issue, timeline, edits });
 }
