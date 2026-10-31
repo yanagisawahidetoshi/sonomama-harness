@@ -27,7 +27,7 @@ const body = renderSbiBody({
 }, pbi);
 const at = '2026-10-30T00:00:00Z';
 const issue = { number: 7, title: 'SBI-001 担当講師だけが講座を閲覧できる', body, html_url: issueUrl, state: 'open', labels: [{ name: 'sbi' }] };
-const approval = { id: 1, issue: 7, body: specApprovalLine(specDigest(body)), html_url: `${issueUrl}#issuecomment-1`, user: { login: 'alice', type: 'User' }, created_at: at, updated_at: at };
+const approval = { id: 1, issue: 7, body: specApprovalLine(specDigest(issue)), html_url: `${issueUrl}#issuecomment-1`, user: { login: 'alice', type: 'User' }, created_at: at, updated_at: at };
 const mockGitHub = githubMock({ issue, comments: [approval], permissions: { alice: 'admin' } });
 
 const testPath = 'apps/api/spec/acceptance/sbi_7/courses_spec.rb';
