@@ -1,0 +1,28 @@
+# A contract that uses features the adapter cannot validate. Loading it must fail instead of passing silently.
+openapi: 3.1.0
+info:
+  title: Unsupported API contract fixture
+  version: "1"
+paths:
+  /reports/{reportId}:
+    get:
+      parameters:
+        - name: reportId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: report-code
+      responses:
+        "200":
+          description: Report
+          content:
+            application/xml:
+              schema:
+                type: object
+        "404":
+          description: Missing
+          content:
+            application/json:
+              schema:
+                $ref: "errors.yaml#/Error"
