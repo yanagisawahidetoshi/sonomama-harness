@@ -20,16 +20,18 @@ import { appendFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 const root = fileURLToPath(new URL('../../', import.meta.url));
-// The normal flow is planner:sbi → harness:run → (only at a Human Gate) harness:approve. The rest serves CI, recovery and Harness maintenance.
+// The normal flow is planner:sbi → SBI approval → harness:run → review of the PR by Risk. The rest serves CI, recovery and Harness maintenance.
 const usage = `Usage:
 User-facing:
   pnpm planner:sbi PBI_URL [--provider codex]        PBIをSBI Issueへ分割する（既定はClaude）
   pnpm harness:spec-approve SBI_URL [--decision approve|revoke]
                                                      SBI Issueの仕様（受け入れ要件・Gherkin・範囲・Risk）を承認する（#147）
   pnpm harness:run SBI_URL [--provider codex] [--full]
-                                                     readyのSBI Issueから実装・ローカル検証・PR作成まで進める（既定はClaude）
-  pnpm harness:approve SBI_URL --phase gate [--decision approve|revoke|request-changes]
-                                                     Human Gateを承認し、そのままrunを再開してPRを作成する
+                                                     承認済み（ready）のSBI Issueから、実装前Gateなしで実装・ローカル検証・AI Review・PR作成まで進める（既定はClaude）
+                                                     承認済みSBIで決められない判断が出たときだけ ESCALATED / NEEDS_HUMAN_DECISION で止まる。
+                                                     人がSBIを更新・再承認し、新しいrunで再開する
+  pnpm harness:approve SBI_URL --phase merge [--decision approve|revoke|request-changes]
+                                                     PRを作らないLocal modeのrunをmerge承認する（PRがあるときはGitHub Reviewで承認する）
   pnpm harness:pbi-plan-approve PBI_URL [--decision approve|revoke]
                                                      PBI本文の ## SBI構成（Plannerが書いたSBI集合）を確認して承認する。PBIごとに一度
   pnpm harness:pbi-status PBI_URL [--json]          PBIのSBI・Evidence・受け入れ・blockerを集めてDONE / NOT_DONEと理由を表示する
@@ -41,13 +43,19 @@ API design (API契約を設計するときだけ):
   OpenAPI SchemaはPlannerが作るSchema SBI（packages/api-schemaだけを変える）として pnpm harness:run SBI_URL で作る
   pnpm api:mock ISSUE_URL [--dynamic] | pnpm api:docs [--port PORT]
 Internal/Maintenance (CI・障害復旧・Harness保守用):
-  pnpm harness:resume --run RUN_ID | pnpm harness:pr --run RUN_ID | pnpm harness:approve --run RUN_ID --phase gate|merge
+  pnpm harness:resume --run RUN_ID | pnpm harness:pr --run RUN_ID | pnpm harness:approve --run RUN_ID --phase merge
   pnpm harness:run --sbi PATH [--provider fake|codex|claude]（Harness自己テスト・fixture用のSBI JSON）
   pnpm harness:impact --base REF|--all | pnpm harness:verify --verifier ID --base REF|--all | pnpm harness:judge --base REF|--all
   pnpm harness:check | pnpm harness:test | pnpm harness:demo [--full] | pnpm harness:push-gate
   pnpm harness:pbi-plan PBI_URL（## SBI構成 が無い既存PBIに、GitHubのSBI Issueから書く）
   pnpm harness:export --run RUN_ID [--out PATH] | pnpm harness:cleanup --run RUN_ID | pnpm planner:api-schema-status ISSUE_URL
   node tools/harness/cli.mjs api-schema ISSUE_URL | node tools/harness/cli.mjs api-schema-approve ISSUE_URL（旧API Schema Planner。内部機能）`;
+// What stops the run for a human: a decision the approved SBI cannot settle, or AI Review that has not passed.
+const printDecision = run => {
+  if (run.escalation?.decision === 'NEEDS_HUMAN_DECISION') console.log(`NEEDS_HUMAN_DECISION (${run.escalation.code}): SBIを更新・再承認し、新しいrunで再開してください`);
+  const review = run.iterations?.at(-1)?.semanticReview;
+  if (run.merge?.reasons?.includes('ai_review_not_passed')) console.log(`AI Review: ${review?.status ?? 'NOT_RUN'}${review?.adapter === 'fake' ? ' (fake adapter)' : ''}; MERGE_ALLOWEDとautoMergeEligibleにはAI ReviewのPASSが必要です`);
+};
 const printPullRequest = run => { if (run.pullRequest) console.log(`Pull request: ${run.pullRequest.url} (tested SHA ${run.headSha})`); };
 // The generated acceptance reports the verifier matrix leaves for the Completion Judge (#147); unset uses the default directory.
 const acceptanceResults = () => process.env.HARNESS_ACCEPTANCE_RESULTS ? { acceptanceResults: resolve(root, process.env.HARNESS_ACCEPTANCE_RESULTS) } : {};
@@ -194,7 +202,6 @@ try {
     }
     if (run.reverify?.publish === 'PR_UPDATED') printPullRequest(run); else console.log(`Pull request: ${run.pullRequest.url} (not updated; run ${run.id}: ${run.status})`);
     if (run.reverify?.conflicts?.length) console.log(`Conflicts: ${run.reverify.conflicts.join(', ')}`);
-    if (run.gate?.state === 'WAITING_FOR_HUMAN_GATE') console.log(`Human Gate: pnpm harness:approve ${run.sbiIssue.url} --phase gate`);
     console.log(`Evidence: ${run.runDir}/summary.json`);
     process.exitCode = runExitCode(run);
   } else if (command === 'cleanup') {
@@ -206,11 +213,12 @@ try {
     const output = await exportRun({root,runId:options['--run'],out:options['--out']});
     console.log(`Review ZIP: ${output.path} (${output.included} files; ${output.excluded} excluded)`);
   } else if (command === 'approve') {
-    if (Boolean(options['--run']) === Boolean(positional) || !['gate', 'merge'].includes(options['--phase'])) throw new Error('approve requires SBI_URL or --run ID, and --phase gate|merge');
+    if (options['--phase'] === 'gate') throw new Error('The implementation gate no longer exists (#175): the SBI approval decides the implementation. Use --phase merge for a merge approval');
+    if (Boolean(options['--run']) === Boolean(positional) || options['--phase'] !== 'merge') throw new Error('approve requires SBI_URL or --run ID, and --phase merge');
     const decisions = { approve: 'APPROVE', revoke: 'REVOKE', 'request-changes': 'REQUEST_CHANGES' };
     const decision = decisions[options['--decision'] || 'approve'];
     if (!decision) throw new Error('Unknown approval decision');
-    const run = await approveRun({ root, runId: options['--run'], issueUrl: positional, purpose: options['--phase'] === 'gate' ? 'implementation-gate' : 'merge', decision });
+    const run = await approveRun({ root, runId: options['--run'], issueUrl: positional, purpose: 'merge', decision });
     console.log(`Recorded ${decision}; run ${run.id}: ${run.status}`);
     printPullRequest(run);
     console.log(`Evidence: ${run.runDir}/summary.json`);
@@ -220,7 +228,7 @@ try {
     const run = command === 'resume' ? await resumeRun({ root, runId: options['--run'] })
       : await runHarness({ root, provider: command === 'demo' ? 'fake' : options['--provider'], sbiPath: options['--sbi'], issueUrl: positional, full:options['--full'] === true, publish: command === 'run' });
     printPullRequest(run);
-    if (run.gate?.state === 'WAITING_FOR_HUMAN_GATE') console.log(`Human Gate: pnpm harness:approve ${run.sbiIssue?.url ?? `--run ${run.id}`} --phase gate`);
+    printDecision(run);
     console.log(`Evidence: ${run.runDir}/summary.json`);
     process.exitCode = runExitCode(run);
   }

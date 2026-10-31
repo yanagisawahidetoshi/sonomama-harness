@@ -7,12 +7,13 @@
 
 - Security RequirementsのSSOTはdocs/security・docs/product・ADR。Harness内で業務権限・PII定義・retention期間・匿名化要件を決めない。未決事項をAIが推測して確定しない。
 - Security rule IDを文書・security.json・human-gates.jsonで対応させる。harness:checkはIDと文書参照の整合性だけを検証し、意味の妥当性は人間がレビューする。
-- Security-sensitiveは事前Gate、最低LEVEL 3、必須Verifierを強制する。matched ruleが要求する検証は、SBI側で省略しても強制される。
+- Security-sensitiveは最低LEVEL 3、必須Verifier、実装後の異なる2人以上のReviewを強制する。matched ruleが要求する検証は、SBI側で省略しても強制される。
+- Security影響の判断はSBI承認で人間が行う（#175）。承認済みSBIに対して実装前Gateは置かない。security.jsonの`preImplementationGate: true`とhuman-gates.jsonの`preImplementationRuleIds`は「SBI承認で人間が判断するrule」を示し、承認済みSBIが宣言していない一致は実装前にNEEDS_HUMAN_DECISIONで止める。
 - security.jsonでappliesToを持つ実装Verifier（rails-authz-test等）は、ルールに一致したファイルがappliesToに入るとき、またはSBIがそのルールを宣言したときだけ必須にする。docs・ADRだけの変更でもGate・LEVEL 3・承認人数は変わらない。
-- required Security VerifierのFAIL/SKIP/NOT_CONFIGURED、rule violation、未承認GateではDONEもMERGE_ALLOWEDも禁止。NOT_CONFIGUREDはFAIL/SKIPと区別し、必須なら停止する。
-- Semantic Reviewや承認人数だけで検証失敗を上書きしない。
+- required Security VerifierのFAIL/SKIP/NOT_CONFIGURED、rule violationではDONEもMERGE_ALLOWEDも禁止。NOT_CONFIGUREDはFAIL/SKIPと区別し、必須なら停止する。
+- AI Review（Semantic Review）や承認人数だけで検証失敗を上書きしない。
 - 破壊的Migrationは、expand/contractのcontract段階で`apps/api/db/migrate/exceptions/<version>.json`を置き、2人の承認Review（COMMENTED。Approveはmerge承認なので数えない）が揃ったときだけ通る（docs/workflows/database-migrations.md）。mainへのmergeを本番反映とみなさない。AIは承認Reviewを投稿しない。
-- 新しいSecurity影響と秘密値の提案は、workspaceへ適用する前に止める。
+- 新しいSecurity影響と秘密値の提案は、workspaceへ適用する前に止める。新しいSecurity影響はNEEDS_HUMAN_DECISION（SBI更新・再承認後に新しいrun）、秘密値はGateではなく安全策として止める。
 - 秘密ファイルはworktree・export・Gitから除外する。trackedで検出した場合はcheckout前に停止する。実値をログや会話へ出さない。
 - ログ・prompt・JSON・例外はredactionを通す。workspace・prompt・ログ・レビューZIPの秘密情報保護はevidence-protection.mjsを経由する。レビューZIPはharness:exportで再検査して生成する。
 - 外部CLIの生レスポンスをrun配下へ直接書かせない。
@@ -29,13 +30,14 @@
 ## Risk / Human Approval
 
 - Default Risk Levelは2。明示的なsafe ruleのみLEVEL 1への降格を許可する。
-- LEVEL 3の最低ルール、Human Gateは常に優先する。AIはRiskを下げられない。
+- LEVEL 3の最低ルール、Human Gate riskは常に優先する。AIはRiskを下げられない。
 - 変更内容、検証対象、レビュー対象、SHAは同じrun workspaceに固定する。
-- 実装前gateと実装後merge approvalは別state・別purpose・別contextで管理する。
+- 実装開始の人間判断はSBI承認だけ（#175）。実装前gate（implementation-gate）は記録しない。merge approvalはSBI承認と別のpurpose・contextで管理する。
+- AI Review（Semantic Review）は全LEVELで必須。PASSしなければMERGE_ALLOWEDにもautoMergeEligibleにもしない。adapter未接続はNOT_CONFIGURED、実行失敗・不明な結果はFAIL。fake adapterはfake provider（demo・test）だけが使い、PRでは数えない。
 - 承認は信頼するidentity adapter経由だけ。agentのJSONや証跡ファイルを承認の正本にしない。
 - LEVEL 2は1人、LEVEL 3は異なる2人以上。重複、AI、旧SHA、撤回済みの承認は無効。
 - 必須チェックはすべてPASS。任意の非該当チェックと未生成placeholderだけSKIP可能。
-- 出力はMERGE_ALLOWEDとautoMergeEligible。LEVEL 1でautoMergeEligibleがtrueのときだけ自動mergeしてよい。LEVEL 2・3は人間がmergeする。
+- 出力はMERGE_ALLOWEDとautoMergeEligible。LEVEL 1でautoMergeEligibleがtrue（必須CI・Verifier・Security・AI ReviewがtestedSHAでPASS）のときだけ自動mergeしてよい。LEVEL 2・3は人間がmergeする。
 - 承認待ちのresumeと実装の再試行は分離し、Plannerより実行・判定の整合性を優先する。
 - 通常prototypeのLEVEL 1候補はpr-risk.jsonの明示的safe ruleで定義する。laneだけで承認数を減らさない。prototypeもLEVEL 1なら他と同じ条件で自動mergeしてよい。
 

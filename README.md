@@ -22,13 +22,13 @@ Rails API・Expo・React adminの3アプリは開発環境まで構築済みで�
 
 ## 通常の開発フロー
 
-人間が使うコマンドは次の4つ。`harness:approve`はHuman Gateで止まったときだけ、`harness:reverify`はレビュー待ちの間にmainが進んだときだけ使う。
+人間が使うコマンドは次の3つ。承認済みSBIは実装前Gateなしで実装・検証・AI Review・PR作成まで進む（#175）。`harness:reverify`はレビュー待ちの間にmainが進んだときだけ使う。
+承認済みSBIで決められない判断が出たときだけ、runはESCALATED / NEEDS_HUMAN_DECISIONで止まる。人間がSBIを更新・再承認し、新しいrunで再開する。
 
 ```sh
 pnpm planner:sbi https://github.com/<owner>/<repo>/issues/<PBI番号>     # PBI → SBI Issue [sbi][needs-review]
 # 人間がSBI Issueをレビューし、全ACのTrusted Acceptanceを登録してから ready にする
 pnpm harness:run https://github.com/<owner>/<repo>/issues/<SBI番号>     # 実装 → ローカル検証 → PR作成
-pnpm harness:approve https://github.com/<owner>/<repo>/issues/<SBI番号> --phase gate   # Human Gateのときだけ。承認後にHarnessが再開しPRを作る
 pnpm harness:reverify https://github.com/<owner>/<repo>/pull/<PR番号>  # mainが進んだときだけ。最新のmainをpullしてから実行する
 ```
 
@@ -59,12 +59,12 @@ fakeは認証・外部通信なしで、次の流れを実行する。
 ```text
 SBI → 意図的な誤実装 → Verifier FAIL
     → 修正 → Verifier PASS → Security PASS → Policy Review PASS
-    → Semantic Review（有効時のみ）→ Completion Judge → Execution DONE
+    → AI Review（fake adapter）→ Completion Judge → Execution DONE
     → Risk Classifier: LEVEL 2 → WAITING_FOR_HUMAN_REVIEW
 ```
 
 run/approve/resume/pr/demoは、人間かGitHub CIへ引き継いだ状態ならexit 0。PR作成済みでCI待ち・Review待ち、
-MERGE_ALLOWED、Riskが要求するHuman Gate待ち、PRを作らないrun（デモ等）のDONEが該当する。
+MERGE_ALLOWED、PRを作らないrun（デモ等）のDONEが該当する。AI Reviewが未接続・未PASSでBLOCKEDのrunはexit 2。
 FAILED・ESCALATED・REJECTED・CI以外の理由のBLOCKEDはexit 2、PR作成失敗・入力やCLI操作のエラーはexit 1。
 **Execution DONEはマージ承認ではない。** このサンプルはruntime変更のため既定LEVEL 2。
 承認を自動生成せず、実際のmergeも行わない。
@@ -75,13 +75,13 @@ FAILED・ESCALATED・REJECTED・CI以外の理由のBLOCKEDはexit 2、PR作成�
 | --- | --- |
 | apps/api・mobile・admin | Rails / Expo / Reactのアプリ |
 | packages/api-schema | API契約（OpenAPI）のSSOT |
-| .harness/config/harness.json | provider、閾値、Verifier Registry、Semantic Review設定 |
+| .harness/config/harness.json | provider、閾値、Verifier Registry |
 | .harness/state/sample-sbi.json | Gherkin、AC、許可ファイル、risk |
 | .harness/rules/policy.json | Human Gateと変更許可のポリシー |
 | .harness/rules/pr-risk.json | Default Risk、最低Risk、安全な降格候補 |
 | docs/security/ | 人間向けSecurity Requirements / PolicyのSSOT |
 | .harness/rules/security.json | Rule ID・検知・必須検証・Security最低Risk |
-| .harness/rules/human-gates.json | 事前承認が必要なSecurity rule IDへの参照 |
+| .harness/rules/human-gates.json | SBI承認で人間が判断するSecurity rule IDへの参照（実装前Gateではない） |
 | .harness/skills/implement.md | agentへの実装手順 |
 | .harness/skills/plan.md | PlannerへのPBI → SBI分割手順 |
 | .harness/skills/api-schema.md | API Schema PlannerへのAPI契約提案の手順 |
@@ -153,8 +153,10 @@ Policy Reviewerは、許可ファイルの存在・空ファイル・サイズ�
 Security Checkはsecurity.jsonとSBIから必要なSecurity Verifierを決めて実行する。
 秘密情報・禁止パターンの基本検査は全runで必須。Security条件は承認人数で上書きできない。
 
-Semantic Reviewは既定で無効。有効ならPASSが必須で、adapter未設定はFAIL。
-`runHarness` / `resumeRun`のsemanticReviewer引数が信頼するadapterの接続点。
+AI Review（Semantic Review）は全Risk Levelで必須（#175）。PASSでなければMERGE_ALLOWEDにもautoMergeEligibleにもならない。
+`runHarness` / `resumeRun` / `approveRun` / `reverifyPullRequest`のsemanticReviewer引数が信頼するadapterの接続点（本物のadapterは#187）。
+adapter未接続はNOT_CONFIGURED（実行は完了してもmerge判定は`ai_review_not_passed`でBLOCKED）、実行失敗・結果なし・PASS/FAIL以外はFAIL。
+fake adapterはfake provider（`harness:demo`・テスト）だけが選び、PRのmerge判定では数えない。設定で無効にはできない。
 返すstatusはPASS/FAIL、追加リスクはriskLevel=1/2/3で指定する。
 AIの判断はRiskを上げる方向にだけ使い、人間の承認人数には数えない。
 失敗結果は次iterationへ渡し、再実装→再検証→再レビューする。
@@ -167,7 +169,7 @@ Harnessは誰がどのデータを見られるか、PIIの定義、retention期�
 今回作成したSecurity文書は未決事項とRule IDの対応を示す最小テンプレート。
 
 security.jsonの各ルールはSEC-AUTH-001、SEC-RLS-001、SEC-PII-001などのIDで文書に紐付く。
-checkはrule ID、参照文書、事前GateのID一覧、Registryの整合性を検証する。
+checkはrule ID、参照文書、human-gates.jsonのID一覧、Registryの整合性を検証する。
 Security Impact Classifierは、パス、変更行、SBI、AC、明示的securityImpact、保護された設計を評価する。
 AuthN/AuthZ/RLS/PII/Secret/Migration/schema/role・permission/Security Config/CI/CD/Infrastructure/
 破壊的操作/削除・匿名化・retention/API認証・認可/PIIログを検知する初期ルールを用意している。
@@ -185,10 +187,10 @@ SBIで次のmetadataを指定できる。
 }
 ```
 
-Security-sensitiveな変更は事前Gate・最低LEVEL 3を強制する。
-Gate承認はそのSBIと検知した変更範囲に対するもの。agentが新しいSecurity影響を提案したら、
-適用前に止め、新しいSBI/承認を要求する。実装後の2人承認で事前Gateを代用できない。
-既存のgate.state=WAITING_FOR_HUMAN_GATEは維持し、approvalState=WAITING_FOR_HUMAN_APPROVALを併記する。
+Security-sensitiveな変更は最低LEVEL 3・必須Security Verifier・実装後の異なる2人以上のReviewを強制する。
+Security影響の判断はSBI承認で人間が行い、承認済みSBIに実装前Gateは置かない（#175）。`preImplementationGate: true`は
+「SBI承認で人間が判断するrule」を表す（Rule IDの対応を保つため名前は変えない）。承認はそのSBIと宣言した範囲に対するもの。
+agentが新しいSecurity影響を提案したら、適用前にNEEDS_HUMAN_DECISIONで止め、SBIの更新・再承認と新しいrunを求める。
 
 Security Verifierは次の状態を区別する。
 
@@ -212,7 +214,7 @@ rails-authz-testも接続済み。apps/api/spec/authorizationの*_spec.rbをロ�
 harness.jsonのsecurityVerifiersにid、workspace内directory、信頼するcommandsを登録して接続する。
 組み込みの必須検査は置き換えられない。実ツール本体の導入・本番の権限検証はまだ行っていない。
 
-Security / Human Gateの強制 → minimumRiskLevel → protected path → deterministic → AIによる上方提案
+Security / Human Gate riskの強制 → minimumRiskLevel → protected path → deterministic → AIによる上方提案
 → 明示的なLOW候補の順に優先する。DefaultはLEVEL 2。
 docs/securityとdocs/adrはdocs-onlyのLOW候補より保護ルールを優先する。
 
@@ -252,7 +254,7 @@ export時にも再検査し、旧run内の秘密ファイルから伏せるべ�
 
 | LEVEL | 必要な実装後Human Approval | autoMergeEligible |
 | --- | --- | --- |
-| 1 / LOW | 0人 | 必須チェック合格、Human Gateなし、Prototype以外の場合のみtrue |
+| 1 / LOW | 0人 | 必須チェックとAI ReviewがtestedSHAでPASS、Human Gate riskなし、Prototype以外の場合のみtrue |
 | 2 / MEDIUM | 1人 | false |
 | 3 / HIGH | 異なる2人以上 | false |
 
@@ -271,38 +273,28 @@ candidateLevelは降格候補、minimumLevelは下限。混在変更は最も高
 Human Gateなら最低LEVEL 3。AIのLOWで既定LEVEL 2や強制LEVEL 3を下げられない。
 AIが追加リスクを検出した場合は引き上げられる。分類根拠・該当パス・判定元を証跡に保存する。
 
-Merge Policy Judgeは別モジュール。Verifier・Policy・Security・Completionと、
-有効時のSemantic Reviewを必須条件として、SHAと承認を評価する。
+Merge Policy Judgeは別モジュール。Verifier・Policy・Security・CompletionとAI Reviewを
+全LEVELの必須条件として、SHAと承認を評価する。
 LEVEL 3はMerge Judge側でも最低2人を強制する。Human GateをLOWとして扱う入力も許可しない。
-`MERGE_ALLOWED`と`autoMergeEligible`は可否情報だけで、実際のmerge・Auto Mergeは実行しない。
+`MERGE_ALLOWED`と`autoMergeEligible`は可否情報だけで、Harnessは実際のmerge・Auto Mergeを実行しない。LEVEL 1で`autoMergeEligible`がtrueのときだけ、Harness外で自動mergeしてよい（AGENTS.md）。
 MERGED状態を生成するコードやGitHub merge APIは持たない。
 
-## Human GateとMerge Approvalは別の承認
+## SBI承認とMerge Approvalは別の承認
 
-- 実装前: gate.state = NOT_REQUIRED / WAITING_FOR_HUMAN_GATE / APPROVED / REJECTED
+- 実装開始: 人間によるSBI承認（`ready`）だけ。実装前Gate（implementation-gate）は無い（#175）。新しいrunのgate.stateは常にNOT_REQUIRED。
 - 実装: executionStatus = PENDING / IMPLEMENTING / VERIFYING / REVIEWING / JUDGING / FAILED / DONE / ESCALATED
-- 実装後: merge.state = NOT_ASSESSED / RISK_ASSESSING / WAITING_FOR_HUMAN_GATE / WAITING_FOR_HUMAN_REVIEW / MERGE_ALLOWED / REJECTED / BLOCKED / RETRYABLE
+- 実装後: merge.state = NOT_ASSESSED / RISK_ASSESSING / WAITING_FOR_HUMAN_REVIEW / MERGE_ALLOWED / REJECTED / BLOCKED / RETRYABLE
 
-Human Gate未充足ならMerge JudgeもWAITING_FOR_HUMAN_GATEを返す。
-ゲート対象のSBIはagentを一度も動かさず停止し、人間が着手範囲・設計を確認して承認する。
-ゲート承認のpurposeはimplementation-gate。baseline SHAとSBI/設計/Rulesのdigestに紐付ける。
+承認済みSBIで決められない判断が出たときは、summary.escalationとescalation.jsonに`decision: NEEDS_HUMAN_DECISION`と
+具体的な理由（code・detail）を残してESCALATEDで止まる。止まったrunは再開しない。人間がSBIを更新・再承認し、新しいrunで再開する。
+SBIを変えると新しいrunのinputsDigestが変わるため、旧runの承認・Evidenceは使われない。
 
 実装後の承認はpurpose=merge。現在HEAD SHAと検証・リスク・入力のdigestに紐付ける。
-**ゲート承認はマージ承認人数に一切カウントしない。** AI、重複人物、旧SHA、旧context、
-取り消された承認も人数に入れない。修正要求はREJECTEDにする。
-新しいcommitや入力変更で失効した承認は再利用しない。
-
-```sh
-# ゲート待ちのrunに、人間が着手を承認する。harness:runが表示したコマンドをそのまま実行する。
-# 承認を記録したあと、Harnessがrunを再開し、ローカル検証がPASSすればPRを作成する。
-pnpm harness:approve --run RUN_ID --phase gate
-
-# 着手前の修正要求・取り消し
-pnpm harness:approve --run RUN_ID --phase gate --decision request-changes
-```
+AI、重複人物、旧SHA、旧context、取り消された承認は人数に入れない。修正要求はREJECTEDにする。
+新しいcommitや入力変更で失効した承認は再利用しない。`harness:approve --phase gate`は廃止した。
 
 `harness:run`は、ローカル検証がPASSしてexecutionStatus=DONEになると、tested SHAをpushしてPRを作成する（GitHub PR mode）。
-FAILやゲート待ちのrunではPRを作成しない。fake provider（`harness:demo`）と、SBIを指定しないrun（既定のsample SBI）もPRを作成しない。
+FAILやESCALATEDのrunではPRを作成しない。fake provider（`harness:demo`）と、SBIを指定しないrun（既定のsample SBI）もPRを作成しない。
 GitHub PR modeでは、実装後の承認はGitHub Reviewで判定し、`--phase merge`は使わない。
 `harness:resume` / `harness:pr`は障害復旧・Harness保守用に残している。通常の操作では使わない。
 PRを作らないLocal mode（`--provider fake`など）では、`harness:approve --run RUN_ID --phase merge`で実装後の承認を記録する。
@@ -372,7 +364,7 @@ resume・PR作成・承認記録・cleanupは、schemaか署名の検証に失�
 機械集計用の観測データで、run基本情報、iteration、Verifier件数、Security、承認3種、Review、escalationを持つ。
 `durationMs`は開始から最終更新までのlifecycle経過時間で、人間の承認待ちを含む。実装・検証・判定だけの
 時間は`executionDurationMs`で見る。最初のIMPLEMENTING遷移から最後のexecution phase遷移までを測り、
-実装前のGate待ちは含めない。実装に入らず停止したrunではnull。
+実装に入らず停止したrunではnull。
 
 - Signal Collection（今回）: Harnessが各runのMetricsを保存するところまで。Completion / Risk / Merge Judgeは
   この値を読まない。壊れていても判定は変わらず、次のsaveで再生成する。
@@ -382,17 +374,19 @@ resume・PR作成・承認記録・cleanupは、schemaか署名の検証に失�
 ESCALATEDはsummary.escalation.codeとescalation.json.codeに機械集計可能なreasonCodeを持つ。
 人間向けのreason文はsummary.jsonとescalation.jsonにだけ残し、Metricsにはcodeだけを載せる。
 redactionは秘密値をマスクするがメールアドレス等のPIIは除去しないため、自由文をMetricsへ載せない。
-Reviewer名・prompt・agent応答・秘密値もMetricsに含めず、他のEvidenceと同じredactionを通す。Gateの拒否はescalationではなく各approvalのstateで追う。
+Reviewer名・prompt・agent応答・秘密値もMetricsに含めず、他のEvidenceと同じredactionを通す。
 
 | code | 発生点 |
 | --- | --- |
 | SPEC_AMBIGUOUS / DESIGN_DECISION_REQUIRED | SBIの曖昧・設計判断フラグ |
 | AGENT_ESCALATION | agentが人間の判断を要求 |
-| SECRET_PROPOSAL / NEW_SECURITY_SCOPE / NEW_HIGH_RISK | 適用前の提案内容を拒否 |
+| SECRET_PROPOSAL / NEW_SECURITY_SCOPE / NEW_HIGH_RISK | 適用前の提案内容を拒否。NEW_HIGH_RISKはSBIが宣言していないLEVEL 3だけ |
 | SECURITY_VERIFIER_NOT_CONFIGURED | 必須Security VerifierがNOT_CONFIGURED |
 | VERIFIER_NOT_CONFIGURED / CONSECUTIVE_FAILURE | 連続失敗。最終iterationに必須VerifierのNOT_CONFIGUREDがあれば前者 |
 | ITERATION_LIMIT | iteration上限 |
 | SCOPE_VIOLATION / LANE_ESCALATION | 許可範囲外のpath、prototype範囲の逸脱 |
+
+SPEC_AMBIGUOUS・DESIGN_DECISION_REQUIRED・AGENT_ESCALATION・NEW_SECURITY_SCOPE・NEW_HIGH_RISK・SCOPE_VIOLATION・LANE_ESCALATIONは、承認済みSBIで決められない判断として`decision: NEEDS_HUMAN_DECISION`を持つ。
 | SOURCE_CHANGED / WORKSPACE_CHANGED | 元リポジトリ・入力・worktreeの変化 |
 | UNKNOWN | 上記に分類できない実行時エラー |
 
@@ -487,7 +481,7 @@ Quality Judgeは決定的なルールで構造・認証認可・Security Impact�
 
 承認は`node tools/harness/cli.mjs api-schema-approve <Issue URL>`で署名付き台帳に記録し、Proposalのdigestとcommit SHAに紐づける。
 判定は`pnpm planner:api-schema-status <Issue URL>`。Issueの`api-schema-approved`ラベルは目印で、承認の正本ではない。
-Execution Harnessの実装前Gate・Merge Approvalとは別で、どちらの代わりにもならない。承認後に人間がpackages/api-schemaへ反映し、実装SBIを作る。
+Execution HarnessのSBI承認・Merge Approvalとは別で、どちらの代わりにもならない。承認後に人間がpackages/api-schemaへ反映し、実装SBIを作る。
 手順は[.ai/workflows/api-schema.md](.ai/workflows/api-schema.md)。
 
 承認済みOpenAPIのMock Serverは`pnpm api:mock <Issue URL>`で`127.0.0.1:4010`に起動する。承認済みProposalと`packages/api-schema/openapi.yaml`のdigestが一致するときだけ起動する。
@@ -532,13 +526,13 @@ LEVEL 3の保護ルールやAIによる引き上げは常に優先する。LEVEL
 PrototypeはLEVEL 1でMERGE_ALLOWEDになってもautoMergeEligibleはfalseで、merge実行はしない。
 
 認証・権限・PII・Secret/Credential・本番データ/API・Cognito User Pool・機密設定への影響は
-試作でもProduction/Securityへ昇格し、実装前Human Gate・LEVEL 3・必須Security検証を強制する。
+試作でもProduction/Securityへ昇格し、LEVEL 3・必須Security検証・実装後の2人以上のReviewを強制する。
 SBI.securityImpactで宣言し、既知の接続先はsecurityPatternsにも追加する。静的検出だけで全ての業務影響は推定できない。
 packagesへの変更を含むSBIも常にProduction。本番共有packageの検証を試作profileで省略できない。
 
 試作を本番へ移す場合は、新しいProduction SBIに`promotion: {"source":"prototypes/web"}`を設定する。
 本番で実装するかどうかは、そのSBI Issueのレビューと`ready`で人間が決める。試作の採用のために別のDesign Approval Gateは設けない（#155）。
-`promotion`はどの試作を採用したかの記録で、laneはProductionになり、通常のSBIと同じく実装前Human Gate（Riskが要求するとき）→apps配下で本番実装→Production検証→Merge Approval→MERGE_ALLOWEDと進む。
+`promotion`はどの試作を採用したかの記録で、laneはProductionになり、通常のSBIと同じくapps配下で本番実装→Production検証→Merge Approval→MERGE_ALLOWEDと進む。
 既存の本番SBI全てに試作を強制するものではない。試作の採用時にpromotionを宣言する。
 
 ## Git worktreeの保持と片付け

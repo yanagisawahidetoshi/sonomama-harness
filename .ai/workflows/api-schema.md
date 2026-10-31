@@ -47,7 +47,7 @@ API Schemaを利用する後続処理は、必ず`planner:api-schema-status`（`
 - 署名付き台帳に未撤回の承認（APPROVEの後に同じ承認者のREVOKEがない）がある間、Plannerは再生成しない。digest・commit・未commit/未追跡ファイルの有無は問わない。変更する場合は承認者が`--decision revoke`してから再実行する。
   REQUEST_CHANGESと未commitの変更はstatusのAPPROVEDを下げるが、再生成の許可には使わない。解除はREVOKEだけ。
 
-この承認はExecution Harnessの実装前Gate・Merge Approvalとは別の記録で、どれの代わりにもならない。
+この承認はSBI承認・Merge Approvalとは別の記録で、どれの代わりにもならない。
 
 ## Proposalの内容
 

@@ -6,9 +6,9 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { reviewApprovals, ciStatus, pullRequestBody } from './github-pr.mjs';
 import { mergeDecision } from './merge-policy.mjs';
-import { fixture, update, human, commitFixture, runFixture as runHarness } from './test-fixture.mjs';
+import { fixture, update, human, commitFixture, runFixture } from './test-fixture.mjs';
 import { githubMock } from './test-github.mjs';
-import { openPullRequest, resumeRun, runHarness as startRun, approveRun } from './index.mjs';
+import { openPullRequest, resumeRun, runHarness as harnessRun, approveRun } from './index.mjs';
 import { recordDecision } from './human-approvals.mjs';
 import { git } from './workspace.mjs';
 import { exists, readJson } from './io.mjs';
@@ -17,6 +17,10 @@ import { runLinks, verifySbiSource } from './sbi-source.mjs';
 import { loadImpact } from './impact.mjs';
 
 const head = 'a'.repeat(40), old = 'b'.repeat(40), base = 'd'.repeat(40);
+// A pull request is the production path, where the fake AI Review of the demo never counts (#175). These runs connect a trusted adapter as #187 will.
+const aiReview = async () => ({ adapter: 'test-adapter', status: 'PASS', reasons: [] });
+const runHarness = options => runFixture({ semanticReviewer: aiReview, ...options });
+const startRun = options => harnessRun({ semanticReviewer: aiReview, ...options });
 let nextId = 1;
 const review = (login, state, commit = head, type = 'User') => ({ id: nextId++, user: { login, type }, state, commit_id: commit });
 const run = (name, status, conclusion = null, id = nextId++, appId = 15368) => ({ id, name, status, conclusion, head_sha: head, app: { id: appId } });
@@ -123,7 +127,7 @@ describe('GitHub CI status', () => {
 });
 
 describe('Merge Policy Judge with GitHub PR state', () => {
-  const checks = ['verification', 'policy-review', 'security', 'completion'].map(id => ({ id, required: true, status: 'PASS' }));
+  const checks = ['verification', 'policy-review', 'security', 'completion', 'semantic-review'].map(id => ({ id, required: true, status: 'PASS' }));
   const securityVerification = { status: 'PASS', violations: [], requiredVerifiers: ['secret-scan'], checks: [{ id: 'secret-scan', required: true, status: 'PASS' }] };
   const github = (overrides = {}) => ({
     pullRequest: { number: 7, url: 'https://github.com/acme/app/pull/7', headSha: head, state: 'open', merged: false, testedShaMatches: true, baseRef: 'main', baseSha: base, remoteBaseSha: base, ...overrides.pullRequest },
@@ -131,7 +135,7 @@ describe('Merge Policy Judge with GitHub PR state', () => {
     reviews: { approvedHumans: [], changesRequested: false, changesRequestedBy: [], ...overrides.reviews },
   });
   const decide = (level, state, extra = {}) => mergeDecision({ risk: { level, requiredHumanApprovals: level === 3 ? 2 : level === 2 ? 1 : 0 }, checks, approvals: [], securityVerification,
-    headSha: head, contextDigest: 'context', gateApproved: true, humanGate: false, github: state, baseline: { ref: 'main', sha: base }, ...extra });
+    headSha: head, contextDigest: 'context', humanGate: false, github: state, baseline: { ref: 'main', sha: base }, ...extra });
 
   describe('given the tested SHA is the pull request head and CI passes', () => {
     it('when the risk is level 3 and two different humans approved then allows merge', () => {
@@ -301,6 +305,19 @@ describe('GitHub PR Adapter', () => {
         assert.equal(resumed.events.some(e => e.status === 'MERGED'), false);
       });
     }));
+    it('when the run was reviewed by the fake AI Review of the demo then the PR never reaches MERGE_ALLOWED even with CI and a human approval', () => fixture(async root => {
+      const run = await runFixture({ root, quiet: true });
+      assert.equal(run.iterations.at(-1).semanticReview.adapter, 'fake');
+      await withRemote(root, async ({ github }) => {
+        const { pullRequest } = await openPullRequest({ root, runId: run.id, quiet: true });
+        await succeed(github, run.headSha);
+        await reviewBy(github, pullRequest.number, 'alice', 'APPROVED', run.headSha);
+        const resumed = await resumeRun({ root, runId: run.id, quiet: true });
+        assert.equal(resumed.status, 'BLOCKED');
+        assert.ok(resumed.merge.reasons.includes('ai_review_not_passed'));
+        assert.equal(resumed.merge.autoMergeEligible, false);
+      });
+    }));
     it('when a commit is pushed to the PR after verification then resume blocks even though it was approved', () => fixture(async root => {
       const run = await runHarness({ root, quiet: true });
       await withRemote(root, async ({ github }) => {
@@ -449,47 +466,20 @@ describe('GitHub PR Adapter', () => {
     })));
   });
 
-  describe('given a harness:run stopped at the implementation gate', () => {
+  // #175: the approved SBI already classified its risks, so an unclassified risk raises the level but stops nothing before the PR.
+  describe('given harness:run of an approved SBI with a risk no rule classifies', () => {
     const good = 'export function greet(name) { return `こんにちは、${name?.trim() || "ゲスト"}さん`; }';
-    // An unclassified risk stops the run at the implementation gate without bringing in a security rule.
-    const gated = async root => {
+    const agent = async () => ({ files: [{ path: 'greeting.mjs', content: good }] });
+    it('when it runs then implements without an implementation gate, opens the PR and needs two humans', () => fixture(async root => {
       await update(root, sbiPath, s => s.risks = ['外部サービス連携']);
       await commitFixture(root);
-    };
-    const agent = async () => ({ files: [{ path: 'greeting.mjs', content: good }] });
-    it('when a human approves the gate then the Harness resumes and opens the PR without harness:resume or harness:pr', () => fixture(async root => {
-      await gated(root);
       await withRemote(root, async ({ github }) => {
         const run = await startRun({ root, quiet: true, provider: 'codex', agent, publish: true, sbiPath });
-        assert.equal(run.status, 'WAITING_FOR_HUMAN_GATE');
-        assert.deepEqual((await github.state()).pulls, []);
-        const approved = await approveRun({ root, runId: run.id, purpose: 'implementation-gate', identityProvider: human('Designer'), agent, quiet: true });
-        assert.equal(approved.gate.state, 'APPROVED');
-        assert.equal(approved.executionStatus, 'DONE');
+        assert.equal(run.gate.required, false);
+        assert.equal(run.executionStatus, 'DONE');
         const [pull] = (await github.state()).pulls;
-        assert.equal(pull.head.sha, approved.headSha);
-        assert.equal(approved.pullRequest.number, pull.number);
-      });
-    }));
-    it('when the human requests changes instead then the run stays stopped, the agent never runs and no PR is opened', () => fixture(async root => {
-      await gated(root);
-      await withRemote(root, async ({ github }) => {
-        const run = await startRun({ root, quiet: true, provider: 'codex', agent, publish: true, sbiPath });
-        let called = false;
-        const rejected = await approveRun({ root, runId: run.id, purpose: 'implementation-gate', decision: 'REQUEST_CHANGES', identityProvider: human('Designer'), agent: async () => { called = true; return agent(); }, quiet: true });
-        assert.equal(rejected.gate.state, 'REJECTED');
-        assert.equal(rejected.iterations.length, 0);
-        assert.equal(called, false);
-        assert.deepEqual((await github.state()).pulls, []);
-      });
-    }));
-    it('when an AI identity tries to approve then nothing is recorded or resumed', () => fixture(async root => {
-      await gated(root);
-      await withRemote(root, async ({ github }) => {
-        const run = await startRun({ root, quiet: true, provider: 'codex', agent, publish: true, sbiPath });
-        await assert.rejects(approveRun({ root, runId: run.id, purpose: 'implementation-gate', identityProvider: () => ({ id: 'agent', kind: 'ai', source: 'agent-json' }), agent, quiet: true }), /human/i);
-        assert.equal((await resumeRun({ root, runId: run.id, quiet: true, agent })).status, 'WAITING_FOR_HUMAN_GATE');
-        assert.deepEqual((await github.state()).pulls, []);
+        assert.equal(pull.head.sha, run.headSha);
+        assert.equal(run.merge.requiredApprovals, 2);
       });
     }));
   });
@@ -609,37 +599,38 @@ describe('GitHub PR Adapter', () => {
       assert.deepEqual(pulls.map(p => p.head.ref).sort(), [`harness/${first.id}`, `harness/${second.id}`].sort());
       assert.notEqual((await readJson(join(root, first.runDir, 'sbi-snapshot.json'))).runId, (await readJson(join(root, second.runDir, 'sbi-snapshot.json'))).runId);
     })));
-    it('when the Issue run stops at the gate then a human approves it by the Issue URL, without a RUN_ID, and the Harness opens the PR', () => fixture(root => withIssue(root, sbiIssue(['sbi', 'ready'], planned({ riskCandidate: 'L3' })), async ({ github }) => {
+    it('when the ready Issue is a level 3 candidate then the run opens the PR without an implementation gate', () => fixture(root => withIssue(root, sbiIssue(['sbi', 'ready'], planned({ riskCandidate: 'L3' })), async ({ github }) => {
       const run = await start(root);
-      assert.equal(run.status, 'WAITING_FOR_HUMAN_GATE');
-      const approved = await approveRun({ root, issueUrl, purpose: 'implementation-gate', identityProvider: human('Designer'), agent: agent(), quiet: true });
-      assert.equal(approved.id, run.id);
-      assert.equal(approved.executionStatus, 'DONE');
+      assert.equal(run.gate.required, false);
+      assert.equal(run.executionStatus, 'DONE');
+      assert.equal(run.risk.level, 3);
       assert.equal((await github.state()).pulls.length, 1);
     })));
+    // A run that does not publish waits for the merge decision of its Issue; harness:approve SBI_URL --phase merge finds it.
+    const unpublished = root => start(root, { publish: false });
     // .harness/state/runs/*.json is a projection anyone can edit. The run to approve is chosen from .harness/runs/<id>/summary.json and re-checked before the decision.
-    it('when the run projections are edited to make another run look like the one waiting for the Issue then the approval still goes to the run of the Issue', () => fixture(root => update(root, sbiPath, s => { s.risks = ['外部サービス連携']; }).then(() => withIssue(root, sbiIssue(['sbi', 'ready'], planned({ riskCandidate: 'L3' })), async () => {
-      const own = await start(root), other = await startRun({ root, quiet: true, provider: 'fake' });
-      assert.deepEqual([own.status, other.status], ['WAITING_FOR_HUMAN_GATE', 'WAITING_FOR_HUMAN_GATE']);
+    it('when the run projections are edited to make another run look like the one waiting for the Issue then the approval still goes to the run of the Issue', () => fixture(root => withIssue(root, sbiIssue(['sbi', 'ready'], planned({ riskCandidate: 'L3' })), async () => {
+      const own = await unpublished(root), other = await startRun({ root, quiet: true, provider: 'fake' });
+      assert.deepEqual([own.executionStatus, other.executionStatus], ['DONE', 'DONE']);
       await update(root, `.harness/state/runs/${other.id}.json`, s => { s.sbiIssue = { repo: 'acme/app', number: 7, url: issueUrl }; });
-      await update(root, `.harness/state/runs/${own.id}.json`, s => { s.gate.state = 'APPROVED'; delete s.sbiIssue; });
-      const approved = await approveRun({ root, issueUrl, purpose: 'implementation-gate', identityProvider: human('Designer'), agent: agent(), quiet: true });
+      await update(root, `.harness/state/runs/${own.id}.json`, s => { s.executionStatus = 'FAILED'; delete s.sbiIssue; });
+      const approved = await approveRun({ root, issueUrl, purpose: 'merge', identityProvider: human('Designer'), quiet: true });
       assert.equal(approved.id, own.id);
       assert.equal(await exists(join(root, '.harness/state/human', `${other.id}.json`)), false);
-    }))));
+    })));
     // summary.json is signed (#75). An edited summary is neither a candidate for the Issue URL nor resumable.
     const summaryOf = (root, run) => join(root, run.runDir, 'summary.json');
-    it('when the signed summary of another run is edited to name the Issue and wait at the gate then the approval still goes to the run of the Issue', () => fixture(root => update(root, sbiPath, s => { s.risks = ['外部サービス連携']; }).then(() => withIssue(root, sbiIssue(['sbi', 'ready'], planned({ riskCandidate: 'L3' })), async () => {
-      const own = await start(root), other = await startRun({ root, quiet: true, provider: 'fake' });
+    it('when the signed summary of another run is edited to name the Issue and wait for a merge decision then the approval still goes to the run of the Issue', () => fixture(root => withIssue(root, sbiIssue(['sbi', 'ready'], planned({ riskCandidate: 'L3' })), async () => {
+      const own = await unpublished(root), other = await startRun({ root, quiet: true, provider: 'fake' });
       await update(root, summaryOf(root, other).slice(root.length + 1), s => { s.sbiIssue = { repo: 'acme/app', number: 7, url: issueUrl }; });
-      const approved = await approveRun({ root, issueUrl, purpose: 'implementation-gate', identityProvider: human('Designer'), agent: agent(), quiet: true });
+      const approved = await approveRun({ root, issueUrl, purpose: 'merge', identityProvider: human('Designer'), quiet: true });
       assert.equal(approved.id, own.id);
       assert.equal(await exists(join(root, '.harness/state/human', `${other.id}.json`)), false);
-    }))));
+    })));
     it('when the signed summary of the waiting run is edited then approving by the Issue URL records nothing and names the run that failed verification', () => fixture(root => withIssue(root, sbiIssue(['sbi', 'ready'], planned({ riskCandidate: 'L3' })), async ({ github }) => {
-      const run = await start(root);
+      const run = await unpublished(root);
       await update(root, summaryOf(root, run).slice(root.length + 1), s => { s.reason = '手で書き換えた'; });
-      await assert.rejects(approveRun({ root, issueUrl, purpose: 'implementation-gate', identityProvider: human('Designer'), agent: agent(), quiet: true }),
+      await assert.rejects(approveRun({ root, issueUrl, purpose: 'merge', identityProvider: human('Designer'), quiet: true }),
         error => error.message.includes(run.id) && /integrity/.test(error.message));
       assert.equal(await exists(join(root, '.harness/state/human', `${run.id}.json`)), false);
       assert.deepEqual((await github.state()).pulls, []);
@@ -649,11 +640,11 @@ describe('GitHub PR Adapter', () => {
       await update(root, summaryOf(root, run).slice(root.length + 1), s => { s.sbiIssue = { repo: 'acme/app', number: 8, url: 'https://github.com/acme/app/issues/8' }; });
       await assert.rejects(resumeRun({ root, runId: run.id, quiet: true }), /run state integrity/);
     })));
-    it('when a decision for the Issue is recorded on a run of another SBI then it is refused before anything is recorded', () => fixture(root => update(root, sbiPath, s => { s.risks = ['外部サービス連携']; }).then(() => withIssue(root, sbiIssue(), async () => {
+    it('when a decision for the Issue is recorded on a run of another SBI then it is refused before anything is recorded', () => fixture(root => withIssue(root, sbiIssue(), async () => {
       const other = await startRun({ root, quiet: true, provider: 'fake' });
-      await assert.rejects(recordDecision({ root, runId: other.id, purpose: 'implementation-gate', issueUrl, identityProvider: human('Designer') }), /issues\/7/);
+      await assert.rejects(recordDecision({ root, runId: other.id, purpose: 'merge', issueUrl, identityProvider: human('Designer') }), /issues\/7/);
       assert.equal(await exists(join(root, '.harness/state/human', `${other.id}.json`)), false);
-    }))));
+    })));
     // The exit code is what a person or a script sees: only a failed run is non-zero. cli.mjs of the fixture is spawned with a codex stub on PATH.
     describe('when the commands are run from the CLI', () => {
       const cli = async (root, args, response = { files: [{ path: home, content: 'ホーム' }], escalation: null }) => {
@@ -675,20 +666,23 @@ describe('GitHub PR Adapter', () => {
         await mkdir(join(root, '.git/info'), { recursive: true });
         await appendFile(join(root, '.git/info/exclude'), 'node_modules\n');
       };
-      it('when harness:run SBI_URL opens the PR and only GitHub CI is pending then exits 0', () => fixture(root => linked(root).then(() => withIssue(root, sbiIssue(), async ({ github }) => {
+      // The CLI connects no AI Review adapter until #187, so the PR is opened but its merge decision stays blocked on AI Review.
+      it('when harness:run SBI_URL opens the PR without an AI Review adapter then names AI Review as the blocker and exits 2', () => fixture(root => linked(root).then(() => withIssue(root, sbiIssue(), async ({ github }) => {
         const { code, output } = await cli(root, ['run', issueUrl, '--provider', 'codex']);
-        assert.equal(code, 0, output);
+        assert.equal(code, 2, output);
         assert.equal((await github.state()).pulls.length, 1);
         assert.match(output, /Pull request: https:\/\/github.com\/acme\/app\/pull\//);
+        assert.match(output, /AI Review: NOT_CONFIGURED/);
       }))));
-      it('when harness:run SBI_URL stops at the gate as required, and harness:approve SBI_URL then opens the PR, then both exit 0', () => fixture(root => linked(root).then(() => withIssue(root, sbiIssue(['sbi', 'ready'], planned({ riskCandidate: 'L3' })), async ({ github }) => {
+      it('when harness:run SBI_URL of a level 3 Issue runs then it opens the PR without stopping at a gate', () => fixture(root => linked(root).then(() => withIssue(root, sbiIssue(['sbi', 'ready'], planned({ riskCandidate: 'L3' })), async ({ github }) => {
         const started = await cli(root, ['run', issueUrl, '--provider', 'codex']);
-        assert.equal(started.code, 0, started.output);
-        assert.match(started.output, /Human Gate: pnpm harness:approve https:\/\/github.com\/acme\/app\/issues\/7 --phase gate/);
-        assert.deepEqual((await github.state()).pulls, []);
-        const approved = await cli(root, ['approve', issueUrl, '--phase', 'gate']);
-        assert.equal(approved.code, 0, approved.output);
+        assert.doesNotMatch(started.output, /Human Gate/);
         assert.equal((await github.state()).pulls.length, 1);
+      }))));
+      it('when harness:approve asks for the removed implementation gate then refuses it', () => fixture(root => linked(root).then(() => withIssue(root, sbiIssue(), async () => {
+        const approved = await cli(root, ['approve', issueUrl, '--phase', 'gate']);
+        assert.equal(approved.code, 1, approved.output);
+        assert.match(approved.output, /--phase merge/);
       }))));
       it('when harness:run SBI_URL escalates because the agent writes outside the scope then exits 2 and opens no PR', () => fixture(root => linked(root).then(() => withIssue(root, sbiIssue(), async ({ github }) => {
         const { code, output } = await cli(root, ['run', issueUrl, '--provider', 'codex'], { files: [{ path: 'apps/admin-other/home.txt', content: 'ホーム' }], escalation: null });
@@ -696,9 +690,9 @@ describe('GitHub PR Adapter', () => {
         assert.deepEqual((await github.state()).pulls, []);
       }))));
     });
-    it('when two runs of the Issue wait at the gate then approving by the Issue URL refuses to guess and names both runs', () => fixture(root => withIssue(root, sbiIssue(['sbi', 'ready'], planned({ riskCandidate: 'L3' })), async () => {
-      const first = await start(root), second = await start(root);
-      await assert.rejects(approveRun({ root, issueUrl, purpose: 'implementation-gate', identityProvider: human('Designer'), quiet: true }),
+    it('when two runs of the Issue wait for a merge decision then approving by the Issue URL refuses to guess and names both runs', () => fixture(root => withIssue(root, sbiIssue(['sbi', 'ready'], planned({ riskCandidate: 'L3' })), async () => {
+      const first = await unpublished(root), second = await unpublished(root);
+      await assert.rejects(approveRun({ root, issueUrl, purpose: 'merge', identityProvider: human('Designer'), quiet: true }),
         error => error.message.includes(first.id) && error.message.includes(second.id));
     })));
   });
@@ -741,9 +735,8 @@ describe('GitHub PR Adapter', () => {
       });
     }));
     it('when execution has not completed then refuses to open a PR', () => fixture(async root => {
-      await update(root, sbiPath, s => s.risks = ['RLS']);
-      const run = await runHarness({ root, quiet: true });
-      assert.equal(run.status, 'WAITING_FOR_HUMAN_GATE');
+      const run = await runHarness({ root, quiet: true, agent: async () => ({ escalation: '仕様判断が必要', files: [] }) });
+      assert.notEqual(run.executionStatus, 'DONE');
       await withRemote(root, async ({ github }) => {
         await assert.rejects(openPullRequest({ root, runId: run.id, quiet: true }), /DONE/);
         assert.deepEqual((await github.state()).pulls, []);

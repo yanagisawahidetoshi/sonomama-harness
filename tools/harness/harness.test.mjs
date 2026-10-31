@@ -49,12 +49,15 @@ describe('Local Harness', () => {
   });
   describe('given unsafe or incomplete input', () => {
     for (const risk of ['AuthN', 'AuthZ', 'RLS', 'PII', 'Migration', 'ADR']) {
-      it(`when SBI declares ${risk} then stops before invoking any agent`, () => fixture(async root => {
+      // #175: the human approved this Risk with the SBI, so the run implements it and keeps level 3 for the review after implementation.
+      it(`when an approved SBI declares ${risk} then invokes the agent without an implementation gate and keeps level 3`, () => fixture(async root => {
         await update(root, '.harness/state/sample-sbi.json', s => s.risks = [risk]);
-        const run = await runHarness({ root, quiet: true, agent: async () => { throw new Error('must not run'); } });
-        assert.equal(run.status, 'WAITING_FOR_HUMAN_GATE');
-        assert.equal(run.iterations.length, 0);
-        assert.match(run.reason, /Human Gate/);
+        let called = false;
+        const run = await runHarness({ root, quiet: true, agent: async () => { called = true; return { escalation: 'stop after the first call', files: [] }; } });
+        assert.equal(called, true);
+        assert.equal(run.gate.required, false);
+        assert.equal(run.events.some(e => e.status === 'WAITING_FOR_HUMAN_GATE'), false);
+        assert.equal(run.riskPreflight.level, 3);
       }));
     }
     for (const flag of ['ambiguous', 'requiresDesignDecision']) {
@@ -193,9 +196,6 @@ describe('Exit code of a run command', () => {
     it('when every merge condition is satisfied then exits 0', () => {
       assert.equal(runExitCode(run({ status: 'MERGE_ALLOWED', merge: { reasons: ['all_conditions_satisfied'] } })), 0);
     });
-    it('when the run waits at the implementation gate as its Risk requires then exits 0', () => {
-      assert.equal(runExitCode(run({ executionStatus: 'PENDING', status: 'WAITING_FOR_HUMAN_GATE', gate: { state: 'WAITING_FOR_HUMAN_GATE' }, pullRequest: undefined })), 0);
-    });
     it('when a run that never publishes, such as harness:demo, is DONE and waits for review then exits 0', () => {
       assert.equal(runExitCode(run({ publish: false, status: 'WAITING_FOR_HUMAN_REVIEW', pullRequest: undefined })), 0);
     });
@@ -206,8 +206,8 @@ describe('Exit code of a run command', () => {
         assert.equal(runExitCode(run({ executionStatus, status: 'BLOCKED', pullRequest: undefined })), 2);
       });
     }
-    it('when a human requested changes at the gate then exits 2', () => {
-      assert.equal(runExitCode(run({ executionStatus: 'PENDING', status: 'WAITING_FOR_HUMAN_GATE', gate: { state: 'REJECTED' }, pullRequest: undefined })), 2);
+    it('when the run never started implementing then exits 2, since no implementation gate waits for a human', () => {
+      assert.equal(runExitCode(run({ executionStatus: 'PENDING', status: 'PENDING', gate: { required: false, state: 'NOT_REQUIRED' }, pullRequest: undefined })), 2);
     });
     it('when a reviewer requested changes on the PR then exits 2', () => {
       assert.equal(runExitCode(run({ status: 'REJECTED', merge: { reasons: ['github_changes_requested'] } })), 2);

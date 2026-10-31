@@ -74,7 +74,6 @@ export const configSchema = z.strictObject({
     isolation: z.enum(['container', 'compose', 'harness']).default('container'), network: z.boolean().default(false) }).superRefine(isolationRules)).default([]),
   // Untrusted verifier commands run in a Docker container; docker names the trusted CLI that starts it.
   isolation: z.strictObject({ docker: text }).default({ docker: 'docker' }),
-  semanticReview: z.strictObject({ enabled: z.boolean() }).default({ enabled: false }),
   // GitHub PR mode. requiredChecks are combined with the ruleset's required status checks of the base branch.
   github: z.strictObject({ remote: text, base: text, requiredChecks: z.array(text) }).default({ remote: 'origin', base: 'main', requiredChecks: ['harness'] }),
   verifiers: z.array(z.strictObject({ id: text, directory: z.union([z.literal('.'), relativePath]), marker: relativePath.optional(),
@@ -253,7 +252,7 @@ export const apiSchemaApprovalRecordSchema = z.strictObject({
   commitSha: z.string().regex(/^[0-9a-f]{40,64}$/), proposalDigest: z.string().regex(/^[0-9a-f]{64}$/), signature: text,
 });
 // The PBI Human Acceptance Gate is bound to the PBI and the evidence it confirms (validation evidence, or the merged implementation evidence).
-// It is separate from implementation-gate / merge / api-schema records and never substitutes for them.
+// It is separate from the SBI approval and merge / api-schema records and never substitutes for them.
 export const pbiAcceptanceRecordSchema = z.strictObject({
   id: text, purpose: z.literal('pbi-acceptance'), pbiUrl: z.url(), reviewer: text, kind: z.literal('human'), identitySource: text,
   decision: z.enum(['APPROVE', 'REQUEST_CHANGES', 'REVOKE']), decidedAt: z.iso.datetime(),
@@ -294,7 +293,9 @@ export const securityPolicySchema = z.strictObject({
     appliesTo: z.array(text).optional() })),
   secretPatterns: z.array(text).min(1), forbiddenPatterns: z.array(text), piiLogPatterns: z.array(text),
 }).refine(p => new Set(p.rules.map(r => r.id)).size === p.rules.length && new Set(p.verifiers.map(v => v.id)).size === p.verifiers.length, 'duplicate security rule/verifier');
-export const humanGatesSchema = z.strictObject({ version: z.literal(1), preImplementationRuleIds: z.array(text).min(1) });
+// preImplementationRuleIds keeps its name so that rule IDs stay matched with security.json and docs; since #175 it lists the rules a human
+// decides at SBI approval, not a gate before implementation.
+export const humanGatesSchema = z.strictObject({ version: z.literal(1), description: text.optional(), preImplementationRuleIds: z.array(text).min(1) });
 
 export const lanePolicySchema = z.strictObject({
   version: z.literal(1), prototypePaths: z.array(text).min(1), productionPaths: z.array(text).min(1),
@@ -335,7 +336,9 @@ export const runStateSchema = z.strictObject({
   executionSecurityAssessment: z.looseObject({ matchedRules: z.array(text), requiredVerifiers: z.array(text) }).optional(),
   riskPreflight: z.looseObject({ level: z.union([z.literal(1), z.literal(2), z.literal(3)]) }).optional(),
   risk: z.looseObject({ level: z.union([z.literal(1), z.literal(2), z.literal(3)]) }).optional(),
-  escalation: z.strictObject({ code: z.enum(escalationCodes), detail: z.string() }).optional(),
+  escalation: z.strictObject({ code: z.enum(escalationCodes), detail: z.string(), decision: z.literal('NEEDS_HUMAN_DECISION').optional() }).optional(),
+  // A Human Gate risk the approved SBI declared (#175): level 3 and two humans after implementation, never a stop before it.
+  humanGateRisk: z.boolean().optional(),
   // #147: Trusted Acceptance generated in the run from the approved spec; registrationSha is the commit that registered it.
   acceptance: z.strictObject({ mode: z.literal('generated'), specDigest: sha256, registrationSha: gitSha }).optional(),
   pullRequest: z.strictObject({ number: z.number().int().positive(), url: z.url(), branch: text, base: text, repository: text }).optional(),

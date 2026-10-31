@@ -7,9 +7,9 @@ import { checksPassed } from './verifier.mjs';
 const policy = JSON.parse(await readFile(new URL('../../.harness/rules/pr-risk.json', import.meta.url), 'utf8'));
 const file = (path, added = 'Simple documentation.', extra = {}) => ({ path, status: 'A', added, deleted: '', binary: false, ...extra });
 const risk = (files, extra = {}) => assessRisk({ files, metadata: {}, humanGate: false, ...extra }, policy);
-const checks = ['verification', 'policy-review', 'security', 'completion'].map(id => ({ id, required: true, status: 'PASS' }));
+const checks = ['verification', 'policy-review', 'security', 'completion', 'semantic-review'].map(id => ({ id, required: true, status: 'PASS' }));
 const approval = (reviewer, extra = {}) => ({ reviewer, kind: 'human', purpose: 'merge', decision: 'APPROVE', commitSha: 'a'.repeat(40), contextDigest: 'context', ...extra });
-const decide = (level, approvals = [], extra = {}) => mergeDecision({ risk: { level, requiredHumanApprovals: level === 3 ? 2 : level === 2 ? 1 : 0 }, checks, approvals, securityVerification: { status: 'PASS', violations: [], requiredVerifiers: ['secret-scan'], checks: [{ id: 'secret-scan', required: true, status: 'PASS' }] }, headSha: 'a'.repeat(40), contextDigest: 'context', gateApproved: true, humanGate: false, ...extra });
+const decide = (level, approvals = [], extra = {}) => mergeDecision({ risk: { level, requiredHumanApprovals: level === 3 ? 2 : level === 2 ? 1 : 0 }, checks, approvals, securityVerification: { status: 'PASS', violations: [], requiredVerifiers: ['secret-scan'], checks: [{ id: 'secret-scan', required: true, status: 'PASS' }] }, headSha: 'a'.repeat(40), contextDigest: 'context', humanGate: false, ...extra });
 
 describe('PR risk rules', () => {
   describe('given the default risk is medium', () => {
@@ -68,8 +68,9 @@ describe('Merge Policy Judge', () => {
       assert.equal(decide(1, [], { checks: checks.slice(1) }).decision, 'BLOCKED');
       assert.equal(decide(1, [], { checks: checks.map(c => c.id === 'security' ? { ...c, status: 'SKIP' } : c) }).decision, 'BLOCKED');
     });
-    it('when enabled semantic review is missing then blocks', () => assert.equal(decide(1, [], { semanticEnabled: true }).decision, 'BLOCKED'));
-    it('when a human gate has not been approved then waits for that separate gate', () => assert.equal(decide(3, [approval('A'), approval('B')], { humanGate: true, gateApproved: false }).decision, 'WAITING_FOR_HUMAN_GATE'));
+    it('when AI Review is missing then blocks at every level', () => {
+      for (const level of [1, 2, 3]) assert.equal(decide(level, [approval('A'), approval('B')], { checks: checks.filter(c => c.id !== 'semantic-review') }).decision, 'BLOCKED');
+    });
     it('when no real HEAD is available then blocks', () => assert.equal(decide(1, [], { headSha: null }).decision, 'BLOCKED'));
   });
 });
@@ -93,7 +94,7 @@ describe('Protected architecture and data changes', () => {
 describe('Merge gate precedence', () => {
   describe('given an inconsistent LOW classifier response', () => {
     it('when Human Gate is true then still requires at least two post-implementation humans', () => {
-      const result = decide(1, [], { humanGate: true, gateApproved: true });
+      const result = decide(1, [], { humanGate: true });
       assert.equal(result.requiredApprovals, 2);
       assert.equal(result.decision, 'WAITING_FOR_HUMAN_REVIEW');
       assert.equal(result.autoMergeEligible, false);

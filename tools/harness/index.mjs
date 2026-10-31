@@ -9,9 +9,10 @@ import { runAgent, makePrompt, providerCommand } from './agents/index.mjs';
 import { verify, checksPassed } from './verifier.mjs';
 import { review } from './reviewer.mjs';
 import { judge } from './completion-judge.mjs';
-import { humanGate, classifyEscalation, mergeFailure } from './escalation.mjs';
+import { humanGate, classifyEscalation, mergeFailure, needsHumanDecision } from './escalation.mjs';
+import { runAiReview } from './ai-review.mjs';
 import { assessRisk } from './risk-classifier.mjs';
-import { mergeDecision, validHumanApprovals } from './merge-policy.mjs';
+import { mergeDecision } from './merge-policy.mjs';
 import { authenticatedRecords, recordDecision, waitsForIssue } from './human-approvals.mjs';
 import { classifySecurity, verifySecurity, combineSecurity, securityPassed } from './security-enforcement.mjs';
 import { withEvidenceProtection, redact, redactText, hasSecret, assertSafeInput, isSecretPath } from './evidence-protection.mjs';
@@ -45,12 +46,16 @@ function controller(root, summary, quiet) {
     await record(status, detail, phase);
   };
   // After Execution DONE an escalation stops only the merge lifecycle; executionStatus stays DONE.
+  // A decision the approved SBI cannot settle (#175) is NEEDS_HUMAN_DECISION: the human updates the SBI, approves it again and starts a new run.
   const escalate = async (reason, code = classifyEscalation(reason)) => {
     const done = summary.executionStatus === 'DONE';
+    const decision = needsHumanDecision(code) ? { decision: 'NEEDS_HUMAN_DECISION' } : {};
     summary.reason = reason;
-    summary.escalation = { code, detail: reason };
+    summary.escalation = { code, detail: reason, ...decision };
     summary.merge = { ...summary.merge, state: 'BLOCKED', decision: 'BLOCKED', autoMergeEligible: false, ...(done ? { failure: { code, retryable: false, detail: reason } } : {}) };
-    await json(join(directory, 'escalation.json'), { reason, code, action: '人間が原因を確認して新しいrunを開始してください。mergeは実行しません。' });
+    await json(join(directory, 'escalation.json'), { reason, code, ...decision, action: decision.decision
+      ? '承認済みSBIでは決められない判断です。人間が判断し、SBIを更新し、再承認後に新しいrunで再開してください。このrunは再開せず、mergeは実行しません。'
+      : '人間が原因を確認して新しいrunを開始してください。mergeは実行しません。' });
     if (done) await record('ESCALATED', reason, 'merge'); else await transition('ESCALATED', reason);
     return summary;
   };
@@ -66,19 +71,11 @@ function controller(root, summary, quiet) {
 function metadata(sbi) {
   return { id: sbi.id, title: sbi.title, description: sbi.description, risks: sbi.risks, acceptanceCriteria: sbi.acceptanceCriteria, securityImpact: sbi.securityImpact, requiredSecurityRules: sbi.requiredSecurityRules, requiredVerifiers: sbi.requiredVerifiers, minimumRiskLevel: sbi.minimumRiskLevel };
 }
-async function resolveGate(root, summary) {
-  if (!summary.gate.required) return true;
-  const records = await authenticatedRecords(root, summary.id);
-  {
-    const { approvals, rejected } = validHumanApprovals(records, { purpose: 'implementation-gate', headSha: summary.gate.headSha, contextDigest: summary.gate.contextDigest });
-    summary.gate.state = rejected ? 'REJECTED' : approvals.length ? 'APPROVED' : 'WAITING_FOR_HUMAN_GATE';
-    summary.gate.reviewers = approvals.map(a => a.reviewer);
-    summary.gate.approvalState = summary.gate.state === 'WAITING_FOR_HUMAN_GATE' ? 'WAITING_FOR_HUMAN_APPROVAL' : summary.gate.state;
-  }
-  const { directory } = runPaths(root,summary.id);
-  await json(join(directory,'human-gate.json'),summary.gate);
-  return summary.gate.state === 'APPROVED';
-}
+// #175: an approved SBI starts implementing without an implementation gate. Only a run an older Harness stopped at that gate keeps it,
+// and such a run never resumes (resumeProtected). A gate approved before execution still counts for that run's completed execution.
+const gateCleared = summary => !summary.gate.required || summary.gate.state === 'APPROVED';
+// A Human Gate risk the approved SBI declared keeps level 3 and two humans after implementation. Runs from before #175 kept it as gate.required.
+const humanGateRisk = summary => summary.humanGateRisk ?? summary.gate.required;
 // PR mode reads GitHub on every assessment. A read failure blocks; it never reuses an earlier GitHub state or escalates the run.
 async function readGitHub(root, summary, inputs, github) {
   if (!summary.pullRequest) return null;
@@ -111,7 +108,7 @@ async function assessMerge(root, summary, inputs, quiet, github = githubPrCli) {
   // Each assessment starts from the execution's assessment, so a snapshot verified earlier but not now cannot keep a lower level.
   summary.securityAssessment = combineSecurity(summary.executionSecurityAssessment ?? summary.securityAssessment, classifySecurity({ files: assessed, sbi: inputs.sbi }, inputs.securityPolicy));
   await json(join(directory, 'security-assessment.json'), { ...summary.securityAssessment, headSha: summary.headSha });
-  summary.risk = assessRisk({ files: assessed, metadata: metadata(inputs.sbi), humanGate: summary.gate.required, aiRisk: last.semanticReview?.riskLevel ?? null, securityAssessment: summary.securityAssessment, lane:summary.lane }, inputs.riskPolicy);
+  summary.risk = assessRisk({ files: assessed, metadata: metadata(inputs.sbi), humanGate: humanGateRisk(summary), aiRisk: last.semanticReview?.riskLevel ?? null, securityAssessment: summary.securityAssessment, lane:summary.lane }, inputs.riskPolicy);
   await json(join(directory, 'risk-assessment.json'), { ...summary.risk, phase: 'post-execution', headSha: summary.headSha, inputsDigest: summary.inputsDigest });
   const securityVerification = last.securityVerification;
   if (summary.securityAssessment.requiredVerifiers.some(id => !securityVerification.requiredVerifiers.includes(id))) throw new Error('Required security checks changed; re-verification required');
@@ -120,16 +117,15 @@ async function assessMerge(root, summary, inputs, quiet, github = githubPrCli) {
     { id: 'policy-review', required: true, status: last.review.status },
     last.security,
     { id: 'completion', required: true, status: last.completion ? 'PASS' : 'FAIL' },
-    ...(inputs.config.semanticReview.enabled ? [{ id: 'semantic-review', required: true, status: last.semanticReview.status }] : []),
+    { id: 'semantic-review', required: true, status: last.semanticReview?.enabled === true ? last.semanticReview.status : 'NOT_RUN', adapter: last.semanticReview?.adapter ?? null },
     ...(summary.kind === 'reverify' ? [await reverifyLinkCheck(workspace, summary)] : []),
   ];
   const contextDigest = digest({ headSha: summary.headSha, workspaceDigest: summary.workspaceDigest, inputsDigest: summary.inputsDigest, risk: summary.risk, checks, iterations: summary.iterations });
   const records = await authenticatedRecords(root, summary.id);
-  const gateApproved = await resolveGate(root, summary);
   const githubPr = await readGitHub(root, summary, inputs, github);
   if (githubPr) await json(join(directory, 'github-state.json'), redact({ ...githubPr, readAt: new Date().toISOString(), source: 'GitHub API projection; GitHub is the source of truth' }));
   summary.merge = mergeDecision({ risk: summary.risk, checks, approvals: records, headSha: summary.headSha, contextDigest,
-    humanGate: summary.gate.required, gateApproved, securityVerification, semanticEnabled: inputs.config.semanticReview.enabled, lane:summary.lane, github: githubPr,
+    humanGate: humanGateRisk(summary), securityVerification, lane:summary.lane, github: githubPr,
     baseline: summary.pullRequest ? { ref: summary.pullRequest.base, sha: summary.baselineSha } : null });
   await json(join(directory, 'approvals.json'), { headSha: summary.headSha, approvals: records, source: 'authenticated local ledger; this file is not an authority' });
   await json(join(directory, 'merge-decision.json'), { ...summary.merge, checks });
@@ -172,7 +168,7 @@ async function verifyHead({ root, summary, inputs, result, iterDir, iteration, r
   const changed = [...new Set([...files.filter(f => f.status !== 'D').map(f => f.path), ...sbi.allowedFiles])].filter(path => path !== snapshot).map(path => ({ path }));
   result.securityVerification = redact(await verifySecurity({ workspace, sbi, assessment: summary.securityAssessment, policy: securityPolicy, config, headSha:summary.headSha, verification:result.verification, changed, requireTargets: true }));
   result.security = { id:'security',required:true,status:securityPassed(result.securityVerification)?'PASS':'FAIL' };
-  result.gateApproved = await resolveGate(root,summary);
+  result.gateApproved = gateCleared(summary);
   await json(join(directory,'security-assessment.json'),{...summary.securityAssessment,headSha:summary.headSha});
   await json(join(directory,'security-verification.json'),result.securityVerification);
   await json(join(iterDir,'security-verification.json'),result.securityVerification);
@@ -186,10 +182,7 @@ async function verifyHead({ root, summary, inputs, result, iterDir, iteration, r
     await transition('REVIEWING', `iteration ${iteration}`);
     result.review = redact(await reviewer({ root, workspace, sbi, rules, verification: result.verification, files }));
     await json(join(iterDir, 'review.json'), result.review);
-    if (config.semanticReview.enabled) {
-      result.semanticReview = semanticReviewer ? { ...await semanticReviewer({ root, workspace, sbi, verification: result.verification }), enabled: true } : { enabled: true, status: 'FAIL', reasons: ['semantic reviewer is enabled but no trusted adapter is configured'] };
-    } else result.semanticReview = { enabled: false, status: 'SKIP', reason: 'disabled by configuration' };
-    result.semanticReview = redact(result.semanticReview);
+    result.semanticReview = redact(await runAiReview({ provider: summary.provider, semanticReviewer, input: { root, workspace, sbi, verification: result.verification } }));
     await json(join(iterDir, 'semantic-review.json'), result.semanticReview);
     await transition('JUDGING', `iteration ${iteration}`);
     result.completion = judge(result, sbi);
@@ -200,29 +193,15 @@ async function verifyHead({ root, summary, inputs, result, iterDir, iteration, r
   await record();
   return null;
 }
-// True while the implementation gate has not been approved; the run then waits in that phase.
-async function waitForGate(root, summary, quiet) {
-  const { directory } = runPaths(root, summary.id);
-  const { transition } = controller(root, summary, quiet);
-  if (!await resolveGate(root, summary)) {
-    summary.reason = summary.gate.reason;
-    await json(join(directory, 'human-gate.json'), summary.gate);
-    await transition(summary.gate.state, summary.reason, 'implementation-gate');
-    return true;
-  }
-  await json(join(directory, 'human-gate.json'), summary.gate);
-  return false;
-}
 async function executeLoop({ root, summary, inputs, quiet, agent = runAgent, reviewer = review, semanticReviewer }) {
   const { config, rules, sbi, riskPolicy, securityPolicy } = inputs;
   const { directory, workspace } = runPaths(root, summary.id);
   const { transition, escalate } = controller(root, summary, quiet);
-  if (await waitForGate(root, summary, quiet)) return summary;
   let feedback = null;
   for (let iteration = 1; iteration <= config.maxIterations; iteration++) {
     const iterDir = join(directory, `iteration-${iteration}`);
     await mkdir(iterDir);
-    const result = { iteration, agent: null, verification: null, security: null, securityVerification: null, gateApproved: false, review: null, semanticReview: { enabled: config.semanticReview.enabled, status: 'NOT_RUN' }, completion: false };
+    const result = { iteration, agent: null, verification: null, security: null, securityVerification: null, gateApproved: false, review: null, semanticReview: { enabled: true, status: 'NOT_RUN' }, completion: false };
     summary.iterations.push(result);
     await evidenceText(join(iterDir, 'agent.log'), 'Agent started\n');
     await evidenceText(join(iterDir, 'verify.log'), 'NOT_RUN\n');
@@ -261,12 +240,13 @@ async function executeLoop({ root, summary, inputs, quiet, agent = runAgent, rev
       const newRules = proposedSecurity.matchedRules.filter(id => !summary.securityAssessment.matchedRules.includes(id));
       if (newRules.length) {
         await json(join(iterDir,'proposed-security.json'),proposedSecurity);
-        await record(); return escalate('New security scope detected before applying code; update SBI and obtain a new Human Gate', 'NEW_SECURITY_SCOPE');
+        await record(); return escalate(`New security scope before applying code: ${newRules.join(', ')} is not in the approved SBI and needs a human decision; update the SBI, get it approved again and start a new run`, 'NEW_SECURITY_SCOPE');
       }
-      const proposed = assessRisk({ files: proposedFiles, metadata: metadata(sbi), humanGate: summary.gate.required, securityAssessment: proposedSecurity, lane:classifyLane(proposedFiles,sbi,inputs.lanePolicy) }, riskPolicy);
-      if (proposed.level === 3 && !summary.gate.required) {
+      // Only a level 3 the approved SBI did not declare is a new decision; a level 3 SBI implements its own high-risk change.
+      const proposed = assessRisk({ files: proposedFiles, metadata: metadata(sbi), humanGate: humanGateRisk(summary), securityAssessment: proposedSecurity, lane:classifyLane(proposedFiles,sbi,inputs.lanePolicy) }, riskPolicy);
+      if (proposed.level === 3 && summary.riskPreflight.level < 3) {
         await json(join(iterDir, 'proposed-risk.json'), proposed);
-        await record(); return escalate('New high risk detected before applying code; declare the risk in SBI and obtain an implementation gate in a new run', 'NEW_HIGH_RISK');
+        await record(); return escalate(`New high risk before applying code: ${proposed.reasons.filter(r => r !== 'default_medium').join(', ')} goes beyond the level ${summary.riskPreflight.level} the approved SBI declared; update the SBI, get it approved again and start a new run`, 'NEW_HIGH_RISK');
       }
       for (const file of response.files) { const path = join(workspace, file.path); await mkdir(dirname(path), { recursive: true }); await writeFile(path, file.content); }
       // A run from an SBI Issue commits its snapshot and links itself in the trailers, as the CI SBI source check requires.
@@ -301,7 +281,8 @@ async function executeLoop({ root, summary, inputs, quiet, agent = runAgent, rev
   }
   return escalate(`iteration limit (${config.maxIterations}) reached`, 'ITERATION_LIMIT');
 }
-// Lane, Security, Risk and the gates before any code is verified, from the SBI scope as the workspace holds it now.
+// Lane, Security and Risk before any code is verified, from the SBI scope as the workspace holds it now. A human approved the SBI with its
+// Risk, Security Impact and scope (#175), so nothing here stops the run except a decision the SBI leaves open (ambiguous / design decision).
 async function assessPreflight(root, summary, inputs, quiet) {
   const { rules, sbi, riskPolicy, securityPolicy, lanePolicy } = inputs;
   const { directory, workspace } = runPaths(root, summary.id);
@@ -318,15 +299,11 @@ async function assessPreflight(root, summary, inputs, quiet) {
   summary.securityAssessment = classifySecurity({files:preflightFiles,sbi},securityPolicy);
   await json(join(directory,'security-assessment.json'),{...summary.securityAssessment,phase:'preflight',headSha:baselineSha});
   await json(join(directory,'security-verification.json'),{status:'NOT_RUN',requiredVerifiers:summary.securityAssessment.requiredVerifiers,checks:[],violations:[]});
-  const gateReason = humanGate(sbi, rules) || (summary.securityAssessment.requiresPreImplementationGate ? 'Human Gate: Security rule requires approval before implementation' : null);
-  const preflight = assessRisk({ files: preflightFiles, metadata: metadata(sbi), humanGate: Boolean(gateReason), securityAssessment:summary.securityAssessment, lane:summary.lane }, riskPolicy);
+  // A Human Gate risk or a security rule that needs a human decision was decided at SBI approval; it keeps level 3 and two humans after implementation.
+  summary.humanGateRisk = Boolean(humanGate(sbi, rules) || summary.securityAssessment.requiresPreImplementationGate);
+  const preflight = assessRisk({ files: preflightFiles, metadata: metadata(sbi), humanGate: summary.humanGateRisk, securityAssessment:summary.securityAssessment, lane:summary.lane }, riskPolicy);
   summary.riskPreflight = preflight;
-  if (gateReason || preflight.level === 3) {
-    summary.gate = { required: true, state: 'WAITING_FOR_HUMAN_GATE', approvalState:'WAITING_FOR_HUMAN_APPROVAL', reason: gateReason || `Human Gate: ${preflight.reasons.join(', ')}`,
-      headSha: baselineSha, contextDigest: digest({ inputsDigest: summary.inputsDigest, baselineSha, allowedFiles: sbi.allowedFiles, allowedDirs: sbi.allowedDirs, reasons: preflight.reasons, securityAssessment:summary.securityAssessment }) };
-    summary.reason = summary.gate.reason;
-    await json(join(directory, 'risk-preflight.json'), preflight);
-  }
+  await json(join(directory, 'risk-preflight.json'), preflight);
   await json(join(directory, 'risk-assessment.json'), { ...preflight, phase: 'preflight', headSha: baselineSha });
   await json(join(directory, 'approvals.json'), { headSha: baselineSha, approvals: [], source: 'authenticated local ledger' });
   await json(join(directory, 'merge-decision.json'), summary.merge);
@@ -458,7 +435,8 @@ async function resumeProtected({ root, runId, quiet = false, agent = runAgent, r
       summary = loaded.summary;
       if (summary.kind === 'reverify') return await resumeReverify({ root, summary, inputs: loaded.inputs, quiet, reviewer, semanticReviewer, github });
       if (summary.executionStatus === 'DONE') return await settleMerge(root, summary, loaded.inputs, quiet, github);
-      if (summary.executionStatus !== 'PENDING' || summary.iterations.length) throw new Error('Only an unstarted implementation gate or completed execution can resume; start a new run');
+      if (summary.gate.required && summary.gate.state !== 'APPROVED') throw new Error('This run waits for an implementation gate, which no longer exists (#175); approve the SBI and start a new run');
+      if (summary.executionStatus !== 'PENDING' || summary.iterations.length) throw new Error('Only an unstarted run or a completed execution can resume; start a new run');
       return await executeLoop({ root, summary, inputs: loaded.inputs, quiet, agent, reviewer, semanticReviewer });
     } catch (error) {
       summary ??= stored;
@@ -498,7 +476,7 @@ async function publishProtected({ root, runId, quiet = false, github = githubPrC
   return resumeProtected({ root, runId, quiet, github });
 }
 
-// Only a run started to publish, whose execution is DONE and which has no PR yet, is pushed. A FAIL or a waiting gate never opens a PR.
+// Only a run started to publish, whose execution is DONE and which has no PR yet, is pushed. A FAIL or an escalation never opens a PR.
 async function continueToPullRequest(options, summary) {
   if (summary.kind === 'reverify') return continueReverify(options, summary);
   if (!summary.publish || summary.executionStatus !== 'DONE' || summary.pullRequest) return summary;
@@ -510,11 +488,10 @@ export async function runHarness(options) {
   return withEvidenceProtection(root, async () => continueToPullRequest({...options,root}, await runProtected({...options,root})), { extensions: options.redactionExtensions || [] });
 }
 // Exit code of harness:run / approve / resume / pr / demo. 0: the run stopped where a human or GitHub CI takes over
-// (PR opened and waiting for CI or Review, MERGE_ALLOWED, a gate the Risk requires, or a DONE run that never publishes). 2: the run failed or needs recovery.
+// (PR opened and waiting for CI or Review, MERGE_ALLOWED, or a DONE run that never publishes). 2: the run failed or needs recovery.
 // A run that could not open its PR throws, and the CLI exits 1.
 export function runExitCode(run) {
   if (run.status === 'MERGE_ALLOWED') return 0;
-  if (run.executionStatus === 'PENDING') return run.gate?.state === 'WAITING_FOR_HUMAN_GATE' ? 0 : 2;
   if (run.executionStatus !== 'DONE' || (run.publish && !run.pullRequest)) return 2;
   const waitingForCi = Boolean(run.pullRequest) && run.status === 'BLOCKED' && run.merge?.reasons?.length > 0 && run.merge.reasons.every(r => r === 'required_ci_not_passed');
   return run.status === 'WAITING_FOR_HUMAN_REVIEW' || waitingForCi ? 0 : 2;
@@ -598,11 +575,10 @@ async function resumeReverify({ root, summary, inputs, quiet, reviewer, semantic
 async function reverifyExecute({ root, summary, inputs, quiet, reviewer = review, semanticReviewer }) {
   const { directory, workspace } = runPaths(root, summary.id);
   const { transition, escalate } = controller(root, summary, quiet);
-  if (await waitForGate(root, summary, quiet)) return summary;
   const iteration = 1, iterDir = join(directory, `iteration-${iteration}`);
   await mkdir(iterDir);
   const result = { iteration, agent: { status: 'SKIPPED', reason: 'harness:reverify never calls the implementation agent' }, verification: null, security: null, securityVerification: null, gateApproved: false, review: null,
-    semanticReview: { enabled: inputs.config.semanticReview.enabled, status: 'NOT_RUN' }, completion: false, headSha: summary.headSha };
+    semanticReview: { enabled: true, status: 'NOT_RUN' }, completion: false, headSha: summary.headSha };
   summary.iterations.push(result);
   const record = async () => { await json(join(iterDir, 'result.json'), result); await saveRun(root, summary); };
   try {
@@ -758,7 +734,7 @@ async function reverifyProtected({ root, pullUrl, quiet = false, reviewer = revi
   if (verified) return { ...verified, alreadyVerified: true };
   const existing = await existingReverify(root, { pullRequest: { number: ref.number, repository: repository.name }, parentRunId, baselineSha, pullHead });
   if (existing) {
-    // A waiting gate is re-checked and an updated PR is re-assessed; a verified candidate continues to publish; a stopped run stays stopped.
+    // An unstarted run is continued and an updated PR is re-assessed; a verified candidate continues to publish; a stopped run stays stopped.
     const stored = await readRunState(root, existing);
     return stored.executionStatus === 'PENDING' || stored.reverify.publish === 'PR_UPDATED' ? resumeProtected({ root, runId: existing, quiet, reviewer, semanticReviewer, github }) : stored;
   }
