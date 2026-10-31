@@ -61,18 +61,20 @@ try {
       const result = await verify({ root, workspace: root, config: config(), sbi: sbi([]), files: files(paths.api), only: new Set(['api-contract']), selected: new Map([['api-contract', true]]) });
       assert.notEqual(result.status, 'PASS');
     }],
-    ['CI-AC-15', 'Given a Harness change, When analysing, Then the Full Gate runs harness:test and harness:demo --full', () => {
+    ['CI-AC-15', 'Given a Harness change, When analysing, Then the Full Gate runs harness:test and the self-repair demo', () => {
       for (const path of ['tools/harness/verifier.mjs', '.harness/config/harness.json', '.harness/verification/admin-env.mjs', '.harness/rules/pr-risk.json']) {
         assert.equal(analyzeImpact({ config: config(), sbis: [], files: files(path) }).fullGate, true, path);
       }
       assert.match(job('harness-test'), /full_gate == 'true'/);
       assert.match(job('harness-test'), /pnpm harness:test/);
       assert.match(job('harness-demo'), /full_gate == 'true'/);
-      assert.match(job('harness-demo'), /pnpm harness:demo --full/);
+      assert.match(job('harness-demo'), /pnpm harness:demo \$HARNESS_DEMO_SCOPE/);
+      assert.match(workflow(), /HARNESS_DEMO_SCOPE: \$\{\{ github\.event_name != 'pull_request' && '--full' \|\| '' \}\}/);
     }],
     ['CI-AC-16', 'Given a normal SBI, When CI runs, Then the Harness E2E is not run serially every time', () => {
       assert.equal(analyzeImpact({ config: config(), sbis: [sbi(['admin'])], files: files(paths.admin) }).fullGate, false);
       for (const name of ['impact', 'verifiers', 'harness']) assert.doesNotMatch(job(name), /harness:(test|demo)/, name);
+      assert.doesNotMatch(job('harness-demo'), /--full/);
     }],
     ['CI-AC-17', 'Given the verifier definitions, When CI selects them, Then the workflow keeps no copy of verifier ids or commands', () => {
       for (const { id, commands } of config().verifiers) {

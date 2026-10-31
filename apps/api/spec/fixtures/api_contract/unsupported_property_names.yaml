@@ -1,0 +1,25 @@
+# Properties named like data keywords (default, example, enum) are schemas too, so their unsupported features count.
+openapi: 3.1.0
+info:
+  title: Unsupported features under data-like property names
+  version: "1"
+paths:
+  /settings:
+    get:
+      responses:
+        "200":
+          description: Settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Settings"
+components:
+  schemas:
+    Settings:
+      type: object
+      properties:
+        default:
+          type: string
+          format: settings-code
+        example:
+          $ref: "examples.yaml#/Example"
