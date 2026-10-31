@@ -11,7 +11,7 @@
    承認済みSBIは、LEVEL 3・Security rule・protected pathでも実装前Gateなしで実装を始める（#175）。Risk・Security Impact・想定変更範囲はSBI承認で人間が確認済みとみなす。
 4. 失敗は修正→再検証。連続3回失敗などはESCALATED。承認済みSBIで決められない判断（範囲外の変更、新しいSecurity影響、SBIが宣言していないLEVEL 3、仕様・Design・API契約・ADRの判断）は、
    ESCALATED / NEEDS_HUMAN_DECISIONとして具体的な理由（escalation.json）を残して止まる。人間が判断してSBIを更新・再承認し、新しいrunで再開する。止まったrunは再開しない。
-5. 検証が通ると、AI Review（Semantic Review）を全LEVELで実行する。CLIはrunのprovider（claude / codex）でhead SHAとdiffをレビューする（#187）。PASSでなければmerge判定はBLOCKED（`ai_review_not_passed`）のまま。
+5. 検証が通ると、AI Review（Semantic Review）を全LEVELで実行する。実装のproviderにかかわらず、trusted reviewProviderのClaude CLIがhead SHAとdiffをレビューする（#187）。使えなければFAILで、fallbackしない。PASSでなければmerge判定はBLOCKED（`ai_review_not_passed`）のまま。
 6. executionStatus=DONEになると、Harnessがtested SHAでPRを作る（fake providerを除く）。GitHub Reviewで承認する（[pull-request.md](pull-request.md)）。
    PRを作らないLocal modeでは、LEVEL 2は1人、LEVEL 3は異なる2人以上がapprove --phase mergeで承認する。
 7. 判定の更新が要るときだけ、保守用のresume --run IDでMERGE_ALLOWEDとautoMergeEligibleを確認する。

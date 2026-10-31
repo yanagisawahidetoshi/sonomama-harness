@@ -1,5 +1,5 @@
 // AI Review (#175): the Semantic Review every run requires at every Risk level. A trusted adapter is connected through the
-// semanticReviewer option of runHarness / resumeRun / approveRun / reverifyPullRequest (the real one, agents/ai-review-adapter.mjs, is #187). The fake adapter is
+// semanticReviewer option of runHarness / resumeRun / approveRun / reverifyPullRequest (the real one, agents/ai-review-adapter.mjs, is #187; it reviews with the trusted review provider, not the run's provider). The fake adapter is
 // chosen only for the fake provider of harness:demo and the tests; a real provider never falls back to it.
 const fakeReview = async ({ headSha }) => ({ status: 'PASS', headSha, reasons: ['fake AI Review of harness:demo and tests; never counts for a pull request'] });
 export function aiReviewer({ provider, semanticReviewer }) {
