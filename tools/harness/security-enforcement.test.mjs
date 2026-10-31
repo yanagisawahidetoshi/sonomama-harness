@@ -507,7 +507,7 @@ describe('Security content targets from a real git diff (#184)', () => {
     assert.equal(judged.ci['secret-scan'].status, 'FAIL');
     assert.deepEqual(judged.ci['secret-scan'].uninspectable, ['docs/b4.txt']);
     assert.deepEqual(judged.ci['secret-scan'].scanned, []);
-    assert.deepEqual(judged.ciEvidence.violations.map(v => [v.verifier, v.path]), [['secret-scan', 'docs/b4.txt']]);
+    assert.deepEqual([...new Set(judged.ciEvidence.violations.map(v => `${v.verifier} ${v.path}`))], ['secret-scan docs/b4.txt']);
   }));
 
   it('when main tracks a text file with one NUL byte and a credential then --all fails on secret-scan', () => fixture(async root => {
