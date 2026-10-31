@@ -2,7 +2,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { renderSbiBody } from './planner.mjs';
 import { loadSbiIssue } from './sbi-issue.mjs';
-import { specDigest, specApprovals, specApprovalLine, postSpecApproval } from './spec-approval.mjs';
+import { readFileSync } from 'node:fs';
+import { specDigest, specApprovals, specApprovalLine, postSpecApproval, specDigestItems } from './spec-approval.mjs';
 
 const ref = { owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' };
 const pbi = { owner: 'acme', repo: 'app', number: 3, url: 'https://github.com/acme/app/issues/3', title: '講座' };
@@ -34,6 +35,7 @@ describe('Spec digest of an SBI Issue', () => {
     ['the kind', { kind: 'validation' }],
     ['the expected number of changed files', { estimatedFiles: 9 }],
     ['the verification method', { verification: { ...planned().verification, e2e: 'Maestro: 講座の閲覧' } }],
+    ['the dependent SBIs the run waits for', { dependsOn: ['SBI-002'] }],
   ]) {
     it(`when ${name} changes then the digest changes, so an earlier approval no longer matches`, () => assert.notEqual(digest(overrides), digest()));
   }
@@ -46,6 +48,19 @@ describe('Spec digest of an SBI Issue', () => {
   });
   it('when the Issue has no Gherkin section then it has no digest', () => assert.equal(specDigest({ title: issue().title, body: '## 目的\n\nなし\n' }), null));
   it('when the Issue has no title then it has no digest', () => assert.equal(specDigest({ body: body() }), null));
+  it('when the Planner marker points at another PBI then the digest changes, since the run records the PBI it implements', () => {
+    assert.notEqual(specDigest({ title: issue().title, body: body().replace(pbi.url, 'https://github.com/acme/app/issues/4') }), digest());
+  });
+  it('when the dependency number of a dependent SBI changes then the digest changes', () => {
+    const dependent = renderSbiBody(planned({ dependsOn: ['SBI-002'] }), pbi, { 'SBI-002': 12 });
+    assert.notEqual(specDigest({ title: issue().title, body: dependent }), specDigest({ title: issue().title, body: dependent.replace('(#12)', '(#13)') }));
+  });
+  // ADR-0005 lists what the spec digest covers; the list and the implementation must not drift apart.
+  it('when ADR-0005 is read then it lists exactly the items the spec digest covers', () => {
+    const adr = readFileSync(new URL('../../docs/adr/0005-generated-trusted-acceptance.md', import.meta.url), 'utf8');
+    const listed = /今は (.+?) を含む/.exec(adr)?.[1].split('・').map(s => s.trim());
+    assert.deepEqual(listed, specDigestItems);
+  });
 });
 
 describe('Spec approval records on the SBI Issue', () => {

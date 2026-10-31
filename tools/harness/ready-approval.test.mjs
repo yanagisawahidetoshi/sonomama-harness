@@ -10,7 +10,7 @@ const ref = { owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/ac
 const readyAt = '2026-10-30T10:00:00Z';
 const human = (login = 'alice') => ({ login, type: 'User' });
 const labeled = (at = readyAt, name = 'ready', actor = human()) => ({ event: 'labeled', label: { name }, created_at: at, actor });
-const issue = { title: 'SBI-001 ホームに見出しを表示する', body: '## 目的\n\n見出しを表示する。\n' };
+const issue = { title: 'SBI-001 ホームに見出しを表示する', body: '## 目的\n\n見出しを表示する。\n', labels: [{ name: 'sbi' }, { name: 'ready', color: 'ededed' }] };
 const renamed = (at, from = 'SBI-001 見出しを表示する', to = issue.title) => ({ event: 'renamed', created_at: at, rename: { from, to } });
 // A version of the body GitHub keeps in the edit history; the newest one is the current body. lastEditedAt is the newest edit GitHub reports.
 const edit = (editedAt, deletedAt = null, body = deletedAt ? null : issue.body) => ({ editedAt, deletedAt, body });
@@ -78,6 +78,27 @@ describe('Binding the ready label to the content it approved', () => {
     });
     it('when the version at ready was deleted from the history then the approved content is unknown and the approval does not hold', () => {
       assert.match(judge({ history: historyOf([edit('2026-10-30T09:00:00Z', '2026-10-30T09:30:00Z')], '2026-10-30T09:00:00Z') }).join('\n'), /digest/);
+    });
+  });
+
+  // #200 re-review: the ready the Issue carries now must be the one the latest labeled event added.
+  describe('given how ready was removed or added again', () => {
+    const unlabeled = at => ({ event: 'unlabeled', label: { name: 'ready' }, created_at: at, actor: human() });
+    it('when ready was removed after the latest labeled event and nothing added it again then the approval does not hold', () => {
+      assert.match(judge({ timeline: [labeled(), unlabeled('2026-10-30T11:00:00Z')] }).join('\n'), /removed/);
+    });
+    it('when ready was removed in the same second as the latest labeled event then the order is unknown and the approval does not hold', () => {
+      assert.match(judge({ timeline: [labeled(), unlabeled(readyAt)] }).join('\n'), /removed/);
+    });
+    it('when ready was removed before it was added again then the approval of the latest one holds', () => {
+      assert.deepEqual(judge({ timeline: [labeled('2026-10-30T08:00:00Z'), unlabeled('2026-10-30T09:00:00Z'), labeled()] }), []);
+    });
+    it('when the Issue carries no ready label now then the approval does not hold, whatever the timeline says', () => {
+      assert.match(judge({ current: { ...issue, labels: [{ name: 'sbi' }] } }).join('\n'), /no ready label/);
+    });
+    it('when the ready label the Issue carries has another color than the one the labeled event added then another label was renamed to ready and the approval does not hold', () => {
+      const timeline = [{ ...labeled(), label: { name: 'ready', color: 'ededed' } }];
+      assert.match(judge({ timeline, current: { ...issue, labels: [{ name: 'ready', color: 'd73a4a' }] } }).join('\n'), /not the one/);
     });
   });
 
