@@ -61,8 +61,8 @@ export async function prototype(root,{promotion=false,failing=false}={}) {
   const file=promotion?'apps/admin/visual.txt':'prototypes/web/visual.txt';
   await mkdir(join(root,'.harness/verification'),{recursive:true});
   await writeFile(join(root,'.harness/verification/visual.mjs'),'import assert from "node:assert/strict";import{readFileSync}from"node:fs";import{join}from"node:path";assert.equal(readFileSync(join(process.argv[2],'+JSON.stringify(file)+'),"utf8"),"visual");console.log(JSON.stringify({acceptance:["VISUAL"]}));');
-  // A static visual declares no risk of its own, so it stays at the default LEVEL 1 (#157).
-  await update(root,'.harness/state/sample-sbi.json',s=>{s.title='Render a static visual';s.description='Use dummy text';s.allowedFiles=[file];s.risks=[];s.minimumRiskLevel=1;s.acceptanceCriteria=[{id:'VISUAL',description:'Expected text is present',verifier:'visual'}];if(promotion)s.promotion={source:'prototypes/web'};});
+  // A static visual declares no risk of its own and stays at the default LEVEL 1; adopting it into Production asks for one review (#157).
+  await update(root,'.harness/state/sample-sbi.json',s=>{s.title='Render a static visual';s.description='Use dummy text';s.allowedFiles=[file];s.risks=[];s.minimumRiskLevel=promotion?2:1;s.acceptanceCriteria=[{id:'VISUAL',description:'Expected text is present',verifier:'visual'}];if(promotion)s.promotion={source:'prototypes/web'};});
   const folder=promotion?'apps/admin':'prototypes/web';
   await writeFile(join(root,folder,'package.json'),JSON.stringify({private:true,scripts:{typecheck:'node -e "process.exit(0)"',lint:`node -e "process.exit(${failing?1:0})"`,'format:check':'node -e "process.exit(0)"',build:'node -e "process.exit(0)"'}}));
   await update(root,'.harness/config/harness.json',c=>{
