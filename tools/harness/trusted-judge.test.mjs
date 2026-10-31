@@ -6,7 +6,8 @@ import { parse } from 'yaml';
 import { fixture, update } from './test-fixture.mjs';
 import { loadImpact } from './impact.mjs';
 import { git } from './workspace.mjs';
-import { judgeEvidenceJobs, judgeProducer, runTrustedJudge, selectEvidenceRun } from './trusted-judge.mjs';
+import { checkConclusion, judgeEvidenceJobs, judgeProducer, runTrustedJudge, selectEvidenceRun } from './trusted-judge.mjs';
+import { ciStatus } from './github-pr.mjs';
 
 // ADR-0008: the pull_request run is untrusted evidence; the Completion Judge on pull_request_target reads it as data with main's code.
 const head = 'a'.repeat(40), other = 'b'.repeat(40);
@@ -26,6 +27,11 @@ describe('Evidence producer of the Completion Judge', () => {
       assert.deepEqual(judgeProducer(files(path)).paths, []);
     });
   }
+
+  it('when the PR changes the producer then it needs a human review rather than failing', () => {
+    assert.equal(judgeProducer(files('.harness/rules/security.json')).status, 'MANUAL_REVIEW_REQUIRED');
+    assert.equal(judgeProducer(files('apps/api/app/models/lesson.rb')).status, 'PASS');
+  });
 
   it('when the PR changes the producer then the reason names every producer path', () => {
     const judged = judgeProducer(files('pnpm-lock.yaml', '.github/workflows/harness.yml'));
@@ -149,14 +155,25 @@ describe('Workflow of the trusted Completion Judge', () => {
     assert.match(String(jobs.judge.if), /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/);
   });
 
-  it('when the result is published then only the job with the App key checks nothing out and runs no Harness code', async () => {
+  it('when the result is published then only the job that writes the check run checks nothing out and runs no Harness code', async () => {
     const { jobs } = await load();
-    assert.equal(jobs.publish.environment, 'completion-judge');
     assert.deepEqual([jobs.publish.needs].flat(), ['judge']);
     assert.match(String(jobs.publish.if), /always\(\)/);
     assert.equal(steps(jobs.publish).some(s => String(s.uses).startsWith('actions/checkout@')), false);
     assert.doesNotMatch(text(steps(jobs.publish)), /pnpm|node tools|harness:/);
-    assert.deepEqual(jobs.publish.permissions, {});
+    assert.deepEqual(jobs.publish.permissions, { checks: 'write' });
+  });
+
+  it('when the check run is published then no dedicated GitHub App, environment or secret is involved (ADR-0008)', async () => {
+    const workflow = await load();
+    for (const job of Object.values(workflow.jobs)) assert.equal(job.environment, undefined);
+    assert.doesNotMatch(text(workflow), /secrets\.|create-github-app-token/);
+  });
+
+  it('when a PR changes the judge workflow then its own Completion Judge still runs main\'s workflow and the change needs a human', async () => {
+    const workflow = await load();
+    assert.deepEqual(Object.keys(workflow.on), ['pull_request_target']);
+    assert.equal(judgeProducer(files('.github/workflows/completion-judge.yml')).status, 'MANUAL_REVIEW_REQUIRED');
   });
 
   it('when any job runs then no Actions cache is restored or saved', async () => {
@@ -185,11 +202,24 @@ describe('Trusted Completion Judge over a PR tree and its evidence run', () => {
     assert.equal(judged.status, 'PASS');
   }));
 
-  it('when the PR adds a workflow whose jobs all pass then fails because it changed the producer of its evidence', () => fixture(async root => {
+  it('when a prototype change has its required verifier job passing in the run then passes', () => fixture(async root => {
+    const { workspace, headSha } = await branch(root, ws => writeFile(join(ws, 'prototypes/web/src/note.ts'), 'export const note = 1;\n'));
+    const judged = await judge({ root, workspace, headSha, jobs: [job('impact'), job('verifiers (prototype-web)'), job('harness-test', 'skipped'), job('harness-demo', 'skipped')] });
+    assert.deepEqual(judged.reasons, []);
+    assert.equal(judged.status, 'PASS');
+  }));
+
+  it('when the PR adds a workflow whose jobs all pass then it is not failed but left to a human review', () => fixture(async root => {
     const { workspace, headSha } = await branch(root, async ws => { await mkdir(join(ws, '.github/workflows'), { recursive: true }); await writeFile(join(ws, '.github/workflows/probe.yml'), 'on: pull_request\n'); });
     const judged = await judge({ root, workspace, headSha, jobs: [job('impact'), job('harness-test (1)'), job('harness-demo'), job('Completion Judge')] });
-    assert.equal(judged.status, 'FAIL');
+    assert.equal(judged.status, 'MANUAL_REVIEW_REQUIRED');
     assert.match(judged.reasons.join('\n'), /producer changed: \.github\/workflows\/probe\.yml/);
+  }));
+
+  it('when the PR changes the producer and a required job failed then it fails', () => fixture(async root => {
+    const { workspace, headSha } = await branch(root, ws => writeFile(join(ws, '.harness/rules/note.json'), '{}\n'));
+    const judged = await judge({ root, workspace, headSha, jobs: [job('impact'), job('harness-test (1)', 'failure'), job('harness-demo')] });
+    assert.equal(judged.status, 'FAIL');
   }));
 
   it('when no evidence run completed for the head then fails', () => fixture(async root => {
@@ -205,4 +235,16 @@ describe('Trusted Completion Judge over a PR tree and its evidence run', () => {
     assert.equal(judged.status, 'FAIL');
     assert.match(judged.reasons.join('\n'), /is not the head bbbbbbbbbbbb/);
   }));
+});
+
+describe('Check run of the Completion Judge', () => {
+  for (const [status, conclusion] of [['PASS', 'success'], ['MANUAL_REVIEW_REQUIRED', 'neutral'], ['FAIL', 'failure'], ['UNKNOWN', 'failure']]) {
+    it(`when the Judge says ${status} then the check run concludes ${conclusion}`, () => {
+      assert.equal(checkConclusion(status), conclusion);
+    });
+  }
+
+  it('when the Judge needs a human review then the Harness merge assessment does not count the neutral check as passing', () => {
+    assert.equal(ciStatus({ checkRuns: [{ id: 1, name: 'Completion Judge', status: 'completed', conclusion: 'neutral' }], required: [{ context: 'Completion Judge' }] }).status, 'FAIL');
+  });
 });
