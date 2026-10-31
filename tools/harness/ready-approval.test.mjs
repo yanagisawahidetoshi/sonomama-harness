@@ -132,7 +132,7 @@ describe('Binding the ready label to the content it approved', () => {
       });
     }
 
-    // #200: as for harness-spec, only a human with write access approves. The actor of the latest ready decides; GitHub records who added it.
+    // #200: only a human with write access approves. The actor of the latest ready decides; GitHub records who added it.
     describe('and the person who added ready', () => {
       const by = (actor, access) => readReadyBinding({ ref, issue, github: github({ timeline: [labeled(readyAt, 'ready', actor)], ...(access ? { access } : {}) }) });
       for (const [name, actor, access] of [
