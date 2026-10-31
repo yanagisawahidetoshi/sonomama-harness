@@ -11,6 +11,7 @@ import { githubMock } from './test-github.mjs';
 import { openPullRequest, resumeRun, runHarness as harnessRun, approveRun } from './index.mjs';
 import { recordDecision } from './human-approvals.mjs';
 import { git } from './workspace.mjs';
+import { readRunState, saveRun } from './run-store.mjs';
 import { exists, readJson } from './io.mjs';
 import { renderSbiBody } from './planner.mjs';
 import { runLinks, verifySbiSource } from './sbi-source.mjs';
@@ -265,186 +266,190 @@ describe('GitHub PR Adapter', () => {
   };
   const reviewBy = (github, number, login, state, commit) => github.update(s => { s.reviews[number] = [...(s.reviews[number] || []), { id: (s.reviews[number] || []).length + 1, user: { login, type: 'User' }, state, commit_id: commit }]; });
 
+  const issueUrl = 'https://github.com/acme/app/issues/7';
+  const pbi = { number: 3, url: 'https://github.com/acme/app/issues/3', title: '管理画面のホーム' };
+  const planned = (overrides = {}) => ({
+    id: 'SBI-001', kind: 'implementation', title: 'ホームに見出しを表示する', purpose: '管理者がホームを開くと見出しが表示される。',
+    scope: { included: ['apps/admin ホーム画面'], excluded: [] },
+    acceptanceCriteria: [{ id: 'AC-1', description: 'ホームに見出しが表示される' }, { id: 'AC-2', description: '見出しの文言が仕様どおりである' }],
+    scenarios: [{ name: 'ホームを開く', given: ['管理者がログインしている'], when: ['ホームを開く'], then: ['見出しが表示される'], acceptanceIds: ['AC-1', 'AC-2'], test: 'Vitest: apps/admin/src/features/home/index.test.tsx' }],
+    dependsOn: [], changeAreas: ['apps/admin'], layers: ['画面Component'], estimatedFiles: 2, oversizeReason: null, riskCandidate: 'L2', securityImpact: [],
+    verification: { applicationTest: 'Vitest', acceptance: 'Trusted Acceptance', e2e: '不要' }, ...overrides });
+  const sbiIssue = (labels = ['sbi', 'ready'], sbi = planned()) => ({ number: 7, title: `${sbi.id} ${sbi.title}`, body: renderSbiBody(sbi, pbi), html_url: issueUrl, state: 'open', labels: labels.map(name => ({ name })) });
+  const home = 'apps/admin/src/home.txt';
+  const agent = (path = home) => async () => ({ files: [{ path, content: 'ホーム' }] });
+  // A human wrote and registered the Trusted Acceptance of Issue #7 before marking it ready. No SBI JSON exists for it.
+  const registered = async root => {
+    await writeFile(join(root, '.harness/verification/issue-7.mjs'), `import assert from "node:assert/strict";import{readFileSync}from"node:fs";import{join}from"node:path";assert.equal(readFileSync(join(process.argv[2],${JSON.stringify(home)}),"utf8"),"ホーム");console.log(JSON.stringify({acceptance:["AC-1","AC-2"]}));`);
+    await mkdir(join(root, '.harness/acceptance'), { recursive: true });
+    await writeFile(join(root, '.harness/acceptance/sbi-7.json'), JSON.stringify({ version: 1, sbiIssue: 7, verifiers: [{ id: 'issue-7-acceptance', trustedScript: '.harness/verification/issue-7.mjs', planned: ['ホーム見出し'], acceptanceIds: ['AC-1', 'AC-2'] }] }));
+    await update(root, '.harness/config/harness.json', c => {
+      // The admin placeholder has no installable app in the fixture; its verifier stands in with a passing command.
+      c.verifiers.find(v => v.id === 'admin').commands = [['node', '-e', 'process.exit(0)']];
+    });
+    await commitFixture(root);
+  };
+  const withIssue = (root, issue, test, options = {}) => registered(root).then(() => withRemote(root, test, { ...options, state: { issue, ...options.state } }));
+  // #220: only a run from a ready SBI Issue opens a PR, so the PR of each test below comes from Issue #7. The fake provider never publishes
+  // by itself, so harness:pr opens the PR where the test says.
+  const issueRun = (root, options = {}) => startRun({ root, quiet: true, provider: 'fake', agent: agent(), issueUrl, ...options });
+
   describe('given a completed level 2 run whose baseline is on origin/main', () => {
-    it('when harness:pr runs then pushes exactly the tested SHA and opens a PR whose head is that SHA', () => fixture(async root => {
-      const run = await runHarness({ root, quiet: true });
+    it('when harness:pr runs then pushes exactly the tested SHA and opens a PR whose head is that SHA', () => fixture(root => withIssue(root, sbiIssue(), async ({ bare, github }) => {
+      const run = await issueRun(root);
       assert.equal(run.status, 'WAITING_FOR_HUMAN_REVIEW');
-      await withRemote(root, async ({ bare, github }) => {
-        const result = await openPullRequest({ root, runId: run.id, quiet: true });
-        assert.equal(await remoteSha(bare, `harness/${run.id}`), run.headSha);
-        const [pull] = (await github.state()).pulls;
-        assert.equal(pull.head.sha, run.headSha);
-        assert.equal(pull.base.ref, 'main');
-        assert.deepEqual(result.pullRequest, { number: pull.number, url: pull.html_url, branch: `harness/${run.id}`, base: 'main', repository: 'acme/app' });
-        for (const text of [run.id, run.headSha, run.sbi, 'LEVEL 2', '1人']) assert.ok(pull.body.includes(text), `PR body includes ${text}`);
-        const sbi = await readJson(join(root, sbiPath));
-        for (const criterion of sbi.acceptanceCriteria) assert.ok(pull.body.includes(criterion.id));
-      });
-    }));
-    it('when CI has not reported yet then the merge decision is blocked on CI, not allowed', () => fixture(async root => {
-      const run = await runHarness({ root, quiet: true });
-      await withRemote(root, async () => {
-        const result = await openPullRequest({ root, runId: run.id, quiet: true });
-        assert.equal(result.status, 'BLOCKED');
-        assert.ok(result.merge.reasons.includes('required_ci_not_passed'));
-      });
-    }));
-    it('when CI passes and a human approves the head SHA then resume reaches MERGE_ALLOWED and records the GitHub state', () => fixture(async root => {
-      const run = await runHarness({ root, quiet: true });
-      await withRemote(root, async ({ github }) => {
-        const { pullRequest } = await openPullRequest({ root, runId: run.id, quiet: true });
-        await succeed(github, run.headSha);
-        await reviewBy(github, pullRequest.number, 'alice', 'APPROVED', run.headSha);
-        const resumed = await resumeRun({ root, runId: run.id, quiet: true });
-        assert.equal(resumed.status, 'MERGE_ALLOWED');
-        assert.deepEqual(resumed.merge.validReviewers, ['github:alice']);
-        const evidence = await readJson(join(root, run.runDir, 'github-state.json'));
-        assert.deepEqual(evidence.pullRequest.testedShaMatches, true);
-        assert.deepEqual(evidence.reviews.approvedHumans, ['alice']);
-        assert.equal(evidence.ci.status, 'PASS');
-        assert.equal(resumed.events.some(e => e.status === 'MERGED'), false);
-      });
-    }));
-    it('when the run was reviewed by the fake AI Review of the demo then the PR never reaches MERGE_ALLOWED even with CI and a human approval', () => fixture(async root => {
-      const run = await runFixture({ root, quiet: true });
+      const result = await openPullRequest({ root, runId: run.id, quiet: true });
+      assert.equal(await remoteSha(bare, `harness/${run.id}`), run.headSha);
+      const [pull] = (await github.state()).pulls;
+      assert.equal(pull.head.sha, run.headSha);
+      assert.equal(pull.base.ref, 'main');
+      assert.deepEqual(result.pullRequest, { number: pull.number, url: pull.html_url, branch: `harness/${run.id}`, base: 'main', repository: 'acme/app' });
+      for (const text of [run.id, run.headSha, run.sbi, 'LEVEL 2', '1人']) assert.ok(pull.body.includes(text), `PR body includes ${text}`);
+      for (const criterion of planned().acceptanceCriteria) assert.ok(pull.body.includes(criterion.id));
+    })));
+    it('when CI has not reported yet then the merge decision is blocked on CI, not allowed', () => fixture(root => withIssue(root, sbiIssue(), async () => {
+      const run = await issueRun(root);
+      const result = await openPullRequest({ root, runId: run.id, quiet: true });
+      assert.equal(result.status, 'BLOCKED');
+      assert.ok(result.merge.reasons.includes('required_ci_not_passed'));
+    })));
+    it('when CI passes and a human approves the head SHA then resume reaches MERGE_ALLOWED and records the GitHub state', () => fixture(root => withIssue(root, sbiIssue(), async ({ github }) => {
+      const run = await issueRun(root);
+      const { pullRequest } = await openPullRequest({ root, runId: run.id, quiet: true });
+      await succeed(github, run.headSha);
+      await reviewBy(github, pullRequest.number, 'alice', 'APPROVED', run.headSha);
+      const resumed = await resumeRun({ root, runId: run.id, quiet: true });
+      assert.equal(resumed.status, 'MERGE_ALLOWED');
+      assert.deepEqual(resumed.merge.validReviewers, ['github:alice']);
+      const evidence = await readJson(join(root, run.runDir, 'github-state.json'));
+      assert.deepEqual(evidence.pullRequest.testedShaMatches, true);
+      assert.deepEqual(evidence.reviews.approvedHumans, ['alice']);
+      assert.equal(evidence.ci.status, 'PASS');
+      assert.equal(resumed.events.some(e => e.status === 'MERGED'), false);
+    })));
+    it('when the run was reviewed by the fake AI Review of the demo then the PR never reaches MERGE_ALLOWED even with CI and a human approval', () => fixture(root => withIssue(root, sbiIssue(), async ({ github }) => {
+      const run = await issueRun(root, { semanticReviewer: undefined });
       assert.equal(run.iterations.at(-1).semanticReview.adapter, 'fake');
-      await withRemote(root, async ({ github }) => {
-        const { pullRequest } = await openPullRequest({ root, runId: run.id, quiet: true });
-        await succeed(github, run.headSha);
-        await reviewBy(github, pullRequest.number, 'alice', 'APPROVED', run.headSha);
-        const resumed = await resumeRun({ root, runId: run.id, quiet: true });
-        assert.equal(resumed.status, 'BLOCKED');
-        assert.ok(resumed.merge.reasons.includes('ai_review_not_passed'));
-        assert.equal(resumed.merge.autoMergeEligible, false);
-      });
-    }));
-    it('when a commit is pushed to the PR after verification then resume blocks even though it was approved', () => fixture(async root => {
-      const run = await runHarness({ root, quiet: true });
-      await withRemote(root, async ({ github }) => {
-        const { pullRequest } = await openPullRequest({ root, runId: run.id, quiet: true });
-        const pushed = 'c'.repeat(40);
-        await github.update(s => { s.pulls[0].head.sha = pushed; });
-        await succeed(github, pushed);
-        await reviewBy(github, pullRequest.number, 'alice', 'APPROVED', pushed);
-        const resumed = await resumeRun({ root, runId: run.id, quiet: true });
-        assert.equal(resumed.status, 'BLOCKED');
-        assert.ok(resumed.merge.reasons.includes('tested_sha_mismatch'));
-      });
-    }));
-    it('when a reviewer requests changes then resume rejects the merge', () => fixture(async root => {
-      const run = await runHarness({ root, quiet: true });
-      await withRemote(root, async ({ github }) => {
-        const { pullRequest } = await openPullRequest({ root, runId: run.id, quiet: true });
-        await succeed(github, run.headSha);
-        await reviewBy(github, pullRequest.number, 'alice', 'APPROVED', run.headSha);
-        await reviewBy(github, pullRequest.number, 'bob', 'CHANGES_REQUESTED', run.headSha);
-        assert.equal((await resumeRun({ root, runId: run.id, quiet: true })).status, 'REJECTED');
-      });
-    }));
-    it('when only the PR author approves then it is not a human approval', () => fixture(async root => {
-      const run = await runHarness({ root, quiet: true });
-      await withRemote(root, async ({ github }) => {
-        const { pullRequest } = await openPullRequest({ root, runId: run.id, quiet: true });
-        await succeed(github, run.headSha);
-        await reviewBy(github, pullRequest.number, 'harness-operator', 'APPROVED', run.headSha);
-        assert.equal((await resumeRun({ root, runId: run.id, quiet: true })).status, 'WAITING_FOR_HUMAN_REVIEW');
-      });
-    }));
-    it('when a GitHub ruleset requires another check then that check must pass too', () => fixture(async root => {
-      const run = await runHarness({ root, quiet: true });
-      await withRemote(root, async ({ github }) => {
-        await github.update(s => { s.rules = [{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'lint' }] } }]; });
-        const { pullRequest } = await openPullRequest({ root, runId: run.id, quiet: true });
-        await succeed(github, run.headSha);
-        await reviewBy(github, pullRequest.number, 'alice', 'APPROVED', run.headSha);
-        const blocked = await resumeRun({ root, runId: run.id, quiet: true });
-        assert.equal(blocked.status, 'BLOCKED');
-        await succeed(github, run.headSha, 'lint');
-        assert.equal((await resumeRun({ root, runId: run.id, quiet: true })).status, 'MERGE_ALLOWED');
-      });
-    }));
-    it('when the ruleset requires the check from a specific app then a same-named check from another app does not pass', () => fixture(async root => {
-      const run = await runHarness({ root, quiet: true });
-      await withRemote(root, async ({ github }) => {
-        await github.update(s => { s.rules = [{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'harness', integration_id: 15368 }] } }]; });
-        const { pullRequest } = await openPullRequest({ root, runId: run.id, quiet: true });
-        await succeed(github, run.headSha, 'harness', 999);
-        await reviewBy(github, pullRequest.number, 'alice', 'APPROVED', run.headSha);
-        const blocked = await resumeRun({ root, runId: run.id, quiet: true });
-        assert.equal(blocked.status, 'BLOCKED');
-        assert.ok(blocked.merge.reasons.includes('required_ci_not_passed'));
-        await succeed(github, run.headSha, 'harness', 15368);
-        assert.equal((await resumeRun({ root, runId: run.id, quiet: true })).status, 'MERGE_ALLOWED');
-      });
-    }));
-    it('when only a reviewer with read permission approves then it does not count toward merge', () => fixture(async root => {
-      const run = await runHarness({ root, quiet: true });
-      await withRemote(root, async ({ github }) => {
-        const { pullRequest } = await openPullRequest({ root, runId: run.id, quiet: true });
-        await github.update(s => { s.permissions.carol = 'read'; });
-        await succeed(github, run.headSha);
-        await reviewBy(github, pullRequest.number, 'carol', 'APPROVED', run.headSha);
-        const resumed = await resumeRun({ root, runId: run.id, quiet: true });
-        assert.equal(resumed.status, 'WAITING_FOR_HUMAN_REVIEW');
-        assert.deepEqual((await readJson(join(root, run.runDir, 'github-state.json'))).reviews.permissions, { carol: 'read' });
-      });
-    }));
-    it('when the reviewer permission cannot be read then the approval is not counted', () => fixture(async root => {
-      const run = await runHarness({ root, quiet: true });
-      await withRemote(root, async ({ github }) => {
-        const { pullRequest } = await openPullRequest({ root, runId: run.id, quiet: true });
-        await github.update(s => { s.permissions.alice = 'forbidden'; });
-        await succeed(github, run.headSha);
-        await reviewBy(github, pullRequest.number, 'alice', 'APPROVED', run.headSha);
-        assert.equal((await resumeRun({ root, runId: run.id, quiet: true })).status, 'WAITING_FOR_HUMAN_REVIEW');
-      });
-    }));
-    it('when origin/main moves after the PR was opened then resume blocks even with CI and approval, until the run is recreated', () => fixture(async root => {
-      const run = await runHarness({ root, quiet: true });
-      await withRemote(root, async ({ github }) => {
-        const { pullRequest } = await openPullRequest({ root, runId: run.id, quiet: true });
-        await succeed(github, run.headSha);
-        await reviewBy(github, pullRequest.number, 'alice', 'APPROVED', run.headSha);
-        await advanceMain(root, run.baselineSha);
-        const resumed = await resumeRun({ root, runId: run.id, quiet: true });
-        assert.equal(resumed.status, 'BLOCKED');
-        assert.ok(resumed.merge.reasons.includes('base_not_baseline'));
-      });
-    }));
-    it('when a local merge approval is attempted in PR mode then refuses it in favour of GitHub Review', () => fixture(async root => {
-      const run = await runHarness({ root, quiet: true });
-      await withRemote(root, async () => {
-        await openPullRequest({ root, runId: run.id, quiet: true });
-        await assert.rejects(recordDecision({ root, runId: run.id, purpose: 'merge', identityProvider: human('A') }), /GitHub Review/);
-      });
-    }));
-    it('when harness:pr runs again then reuses the open PR instead of creating another', () => fixture(async root => {
-      const run = await runHarness({ root, quiet: true });
-      await withRemote(root, async ({ github }) => {
-        const first = await openPullRequest({ root, runId: run.id, quiet: true });
-        const second = await openPullRequest({ root, runId: run.id, quiet: true });
-        assert.equal(second.pullRequest.number, first.pullRequest.number);
-        assert.equal((await github.state()).pulls.length, 1);
-      });
-    }));
+      const { pullRequest } = await openPullRequest({ root, runId: run.id, quiet: true });
+      await succeed(github, run.headSha);
+      await reviewBy(github, pullRequest.number, 'alice', 'APPROVED', run.headSha);
+      const resumed = await resumeRun({ root, runId: run.id, quiet: true });
+      assert.equal(resumed.status, 'BLOCKED');
+      assert.ok(resumed.merge.reasons.includes('ai_review_not_passed'));
+      assert.equal(resumed.merge.autoMergeEligible, false);
+    })));
+    it('when a commit is pushed to the PR after verification then resume blocks even though it was approved', () => fixture(root => withIssue(root, sbiIssue(), async ({ github }) => {
+      const run = await issueRun(root);
+      const { pullRequest } = await openPullRequest({ root, runId: run.id, quiet: true });
+      const pushed = 'c'.repeat(40);
+      await github.update(s => { s.pulls[0].head.sha = pushed; });
+      await succeed(github, pushed);
+      await reviewBy(github, pullRequest.number, 'alice', 'APPROVED', pushed);
+      const resumed = await resumeRun({ root, runId: run.id, quiet: true });
+      assert.equal(resumed.status, 'BLOCKED');
+      assert.ok(resumed.merge.reasons.includes('tested_sha_mismatch'));
+    })));
+    it('when a reviewer requests changes then resume rejects the merge', () => fixture(root => withIssue(root, sbiIssue(), async ({ github }) => {
+      const run = await issueRun(root);
+      const { pullRequest } = await openPullRequest({ root, runId: run.id, quiet: true });
+      await succeed(github, run.headSha);
+      await reviewBy(github, pullRequest.number, 'alice', 'APPROVED', run.headSha);
+      await reviewBy(github, pullRequest.number, 'bob', 'CHANGES_REQUESTED', run.headSha);
+      assert.equal((await resumeRun({ root, runId: run.id, quiet: true })).status, 'REJECTED');
+    })));
+    it('when only the PR author approves then it is not a human approval', () => fixture(root => withIssue(root, sbiIssue(), async ({ github }) => {
+      const run = await issueRun(root);
+      const { pullRequest } = await openPullRequest({ root, runId: run.id, quiet: true });
+      await succeed(github, run.headSha);
+      await reviewBy(github, pullRequest.number, 'harness-operator', 'APPROVED', run.headSha);
+      assert.equal((await resumeRun({ root, runId: run.id, quiet: true })).status, 'WAITING_FOR_HUMAN_REVIEW');
+    })));
+    it('when a GitHub ruleset requires another check then that check must pass too', () => fixture(root => withIssue(root, sbiIssue(), async ({ github }) => {
+      const run = await issueRun(root);
+      await github.update(s => { s.rules = [{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'lint' }] } }]; });
+      const { pullRequest } = await openPullRequest({ root, runId: run.id, quiet: true });
+      await succeed(github, run.headSha);
+      await reviewBy(github, pullRequest.number, 'alice', 'APPROVED', run.headSha);
+      const blocked = await resumeRun({ root, runId: run.id, quiet: true });
+      assert.equal(blocked.status, 'BLOCKED');
+      await succeed(github, run.headSha, 'lint');
+      assert.equal((await resumeRun({ root, runId: run.id, quiet: true })).status, 'MERGE_ALLOWED');
+    })));
+    it('when the ruleset requires the check from a specific app then a same-named check from another app does not pass', () => fixture(root => withIssue(root, sbiIssue(), async ({ github }) => {
+      const run = await issueRun(root);
+      await github.update(s => { s.rules = [{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'harness', integration_id: 15368 }] } }]; });
+      const { pullRequest } = await openPullRequest({ root, runId: run.id, quiet: true });
+      await succeed(github, run.headSha, 'harness', 999);
+      await reviewBy(github, pullRequest.number, 'alice', 'APPROVED', run.headSha);
+      const blocked = await resumeRun({ root, runId: run.id, quiet: true });
+      assert.equal(blocked.status, 'BLOCKED');
+      assert.ok(blocked.merge.reasons.includes('required_ci_not_passed'));
+      await succeed(github, run.headSha, 'harness', 15368);
+      assert.equal((await resumeRun({ root, runId: run.id, quiet: true })).status, 'MERGE_ALLOWED');
+    })));
+    it('when only a reviewer with read permission approves then it does not count toward merge', () => fixture(root => withIssue(root, sbiIssue(), async ({ github }) => {
+      const run = await issueRun(root);
+      const { pullRequest } = await openPullRequest({ root, runId: run.id, quiet: true });
+      await github.update(s => { s.permissions.carol = 'read'; });
+      await succeed(github, run.headSha);
+      await reviewBy(github, pullRequest.number, 'carol', 'APPROVED', run.headSha);
+      const resumed = await resumeRun({ root, runId: run.id, quiet: true });
+      assert.equal(resumed.status, 'WAITING_FOR_HUMAN_REVIEW');
+      assert.deepEqual((await readJson(join(root, run.runDir, 'github-state.json'))).reviews.permissions, { carol: 'read' });
+    })));
+    it('when the reviewer permission cannot be read then the approval is not counted', () => fixture(root => withIssue(root, sbiIssue(), async ({ github }) => {
+      const run = await issueRun(root);
+      const { pullRequest } = await openPullRequest({ root, runId: run.id, quiet: true });
+      await github.update(s => { s.permissions.alice = 'forbidden'; });
+      await succeed(github, run.headSha);
+      await reviewBy(github, pullRequest.number, 'alice', 'APPROVED', run.headSha);
+      assert.equal((await resumeRun({ root, runId: run.id, quiet: true })).status, 'WAITING_FOR_HUMAN_REVIEW');
+    })));
+    it('when origin/main moves after the PR was opened then resume blocks even with CI and approval, until the run is recreated', () => fixture(root => withIssue(root, sbiIssue(), async ({ github }) => {
+      const run = await issueRun(root);
+      const { pullRequest } = await openPullRequest({ root, runId: run.id, quiet: true });
+      await succeed(github, run.headSha);
+      await reviewBy(github, pullRequest.number, 'alice', 'APPROVED', run.headSha);
+      await advanceMain(root, run.baselineSha);
+      const resumed = await resumeRun({ root, runId: run.id, quiet: true });
+      assert.equal(resumed.status, 'BLOCKED');
+      assert.ok(resumed.merge.reasons.includes('base_not_baseline'));
+    })));
+    it('when a local merge approval is attempted in PR mode then refuses it in favour of GitHub Review', () => fixture(root => withIssue(root, sbiIssue(), async () => {
+      const run = await issueRun(root);
+      await openPullRequest({ root, runId: run.id, quiet: true });
+      await assert.rejects(recordDecision({ root, runId: run.id, purpose: 'merge', identityProvider: human('A') }), /GitHub Review/);
+    })));
+    it('when harness:pr runs again then reuses the open PR instead of creating another', () => fixture(root => withIssue(root, sbiIssue(), async ({ github }) => {
+      const run = await issueRun(root);
+      const first = await openPullRequest({ root, runId: run.id, quiet: true });
+      const second = await openPullRequest({ root, runId: run.id, quiet: true });
+      assert.equal(second.pullRequest.number, first.pullRequest.number);
+      assert.equal((await github.state()).pulls.length, 1);
+    })));
   });
 
-  // harness:run and harness:approve continue to the PR themselves; the human never runs harness:resume or harness:pr.
-  describe('given harness:run with a real provider and a baseline on origin/main', () => {
+  // #220: --sbi PATH is hand-written SBI JSON with no ready binding and no spec approval, so it stays a local self-test even with a real provider.
+  // Only a run from a ready SBI Issue continues to the PR (given a ready SBI Issue passed to harness:run as its URL).
+  describe('given harness:run --sbi with a real provider and a baseline on origin/main', () => {
     const good = 'export function greet(name) { return `こんにちは、${name?.trim() || "ゲスト"}さん`; }';
     const agent = content => async () => ({ files: [{ path: 'greeting.mjs', content }] });
     // The remote must exist before the run, so the run starts from the published baseline.
     const start = (root, options = {}) => startRun({ root, quiet: true, provider: 'codex', agent: agent(good), publish: true, sbiPath, ...options });
     const remoteFirst = (root, test) => commitFixture(root).then(() => withRemote(root, test));
-    it('when local verification passes then pushes the tested SHA and opens the PR without harness:pr', () => fixture(root => remoteFirst(root, async ({ bare, github }) => {
+    it('when local verification passes then it pushes nothing and opens no PR, because --sbi is a local self-test', () => fixture(root => remoteFirst(root, async ({ bare, github }) => {
       const run = await start(root);
       assert.equal(run.executionStatus, 'DONE');
-      const [pull] = (await github.state()).pulls;
-      assert.equal(pull.head.sha, run.headSha);
-      assert.equal(await remoteSha(bare, `harness/${run.id}`), run.headSha);
-      assert.deepEqual(run.pullRequest, { number: pull.number, url: pull.html_url, branch: `harness/${run.id}`, base: 'main', repository: 'acme/app' });
-      assert.notEqual(run.status, 'MERGE_ALLOWED');
-      assert.equal((await github.calls()).some(c => /merge/.test(c.args.join(' '))), false);
+      assert.equal(run.publish, false);
+      assert.equal(run.pullRequest, undefined);
+      assert.equal(await remoteSha(bare, `harness/${run.id}`), '');
+      assert.deepEqual((await github.state()).pulls, []);
+    })));
+    it('when harness:pr is run for the --sbi run then it refuses before pushing, so no PR comes from an SBI without an approved Issue', () => fixture(root => remoteFirst(root, async ({ bare, github }) => {
+      const run = await start(root);
+      await assert.rejects(openPullRequest({ root, runId: run.id, quiet: true }), /SBI Issue/);
+      assert.equal(await remoteSha(bare, `harness/${run.id}`), '');
+      assert.deepEqual((await github.state()).pulls, []);
     })));
     it('when local verification keeps failing then pushes nothing and opens no PR', () => fixture(root => remoteFirst(root, async ({ bare, github }) => {
       const run = await start(root, { agent: agent('export const greet = () => "wrong";') });
@@ -470,15 +475,14 @@ describe('GitHub PR Adapter', () => {
   describe('given harness:run of an approved SBI with a risk no rule classifies', () => {
     const good = 'export function greet(name) { return `こんにちは、${name?.trim() || "ゲスト"}さん`; }';
     const agent = async () => ({ files: [{ path: 'greeting.mjs', content: good }] });
-    it('when it runs then implements without an implementation gate, opens the PR and needs two humans', () => fixture(async root => {
+    it('when it runs then implements without an implementation gate and needs two humans, while the --sbi run opens no PR (#220)', () => fixture(async root => {
       await update(root, sbiPath, s => s.risks = ['外部サービス連携']);
       await commitFixture(root);
       await withRemote(root, async ({ github }) => {
         const run = await startRun({ root, quiet: true, provider: 'codex', agent, publish: true, sbiPath });
         assert.equal(run.gate.required, false);
         assert.equal(run.executionStatus, 'DONE');
-        const [pull] = (await github.state()).pulls;
-        assert.equal(pull.head.sha, run.headSha);
+        assert.deepEqual((await github.state()).pulls, []);
         assert.equal(run.merge.requiredApprovals, 2);
       });
     }));
@@ -486,36 +490,13 @@ describe('GitHub PR Adapter', () => {
 
   // pnpm harness:run SBI_URL: the Issue a human marked ready is the only SBI input; nobody writes SBI JSON.
   describe('given a ready SBI Issue passed to harness:run as its URL', () => {
-    const issueUrl = 'https://github.com/acme/app/issues/7';
-    const pbi = { number: 3, url: 'https://github.com/acme/app/issues/3', title: '管理画面のホーム' };
-    const planned = (overrides = {}) => ({
-      id: 'SBI-001', kind: 'implementation', title: 'ホームに見出しを表示する', purpose: '管理者がホームを開くと見出しが表示される。',
-      scope: { included: ['apps/admin ホーム画面'], excluded: [] },
-      acceptanceCriteria: [{ id: 'AC-1', description: 'ホームに見出しが表示される' }, { id: 'AC-2', description: '見出しの文言が仕様どおりである' }],
-      scenarios: [{ name: 'ホームを開く', given: ['管理者がログインしている'], when: ['ホームを開く'], then: ['見出しが表示される'], acceptanceIds: ['AC-1', 'AC-2'], test: 'Vitest: apps/admin/src/features/home/index.test.tsx' }],
-      dependsOn: [], changeAreas: ['apps/admin'], layers: ['画面Component'], estimatedFiles: 2, oversizeReason: null, riskCandidate: 'L2', securityImpact: [],
-      verification: { applicationTest: 'Vitest', acceptance: 'Trusted Acceptance', e2e: '不要' }, ...overrides });
-    const sbiIssue = (labels = ['sbi', 'ready'], sbi = planned()) => ({ number: 7, title: `${sbi.id} ${sbi.title}`, body: renderSbiBody(sbi, pbi), html_url: issueUrl, state: 'open', labels: labels.map(name => ({ name })) });
-    const home = 'apps/admin/src/home.txt';
-    const agent = (path = home) => async () => ({ files: [{ path, content: 'ホーム' }] });
-    // A human wrote and registered the Trusted Acceptance of Issue #7 before marking it ready. No SBI JSON exists for it.
-    const registered = async root => {
-      await writeFile(join(root, '.harness/verification/issue-7.mjs'), `import assert from "node:assert/strict";import{readFileSync}from"node:fs";import{join}from"node:path";assert.equal(readFileSync(join(process.argv[2],${JSON.stringify(home)}),"utf8"),"ホーム");console.log(JSON.stringify({acceptance:["AC-1","AC-2"]}));`);
-      await mkdir(join(root, '.harness/acceptance'), { recursive: true });
-      await writeFile(join(root, '.harness/acceptance/sbi-7.json'), JSON.stringify({ version: 1, sbiIssue: 7, verifiers: [{ id: 'issue-7-acceptance', trustedScript: '.harness/verification/issue-7.mjs', planned: ['ホーム見出し'], acceptanceIds: ['AC-1', 'AC-2'] }] }));
-      await update(root, '.harness/config/harness.json', c => {
-        // The admin placeholder has no installable app in the fixture; its verifier stands in with a passing command.
-        c.verifiers.find(v => v.id === 'admin').commands = [['node', '-e', 'process.exit(0)']];
-      });
-      await commitFixture(root);
-    };
-    const withIssue = (root, issue, test) => registered(root).then(() => withRemote(root, test, { state: { issue } }));
     const start = (root, options = {}) => startRun({ root, quiet: true, provider: 'codex', agent: agent(), publish: true, issueUrl, ...options });
     const runs = async root => (await readdir(join(root, '.harness/runs'))).filter(name => name !== '.gitkeep');
 
     it('when the run passes then the PR carries the Issue snapshot and Run trailers that the CI SBI source check accepts', () => fixture(root => withIssue(root, sbiIssue(), async ({ github }) => {
       const run = await start(root);
       assert.equal(run.executionStatus, 'DONE');
+      assert.equal(run.publish, true);
       assert.deepEqual(run.sbiIssue, { repo: 'acme/app', number: 7, url: issueUrl });
       const [pull] = (await github.state()).pulls;
       assert.equal(pull.head.sha, run.headSha);
@@ -565,6 +546,45 @@ describe('GitHub PR Adapter', () => {
       const run = await start(root);
       await github.update(s => { s.issue.number = 99; });
       assert.equal((await resumeRun({ root, runId: run.id, quiet: true })).risk.level, 3);
+    })));
+    // #220: a run that stopped before its implementation reads the Issue again on resume, so it implements only what ready or the spec
+    // approval still covers. The state is the one the Harness leaves when it stops between the preflight and the first iteration.
+    const unstarted = async (root, run) => {
+      const state = await readRunState(root, run.id);
+      Object.assign(state, { status: 'PENDING', executionStatus: 'PENDING', iterations: [], merge: { state: 'NOT_ASSESSED', autoMergeEligible: false } });
+      await saveRun(root, state);
+      await rm(join(root, run.runDir, 'iteration-1'), { recursive: true });
+    };
+    const counting = () => { const spy = async () => { spy.calls += 1; return { files: [{ path: home, content: 'ホーム' }] }; }; spy.calls = 0; return spy; };
+    it('when ready was removed from the Issue before the run resumes then the implementation does not resume', () => fixture(root => withIssue(root, sbiIssue(), async ({ github }) => {
+      const run = await start(root, { publish: false });
+      await unstarted(root, run);
+      await github.update(s => { s.issue.labels = [{ name: 'sbi' }]; });
+      const implementer = counting();
+      const resumed = await resumeRun({ root, runId: run.id, quiet: true, agent: implementer, semanticReviewer: aiReview });
+      assert.equal(resumed.status, 'ESCALATED');
+      assert.match(resumed.reason, /readyではありません/);
+      assert.equal(implementer.calls, 0);
+    })));
+    it('when the spec of the Issue changed before the run resumes then the implementation does not resume', () => fixture(root => withIssue(root, sbiIssue(), async ({ github }) => {
+      const run = await start(root, { publish: false });
+      await unstarted(root, run);
+      const changed = sbiIssue(['sbi', 'ready'], planned({ purpose: '管理者がホームを開くと見出しと一覧が表示される。' }));
+      // No edit history is recorded, so ready still reads as given to this body; only the comparison with the run snapshot catches it.
+      await github.update(s => { s.issue.body = changed.body; });
+      const implementer = counting();
+      const resumed = await resumeRun({ root, runId: run.id, quiet: true, agent: implementer, semanticReviewer: aiReview });
+      assert.equal(resumed.status, 'ESCALATED');
+      assert.match(resumed.reason, /bodyDigest/);
+      assert.equal(implementer.calls, 0);
+    })));
+    it('when the Issue is still ready and unchanged then the run resumes its implementation', () => fixture(root => withIssue(root, sbiIssue(), async () => {
+      const run = await start(root, { publish: false });
+      await unstarted(root, run);
+      const implementer = counting();
+      const resumed = await resumeRun({ root, runId: run.id, quiet: true, agent: implementer, semanticReviewer: aiReview });
+      assert.equal(implementer.calls, 1);
+      assert.equal(resumed.executionStatus, 'DONE', resumed.reason);
     })));
     it('when another SBI runs with --full after Issue #7 registered its Trusted Acceptance then that acceptance is not run for it', () => fixture(root => withIssue(root, sbiIssue(), async () => {
       const run = await startRun({ root, quiet: true, provider: 'fake', full: true });
@@ -698,49 +718,39 @@ describe('GitHub PR Adapter', () => {
   });
 
   describe('given a run that cannot be published as is', () => {
-    it('when the baseline is not on origin/main then refuses before pushing so the PR never carries untested commits', () => fixture(async root => {
-      const run = await runHarness({ root, quiet: true });
-      await withRemote(root, async ({ bare, github }) => {
-        await assert.rejects(openPullRequest({ root, runId: run.id, quiet: true }), /origin\/main/);
-        assert.equal(await remoteSha(bare, `harness/${run.id}`), '');
-        assert.deepEqual((await github.state()).pulls, []);
-      }, { publishBaseline: false });
-    }));
-    it('when origin/main moved past the run baseline then refuses before pushing because the merge result was never verified', () => fixture(async root => {
-      const run = await runHarness({ root, quiet: true });
-      await withRemote(root, async ({ bare, github }) => {
-        await advanceMain(root, run.baselineSha);
-        await assert.rejects(openPullRequest({ root, runId: run.id, quiet: true }), /origin\/main/);
-        assert.equal(await remoteSha(bare, `harness/${run.id}`), '');
-        assert.deepEqual((await github.state()).pulls, []);
-      });
-    }));
-    it('when an open PR for the run branch targets another base then refuses instead of reusing it', () => fixture(async root => {
-      const run = await runHarness({ root, quiet: true });
-      await withRemote(root, async ({ bare, github }) => {
-        await github.update(s => { s.pulls.push({ number: 9, title: 'x', body: '', state: 'open', merged: false, html_url: 'https://github.com/acme/app/pull/9', user: { login: 'harness-operator', type: 'User' },
-          head: { ref: `harness/${run.id}`, sha: run.headSha }, base: { ref: 'develop', sha: run.baselineSha } }); });
-        await assert.rejects(openPullRequest({ root, runId: run.id, quiet: true }), /develop/);
-        assert.equal(await remoteSha(bare, `harness/${run.id}`), '');
-        assert.equal((await github.state()).pulls.length, 1);
-      });
-    }));
-    it('when the PR branch already exists at another SHA then refuses instead of force pushing', () => fixture(async root => {
-      const run = await runHarness({ root, quiet: true });
-      await withRemote(root, async ({ bare, github }) => {
-        await git(root, ['push', 'origin', `${run.baselineSha}:refs/heads/harness/${run.id}`]);
-        await assert.rejects(openPullRequest({ root, runId: run.id, quiet: true }), /harness\/.*既に/);
-        assert.equal(await remoteSha(bare, `harness/${run.id}`), run.baselineSha);
-        assert.deepEqual((await github.state()).pulls, []);
-      });
-    }));
-    it('when execution has not completed then refuses to open a PR', () => fixture(async root => {
-      const run = await runHarness({ root, quiet: true, agent: async () => ({ escalation: '仕様判断が必要', files: [] }) });
+    it('when the baseline is not on origin/main then refuses before pushing so the PR never carries untested commits', () => fixture(root => withIssue(root, sbiIssue(), async ({ bare, github }) => {
+      const run = await issueRun(root);
+      await assert.rejects(openPullRequest({ root, runId: run.id, quiet: true }), /origin\/main/);
+      assert.equal(await remoteSha(bare, `harness/${run.id}`), '');
+      assert.deepEqual((await github.state()).pulls, []);
+    }, { publishBaseline: false })));
+    it('when origin/main moved past the run baseline then refuses before pushing because the merge result was never verified', () => fixture(root => withIssue(root, sbiIssue(), async ({ bare, github }) => {
+      const run = await issueRun(root);
+      await advanceMain(root, run.baselineSha);
+      await assert.rejects(openPullRequest({ root, runId: run.id, quiet: true }), /origin\/main/);
+      assert.equal(await remoteSha(bare, `harness/${run.id}`), '');
+      assert.deepEqual((await github.state()).pulls, []);
+    })));
+    it('when an open PR for the run branch targets another base then refuses instead of reusing it', () => fixture(root => withIssue(root, sbiIssue(), async ({ bare, github }) => {
+      const run = await issueRun(root);
+      await github.update(s => { s.pulls.push({ number: 9, title: 'x', body: '', state: 'open', merged: false, html_url: 'https://github.com/acme/app/pull/9', user: { login: 'harness-operator', type: 'User' },
+        head: { ref: `harness/${run.id}`, sha: run.headSha }, base: { ref: 'develop', sha: run.baselineSha } }); });
+      await assert.rejects(openPullRequest({ root, runId: run.id, quiet: true }), /develop/);
+      assert.equal(await remoteSha(bare, `harness/${run.id}`), '');
+      assert.equal((await github.state()).pulls.length, 1);
+    })));
+    it('when the PR branch already exists at another SHA then refuses instead of force pushing', () => fixture(root => withIssue(root, sbiIssue(), async ({ bare, github }) => {
+      const run = await issueRun(root);
+      await git(root, ['push', 'origin', `${run.baselineSha}:refs/heads/harness/${run.id}`]);
+      await assert.rejects(openPullRequest({ root, runId: run.id, quiet: true }), /harness\/.*既に/);
+      assert.equal(await remoteSha(bare, `harness/${run.id}`), run.baselineSha);
+      assert.deepEqual((await github.state()).pulls, []);
+    })));
+    it('when execution has not completed then refuses to open a PR', () => fixture(root => withIssue(root, sbiIssue(), async ({ github }) => {
+      const run = await issueRun(root, { agent: async () => ({ escalation: '仕様判断が必要', files: [] }) });
       assert.notEqual(run.executionStatus, 'DONE');
-      await withRemote(root, async ({ github }) => {
-        await assert.rejects(openPullRequest({ root, runId: run.id, quiet: true }), /DONE/);
-        assert.deepEqual((await github.state()).pulls, []);
-      });
-    }));
+      await assert.rejects(openPullRequest({ root, runId: run.id, quiet: true }), /DONE/);
+      assert.deepEqual((await github.state()).pulls, []);
+    })));
   });
 });

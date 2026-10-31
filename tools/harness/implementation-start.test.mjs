@@ -113,13 +113,15 @@ describe('AI Review is required at every Risk level', () => {
       assert.equal(run.iterations.at(-1).semanticReview.adapter, 'test-adapter');
     }));
   });
+  // #220: an --sbi PATH run is a local self-test. It still reaches MERGE_ALLOWED at level 1, but never auto merge; only a run from an approved
+  // SBI Issue is eligible (the Merge decision with AI Review below).
   describe('given an approved level 1 SBI', () => {
-    it('when AI Review and every required check pass then the run is auto merge eligible without merging', () => fixture(async root => {
+    it('when AI Review and every required check pass then the --sbi run is MERGE_ALLOWED but never auto merge eligible, and nothing merges', () => fixture(async root => {
       const docs = await docsSbi(root);
       const run = await runHarness({ root, quiet: true, agent: docs });
       assert.equal(run.risk.level, 1);
       assert.equal(run.status, 'MERGE_ALLOWED');
-      assert.equal(run.merge.autoMergeEligible, true);
+      assert.equal(run.merge.autoMergeEligible, false);
       assert.equal(run.events.some(e => e.status === 'MERGED'), false);
     }));
     for (const [name, reviewer] of [
@@ -148,7 +150,7 @@ describe('Merge decision with AI Review', () => {
     pullRequest: { number: 7, url: 'https://github.com/acme/app/pull/7', headSha: head, state: 'open', merged: false, testedShaMatches: true, baseRef: 'main', baseSha: base, remoteBaseSha: base, ...overrides.pullRequest },
     ci: { status: 'PASS', checks: [], ...overrides.ci }, reviews: { approvedHumans: [], changesRequested: false, changesRequestedBy: [], ...overrides.reviews } });
   const decide = (level, extra = {}) => mergeDecision({ risk: { level, requiredHumanApprovals: [0, 0, 1, 2][level] }, checks, securityVerification, headSha: head, contextDigest: 'context',
-    github: github(), baseline: { ref: 'main', sha: base }, ...extra });
+    github: github(), baseline: { ref: 'main', sha: base }, fromSbiIssue: true, ...extra });
   describe('given a level 1 pull request', () => {
     it('when AI Review, CI, Verifier and Security pass on the tested SHA then it is auto merge eligible with no human', () => {
       const result = decide(1);
