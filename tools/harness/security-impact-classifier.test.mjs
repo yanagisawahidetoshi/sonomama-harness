@@ -550,3 +550,41 @@ describe('Security Impact Classifier on Rails 8, Devise and HTTP authentication 
     }
   });
 });
+
+describe('Security Impact Classifier on Devise routes, Devise models, has_secure_password and re-authentication (#177)', () => {
+  describe('given an authentication change that does not name authenticate at the start of a word', () => {
+    for (const [path, name, change] of [
+      ['apps/api/config/routes.rb', 'adds an unauthenticated :user block', { added: 'unauthenticated :user do\n  root to: "sessions#new"\nend' }],
+      ['apps/api/config/routes.rb', 'removes devise_for :users', { deleted: 'devise_for :users' }],
+      ['apps/api/config/routes.rb', 'adds devise_for :admins with options', { added: 'devise_for :admins, controllers: { sessions: "admins/sessions" }' }],
+      ['apps/api/app/models/user.rb', 'adds has_secure_password', { added: '  has_secure_password' }],
+      ['apps/api/app/models/user.rb', 'adds devise modules that do not name authenticatable', { added: '  devise :omniauthable, :confirmable, :lockable' }],
+      ['apps/api/app/controllers/settings_controller.rb', 'adds a reauthenticate filter', { added: 'before_action :reauthenticate, only: :update' }],
+      ['apps/api/app/controllers/settings_controller.rb', 'checks preauthenticated sessions', { added: 'return head :forbidden unless session.preauthenticated?' }],
+    ]) {
+      it(`when ${path} ${name} then matches SEC-AUTH-001 and requires the authentication test`, () => {
+        const result = assess([{ path, status: 'M', ...change }]);
+        assert.ok(detected(result, 'SEC-AUTH-001'));
+        assert.ok(result.requiredVerifiers.includes('authn-test'));
+      });
+    }
+  });
+  describe('given ordinary words that only resemble those declarations', () => {
+    for (const added of ['# Unauthenticated users see the sign-up page first.', '# We devise for the admin a simpler list.', '  has_secure_token :invite_code', '# The preview shows a pre-rendered page.']) {
+      it(`when apps/api/app/models/user.rb adds ${added.trim()} then does not match SEC-AUTH-001`, () => {
+        assert.equal(detected(assess([{ path: 'apps/api/app/models/user.rb', status: 'M', added }]), 'SEC-AUTH-001'), false);
+      });
+    }
+  });
+  describe('given the module list of a devise declaration continues on another line', () => {
+    // Known limitation: the classifier reads changed lines only, so a continued line does not show that it belongs to devise.
+    it('when only the continued line adds :lockable then does not match SEC-AUTH-001 until the classifier reads the declaration', () => {
+      assert.equal(detected(assess([{ path: 'apps/api/app/models/user.rb', status: 'M', added: '         :lockable, :timeoutable' }]), 'SEC-AUTH-001'), false);
+    });
+  });
+  describe('given Trusted Acceptance that describes them', () => {
+    it('when .harness/verification/api-env.mjs adds them then does not match SEC-AUTH-001', () => {
+      assert.equal(detected(assess([{ path: '.harness/verification/api-env.mjs', status: 'M', added: "'Then devise_for :users, has_secure_password and reauthenticate are not used'" }]), 'SEC-AUTH-001'), false);
+    });
+  });
+});
