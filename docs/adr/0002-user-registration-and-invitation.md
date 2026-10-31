@@ -14,7 +14,7 @@ Option A / Option Bのどちらを採るかも含め、人が判断してから�
 SONOMAMAでは、受講生・講師・講師リーダー・MG・CS・運営のすべてのロールについて、CSがユーザーを登録する運用を想定している。
 現行の要件では、CSがIDとパスワードを発行し、ユーザーが初回ログイン時にパスワードを変更する。この方式では、CSが他人のパスワードを知ることになる。CSが認証情報を扱わない方式も含めて見直したい。
 
-インフラはAWS、認証基盤はAmazon Cognito（User Pool）を使う。
+インフラはAWS、認証基盤はAmazon Cognito（User Pool）を使う（[ADR-0007](0007-aws-and-cognito.md)で決定済み）。
 このADRでは、Cognitoの上で登録と招待の流れをどう組むかを決める。
 
 ## 判断ドライバー
@@ -58,7 +58,6 @@ Cognitoには、管理者が作ったユーザーに招待URLからパスワー�
 - すべてのロールについて、CSの登録を起点にする。
 - CSが最初に登録する識別情報は、メールアドレスとする。
 - 登録したユーザーには、メールで利用開始を案内する。
-- 認証基盤にはAWSのAmazon Cognito（User Pool）を使う。
 - パスワードなどの認証情報はCognitoが管理する。SONOMAMAのアプリケーションDBには保存しない。
 - SONOMAMA固有のロール、状態、プロフィール、担当関係などの業務情報は、アプリケーション側で管理する。
 
@@ -135,6 +134,7 @@ Option Aでは、3と4が「一時パスワードを受け取ってログイン�
 
 ## 関連資料
 
+- [ADR-0007: インフラにAWS、認証基盤にAmazon Cognitoを使う](0007-aws-and-cognito.md)
 - [docs/security/authorization.md](../security/authorization.md)
 
 ADRへの変更はHuman Gate対象。AIだけで確定しない。
