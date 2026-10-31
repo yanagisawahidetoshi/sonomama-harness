@@ -19,7 +19,8 @@ const rlsVerifier = root => update(root, '.harness/config/harness.json', c => c.
 const review = (result, name = 'test-adapter') => async ({ headSha }) => ({ adapter: name, headSha, ...result });
 const docsSbi = async root => {
   await update(root, sbiPath, s => {
-    s.allowedFiles = ['docs/product/intro.md'];
+    // #157: LEVEL 1 is the default and an SBI declares its own level; there is no docs-only safe rule any more.
+    s.allowedFiles = ['docs/product/intro.md']; s.minimumRiskLevel = 1;
     s.title = 'Write an introduction'; s.description = 'Explain the project';
     s.acceptanceCriteria = [{ id: 'DOC-1', description: 'Introduction exists', verifier: 'docs-bdd' }];
   });
@@ -242,17 +243,18 @@ describe('A decision the approved SBI cannot settle goes back to a human', () =>
     }));
   });
   describe('given high risk content the SBI did not declare', () => {
-    it('when a level 2 SBI proposes a breaking API change then stops as NEW_HIGH_RISK with the matched rule', () => fixture(async root => {
-      const run = await runHarness({ root, quiet: true, agent: agent(good + '\n// breaking api') });
+    // #157: a breaking API change is LEVEL 2 now; a data deletion stays LEVEL 3 and matches no Security rule.
+    it('when a level 2 SBI proposes a data deletion then stops as NEW_HIGH_RISK with the matched rule', () => fixture(async root => {
+      const run = await runHarness({ root, quiet: true, agent: agent(good + '\n// data deletion') });
       assert.equal(run.status, 'ESCALATED');
       assert.deepEqual({ code: run.escalation.code, decision: run.escalation.decision }, { code: 'NEW_HIGH_RISK', decision: 'NEEDS_HUMAN_DECISION' });
-      assert.match(run.reason, /breaking_api/);
+      assert.match(run.reason, /data_retention/);
       assert.doesNotMatch(run.reason, /implementation gate/i);
       assert.equal(run.headSha, run.baselineSha);
     }));
     it('when the SBI already declared level 3 then the same change continues without escalation', () => fixture(async root => {
       await update(root, sbiPath, s => s.minimumRiskLevel = 3);
-      const run = await runHarness({ root, quiet: true, agent: agent(good + '\n// breaking api') });
+      const run = await runHarness({ root, quiet: true, agent: agent(good + '\n// data deletion') });
       assert.equal(run.executionStatus, 'DONE');
       assert.equal(run.risk.level, 3);
     }));

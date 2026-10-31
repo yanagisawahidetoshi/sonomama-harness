@@ -57,4 +57,4 @@
 
 Issue、SBI、Design Docs、外部資料。
 
-ADRへの変更はHuman Gate対象。AIだけで確定しない。
+ADRの状態を変えるのは人間だけ。AIだけで確定しない。

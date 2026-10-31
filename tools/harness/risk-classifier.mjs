@@ -1,7 +1,7 @@
 import { riskPolicySchema } from './schemas.mjs';
 
-// Rules provide floors; safe rules are explicit candidates, never overrides for a floor.
-export function assessRisk({ files = [], metadata = {}, humanGate = false, aiRisk = null, securityAssessment = null, lane = null }, rawPolicy) {
+// LEVEL 1 is the default (#157). Rules only raise the level, and the highest floor any of them sets wins.
+export function assessRisk({ files = [], metadata = {}, humanGate = false, aiRisk = null, securityAssessment = null, }, rawPolicy) {
   const policy = riskPolicySchema.parse(rawPolicy);
   const reasons = [], matches = [];
   let floor = 0;
@@ -9,8 +9,9 @@ export function assessRisk({ files = [], metadata = {}, humanGate = false, aiRis
     floor = Math.max(floor, level); reasons.push(reason); matches.push({ source, reason, level, path });
   };
   if (humanGate) match(3, 'human_gate', 'human-gate');
-  if (securityAssessment?.securitySensitive || securityAssessment?.minimumRiskLevel === 3) match(3, 'security_rule_minimum', 'security-enforcement');
-  if (metadata.minimumRiskLevel === 3) match(3, 'sbi_minimum', 'sbi-metadata');
+  // classifySecurity clamps minimumRiskLevel to at least 2 even when nothing matched, so only a matched rule may raise the floor, to its own minimum.
+  if (securityAssessment?.securitySensitive || securityAssessment?.minimumRiskLevel === 3) match(Math.max(2, securityAssessment.minimumRiskLevel || 2), 'security_rule_minimum', 'security-enforcement');
+  if (metadata.minimumRiskLevel > 1) match(metadata.minimumRiskLevel, 'sbi_minimum', 'sbi-metadata');
   const metadataText = JSON.stringify(metadata);
   for (const rule of policy.metadataRules) {
     if (new RegExp(rule.pattern, 'i').test(metadataText)) match(rule.minimumLevel, rule.id, 'sbi-metadata');
@@ -18,27 +19,26 @@ export function assessRisk({ files = [], metadata = {}, humanGate = false, aiRis
   for (const file of files) {
     for (const path of [file.path, file.previousPath].filter(Boolean)) {
       for (const rule of policy.pathRules) {
-        // A verified Run snapshot is under .harness/ by contract; only that location match is dropped (see sbi-source riskView).
-        if (file.verifiedSbiSnapshot && rule.id === 'harness_policy') continue;
+        // A verified Run snapshot is under .harness/ by contract; only those two location matches are dropped (see sbi-source riskView).
+        // riskView only ever marks .harness/state/sbi-<N>.json whose content is the snapshot the Harness wrote, so this cannot exempt .harness/rules/.
+        if (file.verifiedSbiSnapshot && ['harness_policy', 'policy_root'].includes(rule.id)) continue;
         if (new RegExp(rule.pattern, 'i').test(path)) match(rule.minimumLevel, rule.id, 'path', path);
       }
     }
-    // Inspect changed lines, including removals. An unknown semantic effect remains medium.
+    const tests = policy.testProtection;
+    if ([file.path, file.previousPath].filter(Boolean).some(path => new RegExp(tests.pathPattern, 'i').test(path))) {
+      if (file.status === 'D') match(tests.minimumLevel, 'test_deleted', 'test-protection', file.path);
+      if (new RegExp(tests.weakeningPattern, 'm').test(file.added || '')) match(tests.minimumLevel, 'test_skipped_or_focused', 'test-protection', file.path);
+      if (new RegExp(tests.assertionPattern, 'm').test(file.deleted || '')) match(tests.minimumLevel, 'test_assertion_removed', 'test-protection', file.path);
+    }
+    // Inspect changed lines, including removals. An unknown semantic effect stays at the default level.
     const text = `${file.added || ''}\n${file.deleted || ''}`;
     for (const rule of policy.metadataRules) {
       if (new RegExp(rule.pattern, 'i').test(text)) match(rule.minimumLevel, rule.id, 'changed-content', file.path);
     }
   }
-  const safeMatches = files.map(file => {
-    if (file.binary || file.previousPath || file.modeChanged || (file.mode && file.mode !== '100644')) return null;
-    return policy.safeRules.find(rule => (!rule.requiredLane || (lane?.name === rule.requiredLane && !lane.requiresSecurityGate))
-      && new RegExp(rule.pattern).test(file.path) && rule.allowedStatuses.includes(file.status)
-      && Buffer.byteLength(`${file.added || ''}${file.deleted || ''}`) <= rule.maxChangedBytes);
-  });
-  const safe = files.length > 0 && safeMatches.every(Boolean);
-  let level = Math.max(safe ? 1 : policy.defaultLevel, floor);
-  if (safe && floor < 2) reasons.push(...safeMatches.map(rule => rule.id));
-  else reasons.push('default_medium');
+  let level = Math.max(policy.defaultLevel, floor);
+  if (!floor) reasons.push('default_low');
   if (aiRisk !== null) {
     if (![1, 2, 3].includes(aiRisk)) throw new Error('Invalid AI risk level');
     matches.push({ source: 'ai-advisory', level: aiRisk, reason: 'AI can only raise risk' });
@@ -47,6 +47,6 @@ export function assessRisk({ files = [], metadata = {}, humanGate = false, aiRis
   }
   return { level, label: ['LOW', 'MEDIUM', 'HIGH'][level - 1], reasons: [...new Set(reasons)], matches,
     requiredHumanApprovals: Math.max(policy.levels[level].requiredHumanApprovals, securityAssessment?.requiredHumanApprovals || 0),
-    autoMergeAllowed: lane?.name !== 'prototype' && level === 1 && !humanGate && !securityAssessment?.securitySensitive && policy.levels[level].autoMerge,
+    autoMergeAllowed: level === 1 && !humanGate && !securityAssessment?.securitySensitive && policy.levels[level].autoMerge,
     humanGate, defaultLevel: policy.defaultLevel };
 }

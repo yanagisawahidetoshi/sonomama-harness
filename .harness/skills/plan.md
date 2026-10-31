@@ -33,7 +33,7 @@ PBIを、人間が短時間でレビューできる粒度のSBIへ分割する�
 - layers: 実装SBIは1つだけ。最終確認SBIは確認するレイヤーをすべて。
 - estimatedFiles: 想定する変更ファイル数（テストを含む）。
 - oversizeReason: estimatedFilesがlimits.estimatedFilesを超える実装SBIだけ、分割できない理由を書く。それ以外はnull。
-- riskCandidate: L1 / L2 / L3の候補。既定はL2。securityImpactがあればL3。最終判定はExecution Harnessが行う。
+- riskCandidate: L1 / L2 / L3の候補。既定はL1。Migration・schema・OpenAPI / API Schema・CI・Dockerfile・ADR・Harness実装を含むならL2。securityImpactがあればL3。最終判定はExecution Harnessが行う。
 - securityImpact: securityCategoriesから該当する分類。影響がなければ空配列。
   AuthN/AuthZ/RLS/PII/Migration/Secret/本番データ・APIへの影響は必ず宣言する。
 - verification: applicationTest（例: RSpec / RNTL / Vitest）、acceptance（例: Trusted Acceptance）、e2e（例: 不要 / Maestro）。

@@ -50,4 +50,4 @@ contractのマイグレーションの隣に、`apps/api/db/migrate/exceptions/<
 digestは、マイグレーションファイルの内容と申請の全項目（操作、expandのcommit、rollback、データの退避、productionState）から計算する。どれかが変われば、それまでの承認は数えない。
 headが変わったときも、新しいcommitへのReviewが必要になる。承認を取り消すには、最後の行を`harness-migration-exception-revoke: <digest>`にしたReviewをCommentで投稿する。dismissされたReviewも数えない。
 
-この承認は、mergeの承認（[ADR-0001](../adr/0001-github-review-merge-approval.md)）とは別の目的として扱い、1つのReviewを両方に使わない。mergeにはLEVEL 3のApprove Reviewが別に必要になる。
+この承認は、mergeの承認（[ADR-0001](../adr/0001-github-review-merge-approval.md)）とは別の目的として扱い、1つのReviewを両方に使わない。mergeには、破壊的な操作で上がったLEVEL 3のApprove Reviewが別に必要になる。
