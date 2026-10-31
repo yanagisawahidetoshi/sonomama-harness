@@ -166,7 +166,11 @@ async function verifyHead({ root, summary, inputs, result, iterDir, iteration, r
   await json(join(iterDir,'verifier-selection.json'),result.verification.checks.map(({id,selectionReasons,required,status})=>({id,selectionReasons,required,status})));
   summary.securityAssessment = combineSecurity(summary.securityAssessment, classifySecurity({files:await riskFiles(root,summary,inputs,files),sbi},securityPolicy));
   summary.executionSecurityAssessment = summary.securityAssessment;
-  result.securityVerification = redact(await verifySecurity({ workspace, sbi, assessment: summary.securityAssessment, policy: securityPolicy, config, headSha:summary.headSha, verification:result.verification }));
+  // The committed diff, not allowedFiles alone: an SBI Issue allows directories only, and its allowedFiles is empty.
+  // The Issue snapshot the Harness commits is Issue text, not code, so it neither counts as a target nor fails on a pattern the Issue names.
+  const snapshot = inputs.sbiSnapshot && snapshotPath(inputs.sbiSnapshot);
+  const changed = [...new Set([...files.filter(f => f.status !== 'D').map(f => f.path), ...sbi.allowedFiles])].filter(path => path !== snapshot).map(path => ({ path }));
+  result.securityVerification = redact(await verifySecurity({ workspace, sbi, assessment: summary.securityAssessment, policy: securityPolicy, config, headSha:summary.headSha, verification:result.verification, changed, requireTargets: true }));
   result.security = { id:'security',required:true,status:securityPassed(result.securityVerification)?'PASS':'FAIL' };
   result.gateApproved = await resolveGate(root,summary);
   await json(join(directory,'security-assessment.json'),{...summary.securityAssessment,headSha:summary.headSha});

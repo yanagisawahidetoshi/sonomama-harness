@@ -62,8 +62,9 @@ export function securityPassed(evidence) {
     && evidence.requiredVerifiers.every(id => evidence.checks?.some(c => c.id === id && c.required === true && c.status === 'PASS'))
     && evidence.checks?.every(c => c.required !== true || c.status === 'PASS');
 }
-// changed replaces reading sbi.allowedFiles: CI passes the added lines of each changed file (envTemplate marks a vetted .env template).
-export async function verifySecurity({ workspace, sbi, assessment, policy, config, headSha, verification, changed }) {
+// changed lists what the content checks read: CI passes the added lines of each changed file (envTemplate marks a vetted .env template),
+// a Harness run its committed diff read whole from the workspace. With requireTargets, scanning no file is a SKIP, never a PASS.
+export async function verifySecurity({ workspace, assessment, policy, config, headSha, verification, changed, requireTargets = false }) {
   const registry = new Map(policy.verifiers.map(v => [v.id, v]));
   for (const adapter of config.securityVerifiers || []) {
     if (registry.has(adapter.id) && registry.get(adapter.id).kind !== 'command') throw new Error('Builtin security verifiers cannot be overridden');
@@ -71,7 +72,9 @@ export async function verifySecurity({ workspace, sbi, assessment, policy, confi
   }
   const checks = [], violations = [];
   const content = [];
-  for (const { path, text, envTemplate } of changed ?? sbi.allowedFiles.map(path => ({ path }))) {
+  const contentKinds = new Set(['secret', 'pii-log', 'forbidden']);
+  if (!changed && assessment.requiredVerifiers.some(id => contentKinds.has(registry.get(id)?.kind))) throw new Error('Security content checks need the changed files to scan');
+  for (const { path, text, envTemplate } of changed ?? []) {
     if (isSecretPath(path) && !envTemplate) { violations.push({ code: 'prohibited_secret_path', path }); continue; }
     if (text !== undefined) { content.push({ path, text }); continue; }
     try { content.push({ path, text: await readFile(join(workspace,path), 'utf8') }); } catch (e) { if (e.code !== 'ENOENT') throw e; }
@@ -95,7 +98,9 @@ export async function verifySecurity({ workspace, sbi, assessment, policy, confi
         for (let i=0;i<patterns.length;i++) if (new RegExp(patterns[i],'im').test(file.text)) findings.push({path:file.path,code:adapter.kind,patternIndex:i});
       }
       violations.push(...findings.map(f=>({...f,verifier:id})));
-      checks.push({id,verifier:id,required:true,status:findings.length?'FAIL':'PASS',findings});
+      const scanned = content.map(f=>f.path);
+      if (requireTargets && !scanned.length) { checks.push({id,verifier:id,required:true,status:'SKIP',reason:'no changed file to scan',scanned,findings}); continue; }
+      checks.push({id,verifier:id,required:true,status:findings.length?'FAIL':'PASS',scanned,findings});
     }
   }
   for (const id of registry.keys()) if (!assessment.requiredVerifiers.includes(id)) checks.push({id,verifier:id,required:false,status:'SKIP',reason:'not applicable to this change'});
