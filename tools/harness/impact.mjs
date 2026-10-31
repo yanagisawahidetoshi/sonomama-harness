@@ -202,7 +202,7 @@ async function changedContent(root, files) {
 // Completion Judge: trusted acceptance of every changed SBI and the Harness Security Policy run here. An ambiguous Production diff must be backed
 // by a ready SBI Run snapshot; an engineering diff needs none (ADR-0006).
 // expectedHeadSha is the head the workflow checked out; the CLI always passes it, so a missing value fails there.
-export async function runCompletionJudge({ root, workspace = root, base, all = false, needs, repository = process.env.GITHUB_REPOSITORY, pullNumber, github = githubCli, githubPr, maestroResults, expectedHeadSha, acceptanceResults = join(root, acceptanceResultsDirectory) }) {
+export async function runCompletionJudge({ root, workspace = root, base, all = false, needs, repository = process.env.GITHUB_REPOSITORY, pullNumber, eventName, github = githubCli, githubPr, maestroResults, expectedHeadSha, acceptanceResults = join(root, acceptanceResultsDirectory) }) {
   const { config, files, sbis, snapshots, impact } = await loadImpact({ root, workspace, base, all });
   const headSha = (await git(workspace, ['rev-parse', 'HEAD'])).stdout.trim();
   // The Issue is read once for the generated acceptance and the SBI source check, so both judge the same Issue.
@@ -242,9 +242,9 @@ export async function runCompletionJudge({ root, workspace = root, base, all = f
   // while the Run trailers alone are no source and never change the change type. A legacy hand-written SBI is not a snapshot (#217).
   const snapshotChanged = files.some(f => snapshotFilePattern.test(f.path));
   // #220: a Harness PR (harness/<run-id>) needs the snapshot of its own run whatever the diff, and no exemption lifts that.
-  const harnessPull = all ? null : await readHarnessPull({ repository, pullNumber, github });
+  const harnessPull = all ? null : await readHarnessPull({ repository, pullNumber, eventName, github });
   const sourceRequired = exemption?.exempt ? [] : impact.sbiRequiredReasons.length ? impact.sbiRequiredReasons : snapshotChanged ? ['sbi-snapshot'] : [];
-  const required = [...(harnessPull ? [`harness-pr:${harnessPull.branch ?? `#${pullNumber}`}`] : []), ...sourceRequired];
+  const required = [...(harnessPull ? [`harness-pr:${harnessPull.branch ?? `#${pullNumber ?? 'missing'}`}`] : []), ...sourceRequired];
   const verified = await verifySbiSource({ root: workspace, base, files, required, config, repository, github: issueGithub });
   const pullReasons = judgeHarnessPull({ pull: harnessPull, snapshots, source: verified });
   const source = { ...verified, reasons: [...pullReasons, ...verified.reasons], status: pullReasons.length ? 'FAIL' : verified.status, ...(exemption ? { exemption } : {}) };

@@ -92,9 +92,12 @@ export function snapshotMismatch({ snapshot, source, config }) {
 // #220: harness:run opens its PR from harness/<run-id> only for a run from an approved SBI Issue. A PR on such a branch is therefore held to
 // the snapshot of that same run whatever its diff, so a PR opened from --sbi PATH by a regression, or a hand-made harness/* branch, never passes.
 // pullNumber is set on a pull_request event; a PR that cannot be read cannot be told apart from a Harness PR and fails closed.
+// eventName is GITHUB_EVENT_NAME as the CLI read it: a pull_request or pull_request_target event without a PR number fails closed too.
 export const harnessBranchPattern = /^harness\/(.+)$/;
-export async function readHarnessPull({ repository, pullNumber, github = githubCli }) {
-  if (pullNumber === undefined) return null;
+const pullRequestEvents = new Set(['pull_request', 'pull_request_target']);
+export async function readHarnessPull({ repository, pullNumber, eventName, github = githubCli }) {
+  if (pullNumber === undefined) return pullRequestEvents.has(eventName)
+    ? { branch: null, runId: null, reasons: [`harness pr: the ${eventName} event gave no pull request number (HARNESS_PULL_REQUEST); a Harness PR needs the snapshot of its own run`] } : null;
   const unknown = reason => ({ branch: null, runId: null, reasons: [`harness pr: #${pullNumber} ${reason}; a Harness PR needs the snapshot of its own run`] });
   if (!/^[1-9]\d*$/.test(String(pullNumber))) return unknown('is not a pull request number');
   if (!repository) return unknown('cannot be read (GITHUB_REPOSITORY is not set)');
