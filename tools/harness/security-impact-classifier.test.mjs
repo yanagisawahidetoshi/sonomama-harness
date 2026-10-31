@@ -77,7 +77,6 @@ describe('Security Impact Classifier on the scope of application security verifi
       ['SEC-AUTHZ-001', 'rails-authz-test', 'This endpoint requires authorization.'],
       ['SEC-RLS-001', 'rails-rls-test', 'Tenants are isolated with ROW LEVEL SECURITY.'],
       ['SEC-ROLE-001', 'rails-authz-test', 'Each member has a role_id.'],
-      ['SEC-SCHEMA-001', 'migration-safety', 'We will CREATE TABLE invitations.'],
       ['SEC-LIFECYCLE-001', 'data-lifecycle-test', 'Invitations follow the retention policy.'],
       ['SEC-DESTRUCTIVE-001', 'data-lifecycle-test', '招待は本番APIで発行する。'],
     ]) {
@@ -91,6 +90,16 @@ describe('Security Impact Classifier on the scope of application security verifi
         assert.equal(result.requiredVerifiers.includes(verifier), false);
       });
     }
+    // An ordinary schema change is detected and asks for one review; only a destructive operation reaches LEVEL 3 (#157).
+    it('when SEC-SCHEMA-001 matches the prose then asks for one review without requiring migration-safety', () => {
+      const result = assess([{ path: 'docs/adr/0002-foo.md', status: 'A', added: 'We will CREATE TABLE invitations.' }]);
+      assert.ok(detected(result, 'SEC-SCHEMA-001'));
+      assert.equal(result.securitySensitive, true);
+      assert.equal(result.requiresPreImplementationGate, false);
+      assert.equal(result.minimumRiskLevel, 2);
+      assert.equal(result.requiredHumanApprovals, 1);
+      assert.equal(result.requiredVerifiers.includes('migration-safety'), false);
+    });
     it('when it changes then still requires secret-scan and forbidden-pattern-check', () => {
       const result = assess([{ path: 'docs/adr/0002-foo.md', status: 'A', added: 'This endpoint requires authorization.' }]);
       assert.ok(result.requiredVerifiers.includes('secret-scan'));

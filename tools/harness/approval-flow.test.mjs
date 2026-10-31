@@ -24,7 +24,7 @@ describe('Approval and resume states', () => {
       for (const name of ['risk-assessment.json', 'approvals.json', 'merge-decision.json', 'changes.json']) {
         assert.ok((await readFile(join(root, run.runDir, name), 'utf8')).length);
       }
-      assert.equal((await readJson(join(root, run.runDir, 'risk-assessment.json'))).reasons.includes('default_medium'), true);
+      assert.equal((await readJson(join(root, run.runDir, 'risk-assessment.json'))).reasons.includes('sbi_minimum'), true);
       assert.equal(resumed.events.some(e => e.status === 'MERGED'), false);
     }));
     it('when approvals evidence is forged then it grants no approval', () => fixture(async root => {
@@ -114,6 +114,7 @@ describe('Workspace and verifier registry', () => {
     it('when a registered docs verifier validates safe docs then becomes auto merge eligible without merging', () => fixture(async root => {
       await update(root, sbiPath, s => {
         s.allowedFiles = ['docs/product/intro.md'];
+        s.minimumRiskLevel = 1;
         s.title = 'Write an introduction'; s.description = 'Explain the project';
         s.acceptanceCriteria = [{ id: 'DOC-1', description: 'Introduction exists', verifier: 'docs-bdd' }];
       });
