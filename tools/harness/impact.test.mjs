@@ -642,6 +642,24 @@ describe('CI workflow setup', () => {
     });
   });
 
+  // harness:test was the critical path of a Full Gate pull request (#197): it runs as shards of the same file list in parallel jobs.
+  describe('given the Harness tests split into shards', () => {
+    const job = workflow.jobs['harness-test'];
+    it('when the Full Gate runs then every shard of the same test command runs, and one failing shard does not cancel the others', () => {
+      const shards = job.strategy.matrix.shard;
+      assert.ok(shards.length > 1);
+      assert.deepEqual(shards, shards.map((_, i) => i + 1));
+      assert.equal(job.strategy['fail-fast'], false);
+      const step = job.steps.find(s => s.run === 'pnpm harness:test');
+      assert.equal(step.env.HARNESS_TEST_SHARD, `\${{ matrix.shard }}/${shards.length}`);
+    });
+    it('when harness:test runs with a shard then node runs only that shard of the full file list, and without one it runs everything', async () => {
+      const script = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8')).scripts['harness:test'];
+      assert.match(script, /^node --test \$\{HARNESS_TEST_SHARD:\+--test-shard=\$HARNESS_TEST_SHARD\} /);
+      for (const glob of ['tools/harness/*.test.mjs', 'tools/harness/agents/*.test.mjs', '.harness/verification/*.test.mjs', '.harness/verification/lib/*.test.mjs']) assert.ok(script.includes(glob), glob);
+    });
+  });
+
   // The self-repair demo was the longest job of a pull request run: every real application verifier ran a second time inside its run
   // worktree, about 7 minutes of an 8 minute run (#192). The loop itself needs no verifier, so a pull request proves the loop and a
   // push to main keeps proving it against the real verifiers.
