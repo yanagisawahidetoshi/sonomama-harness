@@ -1,0 +1,30 @@
+# Keys under responses and headers are names, so a default response or an x- header is checked like any other entry.
+openapi: 3.1.0
+info:
+  title: Unsupported features under named entries
+  version: "1"
+paths:
+  /reports:
+    get:
+      responses:
+        "200":
+          description: Reports
+          headers:
+            x-trace-id:
+              schema:
+                type: string
+                format: trace-code
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: string
+                    format: error-code
