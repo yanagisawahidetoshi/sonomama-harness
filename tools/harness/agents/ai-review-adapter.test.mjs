@@ -2,8 +2,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
 import { providerAiReviewer } from './ai-review-adapter.mjs';
-// #187: the real AI Review adapter runs the provider CLI on the reviewed SHA and diff only, and trusts nothing it returns
-// until the strict schema accepts it. The CLI is stubbed here, so these tests never reach a model.
+// #187: the real AI Review adapter runs the trusted review provider (Claude CLI, tool-less) on the reviewed SHA and diff only,
+// whatever provider implemented the run, and trusts nothing it returns until the strict schema accepts it.
+// The CLI is stubbed here, so these tests never reach a model.
 const head = 'a'.repeat(40), base = 'b'.repeat(40);
 const secret = 'ghp_' + 'A'.repeat(36);
 const input = (overrides = {}) => ({
@@ -35,19 +36,21 @@ describe('Real AI Review adapter', () => {
       const result = await providerAiReviewer({ run })(input());
       assert.deepEqual(result, { adapter: 'claude', ...verdict() });
     });
-    it('when Codex reviews then reads its answer file and returns the review', async () => {
-      const { run } = cli(verdict({ status: 'FAIL', riskLevel: 2, reasons: ['misses AC-1'] }));
+    it('when Codex implemented the run then Claude reviews it and Codex never runs', async () => {
+      const { run, calls } = cli(verdict({ status: 'FAIL', riskLevel: 2, reasons: ['misses AC-1'] }));
       const result = await providerAiReviewer({ run })(input({ provider: 'codex' }));
-      assert.equal(result.adapter, 'codex');
+      assert.deepEqual(calls.map(c => c.command), ['claude']);
+      assert.equal(result.adapter, 'claude');
       assert.equal(result.status, 'FAIL');
       assert.equal(result.riskLevel, 2);
     });
-    it('when it runs the CLI then runs it with no tools, outside the workspace and within the configured timeout', async () => {
+    it('when it runs the CLI then runs it with no tools, no advisor, outside the workspace and within the configured timeout', async () => {
       const { run, calls } = cli(verdict());
       await providerAiReviewer({ run })(input());
       const [call] = calls;
       assert.equal(call.command, 'claude');
       assert.deepEqual(call.args.slice(call.args.indexOf('--tools'), call.args.indexOf('--tools') + 2), ['--tools', '']);
+      assert.deepEqual(JSON.parse(call.args[call.args.indexOf('--settings') + 1]), { advisorModel: '' });
       assert.notEqual(call.options.cwd, '/nonexistent/workspace');
       assert.ok(call.options.cwd);
       assert.equal(call.options.timeoutMs, 3000);
@@ -90,7 +93,7 @@ describe('Real AI Review adapter', () => {
     ]) {
       it(`when ${name} then rejects the review`, async () => {
         const { run } = cli(answer);
-        await assert.rejects(providerAiReviewer({ run })(input({ provider: 'codex' })));
+        await assert.rejects(providerAiReviewer({ run })(input()));
       });
     }
     it('when the CLI times out then rejects the review', async () => {
@@ -104,6 +107,19 @@ describe('Real AI Review adapter', () => {
     it('when Claude reports an error then rejects the review', async () => {
       const { run } = cli(() => ({ ok: true, code: 0, stdout: JSON.stringify({ is_error: true, result: 'authentication failed' }), stderr: '' }));
       await assert.rejects(providerAiReviewer({ run })(input()));
+    });
+  });
+
+  describe('given a review provider that is not trusted or a Claude CLI that cannot run', () => {
+    it('when Codex is named as the review provider then refuses without running any CLI', async () => {
+      const { run, calls } = cli(verdict());
+      await assert.rejects(providerAiReviewer({ run, reviewProvider: 'codex' })(input({ provider: 'codex' })), /trusted/);
+      assert.equal(calls.length, 0);
+    });
+    it('when the Claude CLI is not installed then rejects the review and never falls back to Codex', async () => {
+      const { run, calls } = cli(() => ({ ok: false, timedOut: false, code: null, error: 'spawn claude ENOENT', stdout: '', stderr: '' }));
+      await assert.rejects(providerAiReviewer({ run })(input({ provider: 'codex' })));
+      assert.deepEqual(calls.map(c => c.command), ['claude']);
     });
   });
 

@@ -311,6 +311,12 @@ describe('AI Review result bound to the reviewed SHA (#187)', () => {
       assert.notEqual(run.executionStatus, 'DONE');
       assert.equal(run.merge.autoMergeEligible, false);
     }));
+    it('when Codex implemented the run then Claude reviews it and the run is auto merge eligible', () => fixture(async root => {
+      const docs = await docsSbi(root);
+      const run = await runHarness({ root, quiet: true, provider: 'codex', agent: docs, semanticReviewer: answering() });
+      assert.equal(run.iterations.at(-1).semanticReview.adapter, 'claude');
+      assert.equal(run.merge.autoMergeEligible, true);
+    }));
     it('when the run uses the fake provider then the fake adapter reviews it and no CLI runs', () => fixture(async root => {
       let called = 0;
       const real = providerAiReviewer({ run: async () => { called++; throw new Error('no CLI in a fake run'); } });
