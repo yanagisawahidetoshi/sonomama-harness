@@ -194,7 +194,8 @@ const readyEvent = { event: 'labeled', label: { name: 'ready' }, created_at: rea
 describe('Starting a run from an SBI Issue a human marked ready', () => {
   const github = ({ own = issue(), timeline = [readyEvent], edits = [] } = {}) => ({ fetchIssue: async () => own, issueTimeline: async () => timeline, bodyEdits: async () => edits });
   const load = gh => loadSbiIssue({ issueUrl: ref.url, config: config(), github: gh });
-  const editedAt = editedAt => ({ editedAt, deletedAt: null });
+  // A version GitHub keeps in the edit history; the newest one is the current body.
+  const editedAt = editedAt => ({ editedAt, deletedAt: null, body: issue().body });
   describe('given the Issue as it was approved', () => {
     it('when nothing was edited after ready was added then the run starts from the approved content', async () => {
       const loaded = await load(github());
