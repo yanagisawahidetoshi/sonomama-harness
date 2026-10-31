@@ -47,9 +47,14 @@
       "minimumLevel": 3
     },
     {
-      "id": "infrastructure",
-      "pattern": "(^|/)(infra|infrastructure|terraform|deploy|deployment|release|k8s|helm)(/|\\.|$)|\\.tf$",
+      "id": "production_infrastructure",
+      "pattern": "(^|/)(infra|infrastructure|terraform|k8s|helm|deploy|deployment)/(.*/)?([^/]*[._-])?(prod|production)([/._-]|$)|(^|/)([^/]*[._-])?(prod|production)([._-][^/]*)?\\.(tf|tfvars)$",
       "minimumLevel": 3
+    },
+    {
+      "id": "infrastructure",
+      "pattern": "(^|/)(infra|infrastructure|terraform|deploy|deployment|release|k8s|helm)(/|\\.|$)|\\.(tf|tfvars)$",
+      "minimumLevel": 2
     },
     {
       "id": "migration",

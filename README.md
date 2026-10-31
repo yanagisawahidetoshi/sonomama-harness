@@ -187,9 +187,9 @@ SBIで次のmetadataを指定できる。
 }
 ```
 
-Security-sensitiveな変更のうち、AuthN / AuthZ / RLS / PII / Secret / RolePermission / Infrastructure /
+Security-sensitiveな変更のうち、AuthN / AuthZ / RLS / PII / Secret / RolePermission / 本番Infrastructure・危険方向のInfrastructure変更 /
 破壊的操作 / DataLifecycle / PIILoggingは最低LEVEL 3と実装後の異なる2人以上のReviewを強制する。
-Migration / DBSchema / CICDSecurity / SecurityConfig / SecurityDesignは検知してVerifierを選ぶが、最低LEVEL 2・1人承認。
+Migration / DBSchema / CICDSecurity / SecurityConfig / SecurityDesign / 本番以外の通常のInfrastructureは検知してVerifierを選ぶが、最低LEVEL 2・1人承認。
 Security影響の判断はSBI承認で人間が行い、承認済みSBIに実装前Gateは置かない（#175）。`preImplementationGate: true`は
 「SBI承認で人間が判断し、LEVEL 3・2人のReviewを要するrule」を表す（Rule IDの対応を保つため名前は変えない）。承認はそのSBIと宣言した範囲に対するもの。
 agentが新しいSecurity影響を提案したら、適用前にNEEDS_HUMAN_DECISIONで止め、SBIの更新・再承認と新しいrunを求める。

@@ -251,16 +251,55 @@
     },
     {
       "id": "SEC-INFRA-001",
-      "description": "InfrastructureSecurityへの影響を検知し着手承認・必須検証・HIGHを強制する",
+      "description": "通常のInfrastructureSecurityへの影響を検知し、必須検証と最低LEVEL 2・1人承認を強制する。本番と危険方向の変更はSEC-PRODINFRA-001（#157）",
       "categories": [
         "InfrastructureSecurity"
       ],
       "pathPatterns": [
-        "(^|/)(infra|infrastructure|terraform|k8s|helm)(/|$)|\\.tf$"
+        "(^|/)(infra|infrastructure|terraform|k8s|helm|deploy|deployment)(/|$)|\\.(tf|tfvars)$"
       ],
       "contentPatterns": [],
       "metadataPatterns": [
         "infrastructure|インフラ"
+      ],
+      "preImplementationGate": false,
+      "minimumRiskLevel": 2,
+      "requiredHumanApprovals": 1,
+      "requiredVerifiers": [
+        "forbidden-pattern-check"
+      ],
+      "policyDocument": "docs/security/threat-model.md"
+    },
+    {
+      "id": "SEC-PRODINFRA-001",
+      "description": "本番のInfrastructure・Deploymentへの変更と、保護の解除・権限の拡大・公開範囲の拡大のように危険な方向への変更を検知し、LEVEL 3・2人承認を強制する。危険方向は追加行だけで判定する（#157）",
+      "categories": [
+        "ProductionInfrastructure"
+      ],
+      "pathPatterns": [
+        "(^|/)(infra|infrastructure|terraform|k8s|helm|deploy|deployment)/(.*/)?([^/]*[._-])?(prod|production)([/._-]|$)",
+        "(^|/)([^/]*[._-])?(prod|production)([._-][^/]*)?\\.(tf|tfvars)$"
+      ],
+      "contentPatterns": [],
+      "addedContent": {
+        "pathPatterns": [
+          "(^|/)(infra|infrastructure|terraform|k8s|helm|deploy|deployment)(/|$)|\\.(tf|tfvars)$"
+        ],
+        "patterns": [
+          "\\bprevent_destroy\\s*=\\s*false\\b",
+          "\\bdeletion_protection(_enabled)?\\s*=\\s*false\\b",
+          "\\bforce_destroy\\s*=\\s*true\\b",
+          "\\bskip_final_snapshot\\s*=\\s*true\\b",
+          "\\b(not_)?(actions?|resources?)\\b\"?\\s*[:=]\\s*\\[?\\s*\"\\*\"",
+          "\\b0\\.0\\.0\\.0/0\\b",
+          "(^|[^0-9a-f:])::/0\\b"
+        ],
+        "ignoredPatterns": [
+          "\\begress\\s*\\{[^}]*\\}"
+        ]
+      },
+      "metadataPatterns": [
+        "production[ _-]?(infrastructure|deployment)|本番インフラ|本番環境へのデプロイ"
       ],
       "preImplementationGate": true,
       "minimumRiskLevel": 3,

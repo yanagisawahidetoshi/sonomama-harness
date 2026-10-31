@@ -8,7 +8,7 @@
 - Security RequirementsのSSOTはdocs/security・docs/product・ADR。Harness内で業務権限・PII定義・retention期間・匿名化要件を決めない。未決事項をAIが推測して確定しない。
 - Security rule IDを文書・security.json・human-gates.jsonで対応させる。harness:checkはIDと文書参照の整合性だけを検証し、意味の妥当性は人間がレビューする。
 - Security-sensitiveは必須Verifierを強制する。matched ruleが要求する検証は、SBI側で省略しても強制される。
-- 最低LEVELと承認人数はrule単位。`preImplementationGate: true`のrule（AuthN / AuthZ / RLS / PII / Secret / RolePermission / Infrastructure / 破壊的操作 / DataLifecycle / PIILogging）は最低LEVEL 3と実装後の異なる2人以上のReviewを強制する。Migration / DBSchema / CICDSecurity / SecurityConfig / SecurityDesignは最低LEVEL 2・1人承認。
+- 最低LEVELと承認人数はrule単位。`preImplementationGate: true`のrule（AuthN / AuthZ / RLS / PII / Secret / RolePermission / ProductionInfrastructure / 破壊的操作 / DataLifecycle / PIILogging）は最低LEVEL 3と実装後の異なる2人以上のReviewを強制する。Migration / DBSchema / CICDSecurity / SecurityConfig / SecurityDesign / 本番以外の通常のInfrastructureは最低LEVEL 2・1人承認。Infrastructureを危険な方向へ変える追加行（保護の解除、IAMの全権限、すべての送信元へのingress）は本番以外でもLEVEL 3。
 - Security影響の判断はSBI承認で人間が行う（#175）。承認済みSBIに対して実装前Gateは置かない。security.jsonの`preImplementationGate: true`とhuman-gates.jsonの`preImplementationRuleIds`は「SBI承認で人間が判断し、LEVEL 3・2人のReviewを要するrule」を示す（Rule IDの対応を保つため名前は変えない）。承認済みSBIが宣言していないruleへの一致は、実装前にNEEDS_HUMAN_DECISIONで止める。
 - secret-scanとforbidden-pattern-checkはalwaysRequiredVerifiersで、Risk Levelに関係なく全変更で走る。ここを条件実行にしない。
 - security.jsonでappliesToを持つ実装Verifier（rails-authz-test等）は、ルールに一致したファイルがappliesToに入るとき、またはSBIがそのルールを宣言したときだけ必須にする。docs・ADRだけの変更でも、そのruleの最低LEVEL・承認人数は変わらない。

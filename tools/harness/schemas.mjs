@@ -286,6 +286,9 @@ export const securityPolicySchema = z.strictObject({
     pathPatterns: z.array(text), contentPatterns: z.array(text), metadataPatterns: z.array(text),
     // A pattern that matches empty text would exempt every path or erase every content, so it is rejected.
     contentExceptions: z.array(z.strictObject({ pathPatterns: z.array(narrowPattern).min(1), ignoredPatterns: z.array(narrowPattern).min(1) })).optional(),
+    // Only the added lines of a file under pathPatterns count, so a change that turns a setting dangerous matches and one that narrows it does not.
+    // ignoredPatterns drop safe forms (an egress block) first; a binary file there cannot be read and matches (#157).
+    addedContent: z.strictObject({ pathPatterns: z.array(narrowPattern).min(1), patterns: z.array(narrowPattern).min(1), ignoredPatterns: z.array(narrowPattern).default([]) }).optional(),
     // A rule carries the Human Gate and two reviews only when its impact is severe; an ordinary one asks for a single review (#157).
     preImplementationGate: z.boolean(), minimumRiskLevel: z.union([z.literal(2), z.literal(3)]),
     requiredHumanApprovals: z.number().int().min(1), requiredVerifiers: z.array(text).min(1), policyDocument: relativePath,

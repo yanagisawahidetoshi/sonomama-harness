@@ -30,7 +30,8 @@ export async function check(root, sbiPath, sbiValue, { sbiIssue = null } = {}) {
   dependencyBotPolicySchema.parse(await readJson(join(root, '.harness/rules/dependency-bots.json')));
   const securityDocuments = {};
   for (const rule of securityPolicy.rules) {
-    for (const pattern of [...rule.pathPatterns, ...rule.contentPatterns, ...rule.metadataPatterns, ...(rule.contentExceptions || []).flatMap(e => [...e.pathPatterns, ...e.ignoredPatterns])]) new RegExp(pattern);
+    for (const pattern of [...rule.pathPatterns, ...rule.contentPatterns, ...rule.metadataPatterns, ...(rule.contentExceptions || []).flatMap(e => [...e.pathPatterns, ...e.ignoredPatterns]),
+      ...(rule.addedContent ? [...rule.addedContent.pathPatterns, ...rule.addedContent.patterns, ...rule.addedContent.ignoredPatterns] : [])]) new RegExp(pattern);
     const text = await readFile(join(root, rule.policyDocument), 'utf8');
     if (!text.includes(rule.id)) throw new Error('Security policy document is missing a referenced rule ID');
     securityDocuments[rule.policyDocument] = text;

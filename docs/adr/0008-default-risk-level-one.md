@@ -44,7 +44,7 @@
 未決定（Proposed）。現時点の提案は次のとおり。
 
 1. `defaultLevel`を1にする。ルールは下限（floor）を与えるだけで、水準を下げる仕組み（`safeRules`）は持たない。
-2. LEVEL 3は重大リスクに限る。認証・認可・RLS・PII、権限モデル、Secret / Credential、`docs/security`、本番Infrastructure / Deployment、本番データの破壊・不可逆操作、`ALTER|CREATE|DROP POLICY|ROLE`、そしてポリシー自身（`.harness/rules/`・`.harness/state/`・`.github/rulesets/`・`.githooks/`）。
+2. LEVEL 3は重大リスクに限る。認証・認可・RLS・PII、権限モデル、Secret / Credential、`docs/security`、本番Infrastructure / Deployment（本番以外でも、保護の解除・IAMの全権限・すべての送信元へのingressを追加する変更）、本番データの破壊・不可逆操作、`ALTER|CREATE|DROP POLICY|ROLE`、そしてポリシー自身（`.harness/rules/`・`.harness/state/`・`.github/rulesets/`・`.githooks/`）。
 3. 通常のMigration・schema・OpenAPI / API Schema・CI / GitHub Actions・Dockerfile・ADR・Harness実装はLEVEL 2（人1人）。破壊的・不可逆な操作を変更内容から検知したときだけLEVEL 3へ上げる。
 4. Security ruleのGateと最低LEVELをrule単位にする。SEC-MIGRATION-001・SEC-SCHEMA-001・SEC-CICD-001・SEC-CONFIG-001・SEC-DESIGN-001は`preImplementationGate: false` / 最低LEVEL 2 / 承認1人。残る10ルールは従来どおりGate・LEVEL 3・2人。
 5. SEC-CONFIG-001のpathPatternから`(^|/)config(/|$)`を外し、セキュリティに関わる設定ファイル（`database.yml`、`credentials*`、`bundler-audit.yml`、`environments/production.rb`、`initializers/{cors,content_security_policy,permissions_policy,session_store,filter_parameter_logging}.rb`）だけに限定する。

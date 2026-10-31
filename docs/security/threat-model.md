@@ -14,9 +14,12 @@
 | SEC-MIGRATION-001 | データベースのマイグレーション | マイグレーションの安全性検査（migration-safety）。破壊的な操作はexpand/contractの例外承認だけで通す（[手順](../workflows/database-migrations.md)） | 不要 | レベル2 |
 | SEC-SCHEMA-001 | データベースのスキーマ | マイグレーションの安全性検査（migration-safety） | 不要 | レベル2 |
 | SEC-CICD-001 | CI/CDのセキュリティ設定 | 禁止パターンの検査（forbidden-pattern-check） | 不要 | レベル2 |
-| SEC-INFRA-001 | インフラのセキュリティ設定 | 禁止パターンの検査（forbidden-pattern-check） | 必要 | レベル3 |
+| SEC-INFRA-001 | 本番以外のインフラ・デプロイ設定の通常の変更 | 禁止パターンの検査（forbidden-pattern-check） | 不要 | レベル2 |
+| SEC-PRODINFRA-001 | 本番のインフラ・デプロイ設定の変更と、インフラを危険な方向へ変える変更 | 禁止パターンの検査（forbidden-pattern-check） | 必要 | レベル3 |
 | SEC-DESTRUCTIVE-001 | 破壊的な操作、本番データ | データの保存と削除のテスト（data-lifecycle-test） | 必要 | レベル3 |
 | SEC-DESIGN-001 | セキュリティに関わる重要な設計、ADR | 禁止パターンの検査（forbidden-pattern-check） | 不要 | レベル2 |
+
+SEC-PRODINFRA-001は、`infra`・`terraform`・`k8s`・`helm`・`deploy`配下で`prod`・`production`を含むパスと、インフラのファイルの追加行に次の設定が入った変更を対象にする。削除保護・破壊防止の解除（`prevent_destroy = false`・`deletion_protection = false`・`force_destroy = true`・`skip_final_snapshot = true`）、IAMの全権限（`actions`・`resources`が`"*"`）、すべての送信元へのingress（`0.0.0.0/0`・`::/0`。egressブロックは除く）。危険な方向かどうかは追加行だけで判定するので、既存の設定を狭める変更はレベル2のままになる。中身を読めないバイナリのインフラファイルはレベル3にする。誤検知の多い条件は増やさず、必要になったら別のIssueで足す。
 
 マイグレーション、スキーマ、CI/CD、ADRをレベル2にしているのは、ファイルの種類だけで一律に2人の承認を求めないためで、検知と検証はそのまま続ける。
 破壊的・不可逆な操作（`drop_table`・`remove_column`・`DROP TABLE`・`delete_all`等）は変更内容から検知してレベル3へ上げ、破壊的マイグレーションはそれとは別に例外承認（異なる2人）を必要とする。
