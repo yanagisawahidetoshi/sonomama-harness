@@ -14,7 +14,7 @@ const decide = (level, approvals = [], extra = {}) => mergeDecision({ risk: { le
 // The representative change of each level (#157). LEVEL 1 is the default, so an ordinary change reaches it without any explicit safe rule.
 const level1 = [
   ['an admin screen', file('apps/admin/src/features/courses/CourseList.tsx', 'export const CourseList = () => <ul />;')],
-  ['a Rails controller that reuses the existing filter', file('apps/api/app/controllers/courses_controller.rb', 'before_action :authenticate_user!\n\ndef index\n  render json: current_user.courses\nend')],
+  ['a Rails controller that reuses an existing filter', file('apps/api/app/controllers/courses_controller.rb', 'before_action :set_course\n\ndef index\n  render json: current_user.courses\nend')],
   ['Rails routes', file('apps/api/config/routes.rb', 'resources :courses, only: [:index]')],
   ['shared admin configuration', file('apps/admin/src/shared/config/env.ts', 'export const apiBase = import.meta.env.VITE_API_BASE;')],
   ['an added test', file('apps/admin/src/features/courses/CourseList.test.tsx', 'it("renders", () => expect(true).toBe(true));')],
