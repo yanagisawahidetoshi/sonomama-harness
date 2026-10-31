@@ -99,7 +99,8 @@ describe('Workspace and verifier registry', () => {
       assert.equal(run.iterations[0].verification.checks.find(c => c.id === 'admin').status, 'PASS');
       assert.equal(await readFile(join(root, 'apps/admin/message.txt'), 'utf8'), 'root');
     }));
-    it('when a registered docs verifier validates safe docs then becomes auto merge eligible without merging', () => fixture(async root => {
+    // #220: the run comes from --sbi PATH, so level 1 is MERGE_ALLOWED but never auto merge eligible.
+    it('when a registered docs verifier validates safe docs from --sbi then the run is MERGE_ALLOWED at level 1 but not auto merge eligible', () => fixture(async root => {
       await update(root, sbiPath, s => {
         s.allowedFiles = ['docs/product/intro.md'];
         s.minimumRiskLevel = 1;
@@ -112,7 +113,7 @@ describe('Workspace and verifier registry', () => {
       const run = await runHarness({ root, quiet: true, agent: async () => ({ files: [{ path: 'docs/product/intro.md', content: 'Welcome.' }] }) });
       assert.equal(run.status, 'MERGE_ALLOWED');
       assert.equal(run.risk.level, 1);
-      assert.equal(run.merge.autoMergeEligible, true);
+      assert.equal(run.merge.autoMergeEligible, false);
     }));
   });
 });

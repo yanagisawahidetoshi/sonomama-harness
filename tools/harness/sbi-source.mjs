@@ -83,6 +83,42 @@ export function matchSbiSource({ snapshot, issue, config, generate = false }) {
   return reasons;
 }
 
+// Why a snapshot differs from the one a run would take from the Issue as loadSbiIssue read it now. A spec-approved Issue has no registration
+// until its run generates one, so it is rebuilt as that run built it (generate).
+export function snapshotMismatch({ snapshot, source, config }) {
+  return matchSbiSource({ snapshot, issue: source.issue, config, generate: source.mode === 'generate' });
+}
+
+// #220: harness:run opens its PR from harness/<run-id> only for a run from an approved SBI Issue. A PR on such a branch is therefore held to
+// the snapshot of that same run whatever its diff, so a PR opened from --sbi PATH by a regression, or a hand-made harness/* branch, never passes.
+// pullNumber is set on a pull_request event; a PR that cannot be read cannot be told apart from a Harness PR and fails closed.
+// eventName is GITHUB_EVENT_NAME as the CLI read it: a pull_request or pull_request_target event without a PR number fails closed too.
+export const harnessBranchPattern = /^harness\/(.+)$/;
+const pullRequestEvents = new Set(['pull_request', 'pull_request_target']);
+export async function readHarnessPull({ repository, pullNumber, eventName, github = githubCli }) {
+  if (pullNumber === undefined) return pullRequestEvents.has(eventName)
+    ? { branch: null, runId: null, reasons: [`harness pr: the ${eventName} event gave no pull request number (HARNESS_PULL_REQUEST); a Harness PR needs the snapshot of its own run`] } : null;
+  const unknown = reason => ({ branch: null, runId: null, reasons: [`harness pr: #${pullNumber} ${reason}; a Harness PR needs the snapshot of its own run`] });
+  if (!/^[1-9]\d*$/.test(String(pullNumber))) return unknown('is not a pull request number');
+  if (!repository) return unknown('cannot be read (GITHUB_REPOSITORY is not set)');
+  const [owner, repo] = repository.split('/');
+  let pull;
+  try { pull = await github.fetchPull({ owner, repo }, Number(pullNumber)); } catch (error) { return unknown(`could not be read (${error.message})`); }
+  const branch = pull?.head?.ref;
+  if (typeof branch !== 'string' || !branch) return unknown('has no head branch');
+  const runId = harnessBranchPattern.exec(branch)?.[1];
+  return runId ? { branch, runId, reasons: [] } : null;
+}
+export function judgeHarnessPull({ pull, snapshots, source }) {
+  if (!pull) return [];
+  if (!pull.branch) return pull.reasons;
+  const reasons = [];
+  if (snapshots.length !== 1) reasons.push(`harness pr: ${pull.branch} must carry exactly one SBI snapshot of run ${pull.runId}, not ${snapshots.length}`);
+  for (const { path, snapshot } of snapshots) if (snapshot.runId !== pull.runId) reasons.push(`harness pr: ${pull.branch} carries ${path} of run ${snapshot.runId}, not of run ${pull.runId}`);
+  if (source.status === 'PASS' && !source.sources.some(s => s.runId === pull.runId)) reasons.push(`harness pr: the SBI Issue of run ${pull.runId} was not verified`);
+  return reasons;
+}
+
 // Fail closed: a missing or invalid snapshot, an unreadable Issue, a snapshot that differs from the current Issue or a missing Run link
 // each fail the Completion Judge. config is harness.json, whose Trusted Acceptance registrations fill the acceptance verifiers.
 export async function verifySbiSource({ root, base, files, required, config, repository = process.env.GITHUB_REPOSITORY, github = githubCli }) {
