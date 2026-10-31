@@ -66,7 +66,7 @@ describe('Approval and resume states', () => {
       const run = await runHarness({ root, quiet: true, agent: async () => ({ escalation: 'stop before DONE', files: [] }) });
       assert.equal(run.gate.required, false);
       assert.equal(run.merge.state, 'BLOCKED');
-      await assert.rejects(recordDecision({ root, runId: run.id, purpose: 'merge', identityProvider: human('A') }), /execution|gate/i);
+      await assert.rejects(recordDecision({ root, runId: run.id, purpose: 'merge', identityProvider: human('A') }), /^Error: Execution must be DONE before merge approval$/);
     }));
     it('when it executes then still requires two separate merge approvals', () => fixture(async root => {
       await update(root, '.harness/config/harness.json', c => c.securityVerifiers = [{ id: 'rails-rls-test', directory: 'apps/api', commands: [['node', '-e', 'require("node:assert/strict").ok(true)']] }]);
