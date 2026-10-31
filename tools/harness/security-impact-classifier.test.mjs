@@ -220,9 +220,12 @@ describe('Security Impact Classifier on OpenAPI structure names in the API contr
     });
   });
   describe('given the security policy', () => {
-    it('when it is read then only SEC-AUTH-001 ignores content in the contract test support, and only the securitySchemes name', () => {
+    it('when it is read then only SEC-AUTH-001 ignores content, only the securitySchemes name in the contract test support and only the known Harness contexts (#177)', () => {
       for (const rule of policy.rules.filter(r => r.id !== 'SEC-AUTH-001')) assert.equal(rule.contentExceptions, undefined, rule.id);
-      assert.deepEqual(policy.rules.find(r => r.id === 'SEC-AUTH-001').contentExceptions, [{ pathPatterns: ['^apps/api/spec/support/api_contract/[^/]+\\.rb$'], ignoredPatterns: ['\\bsecuritySchemes\\b'] }]);
+      assert.deepEqual(policy.rules.find(r => r.id === 'SEC-AUTH-001').contentExceptions, [
+        { pathPatterns: ['^apps/api/spec/support/api_contract/[^/]+\\.rb$'], ignoredPatterns: ['\\bsecuritySchemes\\b'] },
+        { pathPatterns: ['^tools/harness/[^/]+\\.mjs$'], ignoredPatterns: harnessContexts },
+      ]);
     });
     for (const [field, pattern] of [['ignoredPatterns', '[\\s\\S]*'], ['ignoredPatterns', ''], ['pathPatterns', '^'], ['pathPatterns', '.*']]) {
       it(`when a content exception has ${field} ${JSON.stringify(pattern)} that matches empty text then rejects the policy`, () => {
@@ -231,5 +234,117 @@ describe('Security Impact Classifier on OpenAPI structure names in the API contr
         assert.throws(() => securityPolicySchema.parse(broken));
       });
     }
+  });
+});
+
+// The known Harness contexts where an authenticate-prefixed word names the Harness's own approvals, gh login or OpenAPI reading, not an AuthN change.
+const harnessContexts = [
+  '\\bauthenticatedRecords\\b', '\\bGitHub authenticates\\b', '\\bthe authenticated gh CLI\\b', '\\bauthenticated (local )?ledger\\b',
+  '\\b[Aa]uthenticated human\\b', '\\btest-authenticated-adapter\\b', '\\bauthenticated (and authorized )?(endpoints?|response)\\b',
+  '\\.authenticated\\b', '\\bauthenticated(?=: )', '\\b(becomes|keeping it) authenticated\\b',
+];
+
+describe('Security Impact Classifier on authentication filters named with the authenticate prefix', () => {
+  const controller = 'apps/api/app/controllers/application_controller.rb';
+  describe('given a Rails authentication filter or helper whose name starts with authenticate', () => {
+    for (const [name, change] of [
+      ['adds before_action :authenticate_user!', { added: 'before_action :authenticate_user!' }],
+      ['removes before_action :authenticate_user!', { deleted: 'before_action :authenticate_user!' }],
+      ['changes the filter to authenticate_admin!', { deleted: 'before_action :authenticate_user!', added: 'before_action :authenticate_admin!' }],
+      ['adds skip_before_action :authenticate_user!', { added: 'skip_before_action :authenticate_user!, only: :index' }],
+      ['adds authenticate_or_request_with_http_token', { added: 'authenticate_or_request_with_http_token { |token| valid?(token) }' }],
+      ['adds a check with authenticated?', { added: 'head :unauthorized unless current_user&.authenticated?' }],
+    ]) {
+      it(`when ${controller} ${name} then matches SEC-AUTH-001 and requires the authentication test`, () => {
+        const result = assess([{ path: controller, status: 'M', ...change }]);
+        assert.ok(detected(result, 'SEC-AUTH-001'));
+        assert.ok(result.requiredVerifiers.includes('authn-test'));
+      });
+    }
+    it('when config/routes.rb adds a Devise authenticated :user block then matches SEC-AUTH-001', () => {
+      assert.ok(detected(assess([{ path: 'apps/api/config/routes.rb', status: 'M', added: 'authenticated :user do\n  root to: "lessons#index"\nend' }]), 'SEC-AUTH-001'));
+    });
+  });
+  describe('given the Harness code names its own approvals, gh login or OpenAPI reading with authenticate-prefixed words', () => {
+    for (const [path, added] of [
+      ['tools/harness/human-approvals.mjs', 'export async function authenticatedRecords(root, runId) {'],
+      ['tools/harness/github-approval-records.mjs', '// The CLIs post the line alone, so this costs the human nothing. GitHub authenticates the author.'],
+      ['tools/harness/github-pr.mjs', '// Pushes go through local git and API calls through the authenticated gh CLI; this module never handles a token.'],
+      ['tools/harness/index.mjs', "  await json(join(directory, 'approvals.json'), { headSha: baselineSha, approvals: [], source: 'authenticated local ledger' });"],
+      ['tools/harness/approval-flow.test.mjs', "    it('when the authenticated ledger is altered then refuses all approvals', () => fixture(async root => {"],
+      ['tools/harness/pbi-acceptance.mjs', "  if (identity?.kind !== 'human' || !identity.id || !identity.source) throw new Error('Authenticated human identity required');"],
+      ['tools/harness/pbi-acceptance.test.mjs', "  describe('given input that is not a decision of an authenticated human', () => {"],
+      ['tools/harness/test-fixture.mjs', "export const human = id => () => ({ id, kind: 'human', source: 'test-authenticated-adapter' });"],
+      ['tools/harness/api-mock.test.mjs', "  it('when only authenticated endpoints exist then the check passes because at least one endpoint was requested', () => fixture(async root => {"],
+      ['tools/harness/api-mock.test.mjs', "  it('when the documented example of an authenticated response breaks its schema then fails with the violation', () => fixture(async root => {"],
+      ['tools/harness/api-schema-planner.test.mjs', "    it('when an authenticated and authorized endpoint is removed then the Harness derives AuthN and AuthZ impacts', () => fixture(async root => {"],
+      ['tools/harness/api-schema-security.mjs', '      if (old?.authenticated) need(authNImpact, `認証・認可付きのendpointを削除: ${target}`);'],
+      ['tools/harness/api-schema-reader.mjs', '      authenticated: (operation.security ?? document.security ?? []).length > 0,'],
+      ['tools/harness/api-schema-planner.test.mjs', "    it('when an existing public endpoint becomes authenticated then lists it as a breaking candidate', () => fixture(async root => {"],
+      ['tools/harness/api-schema-planner.test.mjs', "    it('when an existing endpoint already requires another scheme name then keeping it authenticated is not a breaking candidate', () => fixture(async root => {"],
+    ]) {
+      it(`when ${path} adds ${added.trim().slice(0, 60)} then does not match SEC-AUTH-001`, () => {
+        assert.equal(detected(assess([{ path, status: 'M', added }]), 'SEC-AUTH-001'), false);
+      });
+    }
+  });
+  describe('given an authentication change that the Harness exception must not hide', () => {
+    it('when the Harness code adds authenticate_user! then still matches SEC-AUTH-001', () => {
+      assert.ok(detected(assess([{ path: 'tools/harness/index.mjs', status: 'M', added: "const filter = 'authenticate_user!';" }]), 'SEC-AUTH-001'));
+    });
+    it('when the Harness code adds authenticated next to an excluded context then still matches SEC-AUTH-001 for the rest of the line', () => {
+      assert.ok(detected(assess([{ path: 'tools/harness/human-approvals.mjs', status: 'M', added: 'const records = await authenticatedRecords(root, runId); if (!authenticated) return;' }]), 'SEC-AUTH-001'));
+    });
+    for (const path of ['apps/api/app/models/approval.rb', 'packages/shared/src/approvals.ts', 'prototypes/web/src/approvals.ts', 'tools/harness/agents/index.mjs', 'tools/harness/maestro-ci.sh', '.ai/architecture.md']) {
+      it(`when ${path} outside the excluded Harness files adds the excluded contexts then still matches SEC-AUTH-001`, () => {
+        assert.ok(detected(assess([{ path, status: 'M', added: 'authenticatedRecords: the authenticated local ledger of an authenticated human' }]), 'SEC-AUTH-001'));
+      });
+    }
+    it('when an excluded context moves out of the Harness code then still matches SEC-AUTH-001', () => {
+      const moved = [{ path: 'apps/api/app/lib/approvals.rb', previousPath: 'tools/harness/human-approvals.mjs', status: 'R', added: 'authenticatedRecords', deleted: 'authenticatedRecords' }];
+      assert.ok(detected(assess(moved), 'SEC-AUTH-001'));
+    });
+    it('when the excluded context differs in case from the declared one then still matches SEC-AUTH-001', () => {
+      assert.ok(detected(assess([{ path: 'tools/harness/index.mjs', status: 'M', added: 'AUTHENTICATEDRECORDS' }]), 'SEC-AUTH-001'));
+    });
+  });
+});
+
+describe('Security Impact Classifier on the security requirement of an OpenAPI document', () => {
+  const openapi = 'packages/api-schema/openapi.yaml';
+  describe('given a security requirement written at the top level or under an operation', () => {
+    for (const [name, change] of [
+      ['adds an empty top-level security: []', { added: 'security: []' }],
+      ['adds an operation-level security: []', { added: '      security: []' }],
+      ['adds a block security with a scheme other than bearerAuth', { added: 'security:\n  - ApiKey: []' }],
+      ['adds an operation-level block security with a scheme other than bearerAuth', { added: '      security:\n        - ApiKey: []' }],
+      ['adds an inline security with a scheme other than bearerAuth', { added: '      security: [{ ApiKey: [] }]' }],
+      ['removes the top-level security', { deleted: 'security:\n  - ApiKey: []' }],
+      ['removes an operation-level security: []', { deleted: '      security: []' }],
+      ['changes an empty security to a scheme', { deleted: '      security: []', added: '      security: [{ ApiKey: [] }]' }],
+      ['adds a security alias', { added: '      security: *default_security' }],
+    ]) {
+      it(`when ${openapi} ${name} then matches SEC-AUTH-001 and requires the authentication test`, () => {
+        const result = assess([{ path: openapi, status: 'M', ...change }]);
+        assert.ok(detected(result, 'SEC-AUTH-001'));
+        assert.ok(result.requiredVerifiers.includes('authn-test'));
+      });
+    }
+    it('when a JSON OpenAPI document adds "security": [] then matches SEC-AUTH-001', () => {
+      assert.ok(detected(assess([{ path: 'apps/api/spec/fixtures/api_contract/students.json', status: 'M', added: '      "security": [],' }]), 'SEC-AUTH-001'));
+    });
+  });
+  describe('given a JavaScript object whose key is named security but whose value is not a requirement list', () => {
+    for (const added of ["        security: { status: 'PASS' }, securityVerification: null,", '    security: {', '  security: result, securityVerification: z.looseObject({}),']) {
+      it(`when it adds ${added.trim()} then does not match SEC-AUTH-001`, () => {
+        assert.equal(detected(assess([{ path: 'tools/harness/health-metrics.mjs', status: 'M', added }]), 'SEC-AUTH-001'), false);
+      });
+    }
+  });
+  describe('given only the scheme name changes under an existing security key', () => {
+    // Known limitation (#218): the classifier reads changed lines only, so it cannot tell that this list item belongs to security.
+    it('when ApiKey is renamed to PartnerKey then does not match SEC-AUTH-001 until #218 compares the parsed documents', () => {
+      assert.equal(detected(assess([{ path: openapi, status: 'M', deleted: '        - ApiKey: []', added: '        - PartnerKey: []' }]), 'SEC-AUTH-001'), false);
+    });
   });
 });
