@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { renderSbiBody } from './planner.mjs';
 import { loadSbiIssue } from './sbi-issue.mjs';
 import { readFileSync } from 'node:fs';
-import { specDigest, specApprovals, specApprovalLine, postSpecApproval, specDigestItems } from './spec-approval.mjs';
+import { specDigest, specApproval, postSpecApproval, specDigestItems } from './spec-approval.mjs';
 
 const ref = { owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' };
 const pbi = { owner: 'acme', repo: 'app', number: 3, url: 'https://github.com/acme/app/issues/3', title: '講座' };
@@ -20,7 +20,6 @@ const body = (overrides = {}) => renderSbiBody(planned(overrides), pbi);
 const issue = (overrides = {}) => ({ number: 7, title: 'SBI-001 担当講師だけが講座を閲覧できる', body: body(), html_url: ref.url, state: 'open', labels: labels('sbi'), ...overrides });
 const at = '2026-10-30T00:00:00Z';
 const comment = (id, login, text, overrides = {}) => ({ id, body: text, html_url: `${ref.url}#issuecomment-${id}`, user: { login, type: 'User' }, created_at: at, updated_at: at, ...overrides });
-const permissions = { alice: 'admin', bob: 'write', carol: 'read', 'planner[bot]': 'write' };
 
 describe('Spec digest of an SBI Issue', () => {
   // #194: everything the run gives the Agent or uses for Risk and Security is in the digest, so editing it voids earlier approvals.
@@ -63,67 +62,39 @@ describe('Spec digest of an SBI Issue', () => {
   });
 });
 
-describe('Spec approval records on the SBI Issue', () => {
-  const digest = specDigest(issue());
-  const approvals = comments => specApprovals({ comments, permissions, digest });
-  it('when a person with write access posts exactly the approval line for the current digest then the spec is approved', () => {
-    assert.deepEqual(approvals([comment(1, 'alice', `${specApprovalLine(digest)}\n`)]), { approved: true, approvers: ['alice'] });
+// ADR-0009: the spec-approved label a human puts on the Issue is the spec approval (MVP). Who added it is not checked; the digest is the
+// Issue as it is when the run reads it, and the generated Trusted Acceptance stays bound to that digest.
+describe('Spec approval by the spec-approved label', () => {
+  it('when the Issue carries spec-approved then the spec is approved for the current spec digest', () => {
+    assert.deepEqual(specApproval(issue({ labels: labels('sbi', 'spec-approved') })), { approved: true, digest: specDigest(issue()) });
   });
-  it('when the approval line comes with an explanation then it does not count, since only a comment that is exactly the line is a decision (#150, 2026-10-30)', () => {
-    assert.equal(approvals([comment(1, 'alice', `仕様を確認しました\n${specApprovalLine(digest)}\n`)]).approved, false);
+  it('when the Issue has no spec-approved then the spec is not approved', () => {
+    assert.deepEqual(specApproval(issue()), { approved: false, digest: specDigest(issue()) });
   });
-  it('when the planner operator approves the Issue the Planner created then it counts, since the Issue author is not the reviewer of code', () => {
-    assert.equal(approvals([comment(1, 'alice', specApprovalLine(digest))]).approved, true);
-  });
-  for (const [name, comments] of [
-    ['no one approved', []],
-    ['the approval names another digest', [comment(1, 'alice', specApprovalLine('e'.repeat(64)))]],
-    ['the approval comment was edited afterwards', [comment(1, 'alice', specApprovalLine(digest), { updated_at: '2026-10-30T01:00:00Z' })]],
-    ['the approver is a bot', [comment(1, 'planner[bot]', specApprovalLine(digest), { user: { login: 'planner[bot]', type: 'Bot' } })]],
-    ['the approver has only read access', [comment(1, 'carol', specApprovalLine(digest))]],
-    ['the approver has no readable permission', [comment(1, 'dave', specApprovalLine(digest))]],
-    ['the approver revoked it later', [comment(1, 'alice', specApprovalLine(digest)), comment(2, 'alice', `harness-spec-revoke: ${digest}`)]],
-    ['only a label says spec-approved', []],
-  ]) {
-    it(`when ${name} then the spec is not approved`, () => assert.equal(approvals(comments).approved, false));
-  }
-  it('when the approver revoked and approved again then the latest approval counts', () => {
-    assert.equal(approvals([comment(1, 'alice', specApprovalLine(digest)), comment(2, 'alice', `harness-spec-revoke: ${digest}`), comment(3, 'alice', specApprovalLine(digest))]).approved, true);
+  it('when the Issue carries spec-approved but has no Gherkin then the spec is not approved, since nothing can be generated from it', () => {
+    assert.equal(specApproval(issue({ body: '## 目的\n\nなし\n', labels: labels('sbi', 'spec-approved') })).approved, false);
   });
 });
 
 describe('Starting a run from a spec-approved SBI Issue', () => {
   const config = { verifiers: [] };
-  const github = ({ own = issue(), comments = [] } = {}) => ({
-    fetchIssue: async () => own,
-    listComments: async () => comments,
-    permission: async (_, login) => { if (!(login in permissions)) throw new Error('gh: Not Found (HTTP 404)'); return permissions[login]; },
-    issueTimeline: async () => [],
-  });
+  const github = (own = issue({ labels: labels('sbi', 'spec-approved') })) => ({ fetchIssue: async () => own, issueTimeline: async () => [] });
   const load = gh => loadSbiIssue({ issueUrl: ref.url, config, github: gh });
   // #147: the approved spec starts the run in the generate mode; Trusted Acceptance is generated inside the run.
-  it('when the spec is approved for the current digest and no Trusted Acceptance is registered then the run starts in the generate mode', async () => {
-    const loaded = await load(github({ comments: [comment(1, 'alice', specApprovalLine(specDigest(issue())))] }));
+  it('when the Issue carries spec-approved and no Trusted Acceptance is registered then the run starts in the generate mode', async () => {
+    const loaded = await load(github());
     assert.equal(loaded.mode, 'generate');
+    assert.equal(loaded.spec.digest, specDigest(issue()));
   });
-  it('when neither ready nor a spec approval exists then the run does not start and names both ways to start', async () => {
-    await assert.rejects(load(github()), /readyではありません[\s\S]*harness-spec/);
+  it('when neither ready nor spec-approved is on the Issue then the run does not start and names both labels', async () => {
+    await assert.rejects(load(github(issue())), /readyではありません[\s\S]*spec-approved/);
   });
-  it('when the spec was approved and then the Gherkin changed then the old approval does not start the run', async () => {
-    const edited = issue({ body: body({ scenarios: [{ ...planned().scenarios[0], then: ['201になる'] }] }) });
-    await assert.rejects(load(github({ own: edited, comments: [comment(1, 'alice', specApprovalLine(specDigest(issue())))] })), /readyではありません/);
+  it('when the Issue still has needs-review next to spec-approved then the run does not start', async () => {
+    await assert.rejects(load(github(issue({ labels: labels('sbi', 'needs-review', 'spec-approved') }))), /needs-review/);
   });
-  it('when the spec was approved and then the purpose changed then the old approval does not start the run', async () => {
-    const edited = issue({ body: body({ purpose: '講師は全ての講座を閲覧できる。' }) });
-    await assert.rejects(load(github({ own: edited, comments: [comment(1, 'alice', specApprovalLine(specDigest(issue())))] })), /readyではありません/);
-  });
-  it('when the Issue still needs review then even an approval does not start the run', async () => {
-    const reviewing = issue({ labels: labels('sbi', 'needs-review') });
-    await assert.rejects(load(github({ own: reviewing, comments: [comment(1, 'alice', specApprovalLine(specDigest(issue())))] })), /needs-review/);
-  });
-  it('when GitHub cannot read the comments then the run does not start', async () => {
-    const broken = { ...github(), listComments: async () => { throw new Error('gh: Server Error (HTTP 502)'); } };
-    await assert.rejects(load(broken), /HTTP 502/);
+  it('when only a harness-spec comment approves the spec then the run does not start, since the label is the approval', async () => {
+    const commented = { ...github(issue()), listComments: async () => [comment(1, 'alice', `harness-spec: ${specDigest(issue())}`)], permission: async () => 'admin' };
+    await assert.rejects(load(commented), /readyではありません/);
   });
 });
 
@@ -138,18 +109,19 @@ describe('harness:spec-approve', () => {
       removeLabel: async (_, name) => { calls.push(['remove', name]); },
     } };
   };
-  it('when a human approves then posts the approval line for the current spec digest and shows the spec-approved label', async () => {
-    const { calls, github } = recorder();
+  it('when a human approves then the Issue moves from needs-review to spec-approved and no comment is posted', async () => {
+    const { calls, github } = recorder(issue({ labels: labels('sbi', 'needs-review') }));
     const result = await postSpecApproval({ issueUrl: ref.url, decision: 'approve', github });
     assert.equal(result.digest, specDigest(issue()));
-    assert.ok(calls.some(([kind, text]) => kind === 'comment' && text === specApprovalLine(result.digest)));
     assert.ok(calls.some(([kind, names]) => kind === 'add' && names.includes('spec-approved')));
+    assert.ok(calls.some(([kind, name]) => kind === 'remove' && name === 'needs-review'));
+    assert.ok(!calls.some(([kind]) => kind === 'comment'));
   });
-  it('when a human revokes then posts the revoke line and removes the label', async () => {
+  it('when a human revokes then spec-approved is removed', async () => {
     const { calls, github } = recorder(issue({ labels: labels('sbi', 'spec-approved') }));
-    const result = await postSpecApproval({ issueUrl: ref.url, decision: 'revoke', github });
-    assert.ok(calls.some(([kind, text]) => kind === 'comment' && text === `harness-spec-revoke: ${result.digest}`));
+    await postSpecApproval({ issueUrl: ref.url, decision: 'revoke', github });
     assert.ok(calls.some(([kind, name]) => kind === 'remove' && name === 'spec-approved'));
+    assert.ok(!calls.some(([kind]) => kind === 'comment'));
   });
   it('when the Issue has no Gherkin then nothing is posted', async () => {
     const { calls, github } = recorder(issue({ body: '## 目的\n\nなし\n' }));

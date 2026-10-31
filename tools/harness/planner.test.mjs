@@ -90,7 +90,14 @@ describe('PBI → SBI Planner', () => {
       assert.match(state.created[0].body, /## Gherkinと実テスト\n\n- 登録済みプロフィールを表示する → RNTL: プロフィール画面Component\n- 未登録プロフィールを表示する → RNTL: プロフィール画面Component\n/);
       assert.match(state.created[2].body, /- 登録済みプロフィールを表示する → Maestro: 実API \+ Rails \+ DB\n/);
       assert.deepEqual(result.created.map(c => [c.sbiId, c.number, c.url]), [['SBI-001', 101, 'https://github.com/acme/app/issues/101'], ['SBI-002', 102, 'https://github.com/acme/app/issues/102'], ['SBI-003', 103, 'https://github.com/acme/app/issues/103']]);
-      assert.deepEqual(state.labels.sort(), ['needs-review', 'sbi']);
+      assert.deepEqual(state.labels.sort(), ['needs-review', 'plan-approved', 'sbi', 'spec-approved']);
+    })));
+    // ADR-0009: the approval labels exist so that a human can pick them on GitHub; the Planner never approves its own output.
+    it('when Issues are created then neither spec-approved nor plan-approved is put on any Issue', () => fixture(root => mockGitHub({}, async github => {
+      await plan(root);
+      const state = await github.state();
+      assert.ok(!state.created.some(i => i.labels.some(l => ['spec-approved', 'plan-approved', 'ready'].includes(l.name))));
+      assert.ok(!(await github.calls()).some(call => call.args.some(arg => /\/issues\/\d+\/labels/.test(arg))), 'the Planner adds no label to an existing Issue');
     })));
     it('when Issues are created then comments the generated SBI list on the PBI and lists every URL on stdout', () => fixture(root => mockGitHub({}, async github => {
       const result = await plan(root);
@@ -220,7 +227,7 @@ describe('PBI → SBI Planner', () => {
       assert.equal(state.created.length, 3);
       assert.equal(state.comments[0].updated, undefined);
       assert.ok(!(await github.calls()).slice(afterFirst).some(call => call.args.includes('-X')), 'second run must not write');
-      assert.equal((await github.calls()).filter(call => call.args.includes('POST')).length, 6, 'first run: 2 labels + 3 issues + 1 comment; second run: no POST');
+      assert.equal((await github.calls()).filter(call => call.args.includes('POST')).length, 8, 'first run: 4 labels + 3 issues + 1 comment; second run: no POST');
     })));
     const tampered = [
       ['a human edited the Issue body after generation', issue => { issue.body = issue.body.replace('登録済みの氏名が画面に表示される', '登録済みの氏名と所属が画面に表示される'); }, /本文/],

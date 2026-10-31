@@ -8,7 +8,7 @@ import { sbiFromIssue, loadSbiIssue } from './sbi-issue.mjs';
 import { withAcceptance } from './acceptance-registry.mjs';
 import { configSchema } from './schemas.mjs';
 import { generateAcceptance, generatedVerifierId } from './acceptance-generation.mjs';
-import { specApprovalLine, specDigest } from './spec-approval.mjs';
+import { specDigest } from './spec-approval.mjs';
 
 const ref = { owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' };
 const pbi = { owner: 'acme', repo: 'app', number: 3, url: 'https://github.com/acme/app/issues/3', title: '講座' };
@@ -56,16 +56,12 @@ describe('The SBI of a generated-acceptance run matches its CI rebuild', () => {
 });
 
 describe('Starting a run from a spec-approved SBI Issue', () => {
-  const at = '2026-10-30T00:00:00Z';
-  const github = (comments) => ({
-    fetchIssue: async () => issue, issueTimeline: async () => [],
-    listComments: async () => comments, permission: async () => 'admin',
-  });
-  it('when the spec is approved for the current digest then the run starts in the generate mode with the generated verifier', async () => {
-    const comments = [{ id: 1, body: specApprovalLine(specDigest(issue)), html_url: `${ref.url}#c1`, user: { login: 'alice', type: 'User' }, created_at: at, updated_at: at }];
-    const loaded = await loadSbiIssue({ issueUrl: ref.url, config: { verifiers: [] }, github: github(comments) });
+  const approved = { ...issue, labels: [{ name: 'sbi' }, { name: 'spec-approved' }] };
+  const github = { fetchIssue: async () => approved, issueTimeline: async () => [] };
+  it('when the Issue carries spec-approved then the run starts in the generate mode with the generated verifier and the current spec digest', async () => {
+    const loaded = await loadSbiIssue({ issueUrl: ref.url, config: { verifiers: [] }, github });
     assert.equal(loaded.mode, 'generate');
     assert.equal(loaded.sbi.acceptanceCriteria[0].verifier, generatedVerifierId(7));
-    assert.deepEqual(loaded.spec.approvers, ['alice']);
+    assert.equal(loaded.spec.digest, specDigest(issue));
   });
 });

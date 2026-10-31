@@ -27,7 +27,6 @@ const fullPlan = planOf(8, [
   { id: 'SBI-003', number: 13, kind: 'validation', dependsOn: ['SBI-001', 'SBI-002'] },
 ]);
 const implementationOnlyPlan = planOf(8, fullPlan.sbis.slice(0, 2));
-const planComment = (digest, overrides = {}) => ({ id: 1, body: `harness-pbi-plan: ${digest}`, html_url: `${pbi.url}#issuecomment-1`, user: { login: 'alice', type: 'User' }, created_at: '2026-10-29T00:00:00Z', updated_at: '2026-10-29T00:00:00Z', ...overrides });
 // The digest a human accepts binds the approved plan and the SBI composition (ID, Issue number, kind) to the evidence, so changing the SBIs voids it.
 const composition = [{ id: 'SBI-001', number: 11, kind: 'implementation' }, { id: 'SBI-002', number: 12, kind: 'implementation' }, { id: 'SBI-003', number: 13, kind: 'validation' }];
 const keyOf = (plan, revision = 1) => approvalKey(planDigest(plan), revision);
@@ -61,7 +60,7 @@ const passing = [{ id: 1, name: 'harness', status: 'completed', conclusion: 'suc
 
 function world(overrides = {}) {
   const state = {
-    pbi: { number: 8, title: pbi.title, body: 'PBI', html_url: pbi.url, state: 'open', labels: [] },
+    pbi: { number: 8, title: pbi.title, body: 'PBI', html_url: pbi.url, state: 'open', labels: [{ name: 'plan-approved' }] },
     issues: plannedSbis.map(s => sbiIssue(s)),
     pulls: { 21: mergedPull(11, 21, sha('1')), 22: mergedPull(12, 22, sha('2')) },
     timeline: { 11: [21], 12: [22], 13: [] },
@@ -76,14 +75,12 @@ function world(overrides = {}) {
   const guard = name => { if (state.fail[name]) throw new Error(`gh api GET ${name}: HTTP 502`); };
   const github = {
     async fetchIssue(ref) { guard('issue'); if (ref.number !== 8) throw new Error('HTTP 404'); return { ...state.pbi, body: state.pbiBody ?? `PBI\n\n${renderPlanSection(pbi.url, state.plan)}` }; },
-    async listComments() { guard('comments'); return state.comments ?? [planComment(keyOf(state.plan))]; },
     async bodyVersions() { guard('versions'); return state.versions ?? []; },
     async listIssues(_ref, label) { guard('list'); return state.issues.filter(i => i.labels.some(l => l.name === label)); },
     async issueTimeline(ref) { guard('timeline'); return (state.timeline[ref.number] ?? []).map(n => ({ event: 'cross-referenced', source: { issue: { number: n, html_url: `https://github.com/acme/app/pull/${n}`, pull_request: {} } } })); },
     async fetchPull(_ref, number) { guard('pull'); return state.pulls[number]; },
     async pullCommitMessages(_ref, number) { guard('commits'); return state.commits[number] ?? []; },
     async blockedBy() { guard('blockedBy'); return state.blockedBy; },
-    async permission(_ref, login) { return state.permissions?.[login] ?? 'write'; },
   };
   const githubPr = {
     async checkRuns(_repo, head) { guard('checkRuns'); return state.checkRuns[head] ?? []; },
@@ -358,20 +355,16 @@ describe('PBI Status: the SBI composition of the PBI', () => {
 });
 
 describe('PBI Status: the approved PBI plan', () => {
-  describe('given the PBI plan in ## SBI構成 and its approval on the PBI', () => {
-    it('when the status is collected then the plan digest and its approvers are reported', async () => {
+  // ADR-0009: the plan-approved label a human puts on the PBI is the plan approval (MVP); who added it is not checked.
+  describe('given the PBI plan in ## SBI構成 and the plan-approved label on the PBI', () => {
+    it('when the status is collected then the plan digest is reported as approved', async () => {
       const result = await status();
-      assert.deepEqual(result.plan, { digest: planDigest(fullPlan), revision: 1, approvalKey: keyOf(fullPlan), approved: true, approvers: ['alice'] });
+      assert.deepEqual(result.plan, { digest: planDigest(fullPlan), revision: 1, approvalKey: keyOf(fullPlan), approved: true });
     });
     for (const [name, state, pattern] of [
       ['the PBI body has no ## SBI構成', { pbiBody: 'PBI' }, /SBI構成/],
-      ['nobody approved the plan', { comments: [] }, /PBI plan.*承認されていません/],
-      ['the approval comment was edited', { comments: [planComment(keyOf(fullPlan), { updated_at: '2026-10-29T01:00:00Z' })] }, /PBI plan.*承認されていません/],
-      ['the approver has read access only', { permissions: { alice: 'read' } }, /PBI plan.*承認されていません/],
-      ['the approval is for the plan before ## SBI構成 was rewritten', { comments: [planComment(keyOf(implementationOnlyPlan))] }, /PBI plan.*承認されていません/],
-      ['the plan went from A to B and back to A, so the approval of the first A does not come back', { versions: [{ body: `PBI\n\n${renderPlanSection(pbi.url, fullPlan)}`, deletedAt: null }, { body: `PBI\n\n${renderPlanSection(pbi.url, implementationOnlyPlan)}`, deletedAt: null }] }, /PBI plan.*承認されていません/],
+      ['the PBI has no plan-approved label', { pbi: { number: 8, title: pbi.title, body: 'PBI', html_url: pbi.url, state: 'open', labels: [] } }, /PBI plan.*承認されていません[\s\S]*plan-approved/],
       ['the edit history of the PBI cannot be read', { fail: { versions: true } }, /HTTP 502/],
-      ['the approvals cannot be read', { fail: { comments: true } }, /HTTP 502/],
     ]) {
       it(`when ${name} then the PBI is NOT_DONE`, async () => {
         const result = await status({ state });
@@ -380,6 +373,13 @@ describe('PBI Status: the approved PBI plan', () => {
         assert.equal(result.ready, false);
       });
     }
+    it('when only a harness-pbi-plan comment approves the plan then the PBI is NOT_DONE, since the label is the approval', async () => {
+      const { state, github, githubPr } = world({ pbi: { number: 8, title: pbi.title, body: 'PBI', html_url: pbi.url, state: 'open', labels: [] } });
+      github.listComments = async () => [{ id: 1, body: `harness-pbi-plan: ${keyOf(state.plan)}`, user: { login: 'alice', type: 'User' }, created_at: '2026-10-29T00:00:00Z', updated_at: '2026-10-29T00:00:00Z' }];
+      github.permission = async () => 'admin';
+      const result = await collectPbiStatus({ root: '/nonexistent', pbiUrl: pbi.url, config, github, githubPr, evidence: connected(), acceptanceRecords: async () => [approval()] });
+      assert.equal(result.plan.approved, false);
+    });
   });
   describe('given an edit of the PBI body outside ## SBI構成', () => {
     it('when the status is collected then the plan keeps its revision and its approval', async () => {
@@ -411,7 +411,7 @@ describe('PBI Status: the approved PBI plan', () => {
   });
   describe('given an APPROVE of the PBI Human Acceptance', () => {
     it('when the plan is not approved then APPROVE is not ready', async () => {
-      const result = await status({ state: { comments: [] }, records: [] });
+      const result = await status({ state: { pbi: { number: 8, title: pbi.title, body: 'PBI', html_url: pbi.url, state: 'open', labels: [] } }, records: [] });
       assert.equal(result.ready, false);
     });
   });
@@ -481,7 +481,7 @@ describe('PBI Status: display', () => {
       assert.match(text, /SBI-001 implementation .*E2E unreadable/);
     });
     it('when the PBI plan is not approved then the display says so', async () => {
-      const text = renderPbiStatus(await status({ state: { comments: [] } })).join('\n');
+      const text = renderPbiStatus(await status({ state: { pbi: { number: 8, title: pbi.title, body: 'PBI', html_url: pbi.url, state: 'open', labels: [] } } })).join('\n');
       assert.match(text, /PBI plan\n❌ NOT_APPROVED \(digest [0-9a-f]{12}\)/);
     });
     it('when the PBI is DONE then no reason is listed', async () => {
