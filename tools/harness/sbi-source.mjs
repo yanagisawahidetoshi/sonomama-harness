@@ -14,7 +14,8 @@ import { git } from './workspace.mjs';
 // CI rebuilds the SBI from the current Issue and requires the snapshot to equal it, so the guarantee is that the PR carries exactly
 // the approved Issue at CI time. It is not a proof that the Harness wrote the snapshot.
 const digestOf = text => createHash('sha256').update(text ?? '').digest('hex');
-const sbiPattern = /^\.harness\/state\/sbi-[^/]+\.json$/;
+export const sbiFilePattern = /^\.harness\/state\/sbi-[^/]+\.json$/;
+const sbiPattern = sbiFilePattern;
 const snapshotPattern = /^\.harness\/state\/sbi-([1-9]\d*)\.json$/;
 export const snapshotPath = snapshot => `.harness/state/sbi-${snapshot.source.number}.json`;
 
@@ -47,16 +48,6 @@ export async function runLinks(root, base, head = 'HEAD') {
   const { stdout } = await git(root, ['log', '--format=%(trailers:only,unfold)%x00', `${base}..${head}`]);
   const value = (block, key) => new RegExp(`^${key}: *(\\S+)$`, 'm').exec(block)?.[1];
   return stdout.split('\0').map(block => ({ runId: value(block, 'Harness-Run'), url: value(block, 'SBI-Issue') })).filter(link => link.runId && link.url);
-}
-
-// Fail closed: a Run trailer anywhere in a commit message, even where Git does not parse it as a trailer, or a Git error counts as a claim,
-// so the stricter SBI check runs.
-export async function claimsSbiSource(root, base, files) {
-  if (files.some(f => sbiPattern.test(f.path))) return true;
-  try {
-    const { stdout } = await git(root, ['log', '--format=%B%x00', `${base}..HEAD`]);
-    return /^(Harness-Run|SBI-Issue):/m.test(stdout);
-  } catch { return true; }
 }
 
 // issue is null when it was not read because the snapshot points outside this repository.
@@ -127,7 +118,7 @@ export async function verifySbiSource({ root, base, files, required, config, rep
     if (issue && !generated) source.reasons.push(...(await readReadyBinding({ ref: { owner, repo, number: snapshot.source.number, url: snapshot.source.url }, issue, github })).map(r => `sbi source: ${r}`));
     if (issue) {
       source.reasons.push(...matchSbiSource({ snapshot, issue, config, generate: generated }));
-      source.sources.push({ url: snapshot.source.url, runId: snapshot.runId });
+      source.sources.push({ url: snapshot.source.url, runId: snapshot.runId, number: snapshot.source.number });
     }
   }
   return { ...source, status: source.reasons.length ? 'FAIL' : 'PASS' };
@@ -162,12 +153,10 @@ export function describeSbiSource(source) {
     : source.exemption ? [`SBI source exemption: not applied (${source.exemption.reasons.join('; ')})`] : [];
   if (!source.required.length) return exemption.length ? exemption : ['SBI source: not required'];
   if (exemption.length) return [...exemption, ...describeSbiSource({ ...source, exemption: undefined })];
-  if (source.kind === 'engineering') return [
-    ...source.sources.map(s => `Engineering source: ${s.url}`),
-    `Engineering source check: ${source.status}${source.reasons.length ? ` (${source.reasons.join('; ')})` : ''}`,
-  ];
   return [
     ...source.sources.map(s => `SBI source: ${s.url} run ${s.runId}`),
     `SBI source check: ${source.status}${source.reasons.length ? ` (${source.reasons.join('; ')})` : ''}`,
+    // Shown only once the snapshot passed the check against GitHub, never from a trailer alone.
+    ...source.status === 'PASS' ? source.sources.map(s => `Source: SBI #${s.number}`) : [],
   ];
 }

@@ -81,6 +81,11 @@ jobs:
     if: needs.impact.outputs.full_gate == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # The same file list in parallel shards (#197); the Completion Judge reads the combined result of the matrix.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -93,6 +98,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm harness:test
+        env:
+          HARNESS_TEST_SHARD: ${{ matrix.shard }}/3
   harness-demo:
     needs: impact
     if: needs.impact.outputs.full_gate == 'true'

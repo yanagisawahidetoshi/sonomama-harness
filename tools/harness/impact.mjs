@@ -1,10 +1,9 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isSafeEnvTemplate } from './evidence-protection.mjs';
-import { verifyEngineeringSource } from './engineering-source.mjs';
+import { classifyChangeType, describeChangeType, needsContent } from './change-type.mjs';
 import { readJson } from './io.mjs';
-import { isProductionPath } from './lanes.mjs';
-import { claimsSbiSource, readSbiFiles, snapshotFilePattern, verifySbiSource } from './sbi-source.mjs';
+import { readSbiFiles, sbiFilePattern, snapshotFilePattern, verifySbiSource } from './sbi-source.mjs';
 import { judgeChangedFileCount } from './planner-judge.mjs';
 import { dependencyBotExemption } from './dependency-bot.mjs';
 import { githubCli } from './planner-github.mjs';
@@ -69,9 +68,10 @@ export function analyzeImpact({ config, sbis = [], runSbis = [], files = [], all
   }
   const fullGatePath = firstMatch(config.impact?.fullGate, files);
   const fullGateReasons = all ? ['all'] : [...fullGatePath ? [`diff:${fullGatePath}`] : [], ...toolchainPath ? [`toolchain:${toolchainPath}`] : []];
-  // Production work needs an approved source: an SBI Run for Product implementation, a ready Engineering Issue for engineering changes.
-  // Prototypes, docs and Harness maintenance stay outside lanes.json productionPaths.
-  const sbiRequiredReasons = files.filter(f => isProductionPath(f.path)).slice(0, 1).map(f => `production:${f.path}`);
+  // ADR-0006: a Production diff needs an SBI unless every Production file is proven engineering. Prototypes, docs and Harness maintenance
+  // stay outside lanes.json productionPaths and get no change type.
+  const { changeType, requiresSbi, engineering, ambiguous } = classifyChangeType(files);
+  const sbiRequiredReasons = ambiguous.slice(0, 1).map(a => `production:${a.path}`);
   const selected = [...verifiers.values()].sort((a, b) => a.id.localeCompare(b.id));
   return {
     sbis: sbis.map(s => s.id),
@@ -84,7 +84,10 @@ export function analyzeImpact({ config, sbis = [], runSbis = [], files = [], all
     // Maestro runs only for mobile SBIs that ask for E2E (#68), never for every mobile PR. Only a Run snapshot (from an approved SBI Issue)
     // picks a lane; hand-written SBI JSON has no provenance and must not add a required job.
     maestro: maestroLanes(runSbis),
-    sbiRequired: sbiRequiredReasons.length > 0,
+    changeType,
+    requiresSbi,
+    changeTypeFiles: { engineering, ambiguous },
+    sbiRequired: requiresSbi,
     sbiRequiredReasons,
   };
 }
@@ -97,7 +100,8 @@ export function judgeCi({ impact, needs, acceptance, security, source, granulari
     if (wanted ? result !== 'success' : !['success', 'skipped'].includes(result)) reasons.push(`${job}: ${result}`);
   };
   expect('impact', true);
-  if (impact.sbiRequired && source?.status !== 'PASS') reasons.push(...(source?.reasons.length ? source.reasons : ['sbi source: not evaluated']));
+  // A changed SBI snapshot is verified even when the diff needs no SBI, so its FAIL counts too.
+  if ((impact.sbiRequired && source?.status !== 'PASS') || source?.status === 'FAIL') reasons.push(...(source?.reasons.length ? source.reasons : ['sbi source: not evaluated']));
   reasons.push(...(granularity ?? []).filter(g => g.status === 'FAIL').map(g => g.reason));
   if (migrationExceptions?.status === 'FAIL') reasons.push(...migrationExceptions.reasons);
   expect('verifiers', impact.requiredVerifiers.length > 0);
@@ -130,9 +134,13 @@ export function judgeTestedCommit({ headSha, expectedHeadSha, needs }) {
 }
 
 // The same diff the Harness run classifies (with added and deleted lines), taken from the merge base like base...HEAD.
+// Files a content rule of the change type judges also carry both sides; a side that does not exist stays undefined.
 export async function changedFiles(root, base) {
   const mergeBase = (await git(root, ['merge-base', base, 'HEAD'])).stdout.trim();
-  return diffFiles(root, mergeBase, 'HEAD');
+  const show = async (rev, path) => { try { return (await git(root, ['show', `${rev}:${path}`])).stdout; } catch { return undefined; } };
+  const files = await diffFiles(root, mergeBase, 'HEAD');
+  for (const f of files.filter(f => needsContent(f.path))) Object.assign(f, { before: await show(mergeBase, f.path), after: await show('HEAD', f.path) });
+  return files;
 }
 
 // Changed hand-written SBI JSON and the SBI inside Harness Run snapshots both drive Impact Analysis and Trusted Acceptance.
@@ -189,8 +197,8 @@ async function changedContent(root, files) {
   return content;
 }
 
-// Completion Judge: trusted acceptance of every changed SBI and the Harness Security Policy run here. Production changes must be backed by either
-// a ready SBI Run snapshot or, for engineering/maintenance work, a ready Engineering Issue linked from a commit trailer.
+// Completion Judge: trusted acceptance of every changed SBI and the Harness Security Policy run here. An ambiguous Production diff must be backed
+// by a ready SBI Run snapshot; an engineering diff needs none (ADR-0006).
 // expectedHeadSha is the head the workflow checked out; the CLI always passes it, so a missing value fails there.
 export async function runCompletionJudge({ root, base, all = false, needs, repository = process.env.GITHUB_REPOSITORY, pullNumber, github = githubCli, githubPr, maestroResults, expectedHeadSha, acceptanceResults = join(root, acceptanceResultsDirectory) }) {
   const { config, files, sbis, snapshots, impact } = await loadImpact({ root, base, all });
@@ -227,12 +235,11 @@ export async function runCompletionJudge({ root, base, all = false, needs, repos
   const exemption = impact.sbiRequired && pullNumber !== undefined
     ? await dependencyBotExemption({ policy: dependencyBotPolicySchema.parse(await readJson(join(root, '.harness/rules/dependency-bots.json'))), files, headSha, repository, pullNumber, github })
     : null;
-  const required = exemption?.exempt ? [] : impact.sbiRequiredReasons;
-  // Anything that claims an SBI (a changed, broken or deleted snapshot, or the Run trailers) is judged as an SBI, so an Engineering Issue
-  // cannot stand in for a missing or broken Run.
-  const verified = await claimsSbiSource(root, base, files)
-    ? await verifySbiSource({ root, base, files, required, config, repository, github: issueGithub })
-    : await verifyEngineeringSource({ root, base, required, repository, github });
+  // The SBI source is a separate axis from the change type: a changed, broken or deleted snapshot is always verified,
+  // while the Run trailers alone are no source and never change the change type.
+  const snapshotChanged = files.some(f => sbiFilePattern.test(f.path));
+  const required = exemption?.exempt ? [] : impact.sbiRequiredReasons.length ? impact.sbiRequiredReasons : snapshotChanged ? ['sbi-snapshot'] : [];
+  const verified = await verifySbiSource({ root, base, files, required, config, repository, github: issueGithub });
   const source = { ...verified, ...(exemption ? { exemption } : {}) };
   // A destructive migration that migration-safety let through as an exception request still needs two reviews on headSha.
   const migrationExceptions = all ? { status: 'PASS', exceptions: [], reasons: [] }
@@ -263,7 +270,7 @@ export function describeJudge({ needs, acceptance, checks, security, granularity
 export function describeImpact(impact) {
   return [
     `SBI: ${impact.sbis.join(', ') || '(none; diff only)'}`,
-    `SBI required: ${impact.sbiRequired ? `yes (${impact.sbiRequiredReasons.join(', ')})` : 'no (no production path changed)'}`,
+    ...describeChangeType({ changeType: impact.changeType, ...impact.changeTypeFiles }),
     `Affected areas: ${impact.affectedAreas.join(', ') || '(none)'}`,
     ...impact.verifiers.map(v => `Verifier ${v.id}${v.mandatory ? ' [mandatory]' : ''}: ${v.reasons.join(', ')}`),
     `Acceptance (Completion Judge): ${impact.acceptanceVerifiers.join(', ') || '(none)'}`,
