@@ -306,6 +306,8 @@ export const securityPolicySchema = z.strictObject({
     ignoreLegacySbiMetadata: z.literal(true).optional(),
     // Phrases of the SBI text that only negate the rule (an endpoint that needs no authentication) are dropped before metadataPatterns (#233).
     ignoredMetadataPatterns: z.array(narrowPattern).optional(),
+    // A new OpenAPI operation the approved SBI declares public drops only these patterns from the contract's changed lines (#243).
+    publicOperationException: z.strictObject({ ignoredPatterns: z.array(narrowPattern).min(1) }).optional(),
     // Only the added lines of a file under pathPatterns count, so a change that turns a setting dangerous matches and one that narrows it does not.
     // ignoredPatterns drop safe forms (an egress block) first; a binary file there cannot be read and matches (#157).
     addedContent: z.strictObject({ pathPatterns: z.array(narrowPattern).min(1), patterns: z.array(narrowPattern).min(1), ignoredPatterns: z.array(narrowPattern).default([]),

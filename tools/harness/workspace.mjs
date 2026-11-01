@@ -3,6 +3,7 @@ import { join, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { isSecretPath, hasTrackedCredential, isSafeEnvTemplate } from './evidence-protection.mjs';
 import { execute, exists } from './io.mjs';
+import { contractPath } from './openapi-public-operation.mjs';
 export const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const gitOptions = ['-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', '-c', 'user.name=SONOMAMA Harness', '-c', 'user.email=harness@localhost'];
 export async function git(workspace, args, optional = false) {
@@ -89,6 +90,9 @@ export async function changedFiles(workspace, baselineSha, headSha) {
       added: lines.filter(s => s.startsWith('+') && !s.startsWith('+++')).map(s => s.slice(1)).join('\n'),
       deleted: lines.filter(s => s.startsWith('-') && !s.startsWith('---')).map(s => s.slice(1)).join('\n') });
   }
+  // SEC-AUTH-001 judges the API contract from the whole file before and after (#243); a new contract has nothing before.
+  const show = async (rev, path) => { const r = await git(workspace, ['show', `${rev}:${path}`]).catch(() => null); return r?.stdout; };
+  for (const f of files.filter(f => contractPath.test(f.path))) Object.assign(f, { before: f.status === 'A' ? undefined : await show(baselineSha, f.path), after: f.status === 'D' ? undefined : await show(headSha, f.path) });
   return files;
 }
 export async function toolFingerprint(root) {

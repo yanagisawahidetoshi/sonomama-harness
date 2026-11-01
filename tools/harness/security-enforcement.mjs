@@ -4,6 +4,7 @@ import { runIsolated } from './isolation.mjs';
 import { hasSecret, hasTrackedCredential, isSecretPath } from './evidence-protection.mjs';
 import { classifyLane } from './lanes.mjs';
 import { securityPolicySchema } from './schemas.mjs';
+import { declaredPublic, newPublicOperations } from './openapi-public-operation.mjs';
 const normalize = text => text.replace(/[^a-z0-9]/gi, '').toLowerCase();
 // Markdown that only cites a policy file or rule ID (e.g. docs/security/authorization.md, SEC-ROLE-001) is not a security change.
 const citationFree = (path, text) => /\.(md|mdx|markdown)$/i.test(path)
@@ -17,6 +18,15 @@ const classifierSource = f => [f.path, f.previousPath].filter(Boolean).every(pat
 const contentFor = (rule, f, text) => (rule.contentExceptions || [])
   .filter(e => [f.path, f.previousPath].filter(Boolean).every(path => e.pathPatterns.some(p => new RegExp(p).test(path))))
   .reduce((rest, e) => e.ignoredPatterns.reduce((t, p) => t.replace(new RegExp(p, e.ignoreCase ? 'gim' : 'gm'), ''), rest), text);
+// A new operation made public without touching existing or shared requirements drops only the named patterns (#243). Each SBI must declare
+// every such operation public; the pass without an SBI judges the structure only, and the CI requires an SBI for a contract change (ADR-0006).
+const sbiStatements = sbi => [sbi.title, sbi.description, ...(sbi.risks ?? []), ...(sbi.acceptanceCriteria ?? [])].some(Boolean);
+const publicOperationFor = (rule, f, sbi, text) => {
+  if (!rule.publicOperationException) return text;
+  const added = newPublicOperations(f);
+  if (!added || (sbiStatements(sbi) && !added.every(op => declaredPublic(op, sbi, rule.ignoredMetadataPatterns ?? [])))) return text;
+  return rule.publicOperationException.ignoredPatterns.reduce((t, p) => t.replace(new RegExp(p, 'gm'), ''), text);
+};
 // An SBI that declares a rule requires all its verifiers; a matched file requires only the verifiers whose appliesTo covers that file.
 const sbiSources = new Set(['requiredSecurityRules', 'securityImpact', 'SBI/acceptance']);
 export function classifySecurity({ files = [], sbi = {}, legacySbi = false }, rawPolicy) {
@@ -44,7 +54,7 @@ export function classifySecurity({ files = [], sbi = {}, legacySbi = false }, ra
         const added = rule.addedContent.ignoredPatterns.reduce((text, p) => text.replace(new RegExp(p, 'gim'), ''), f.added || '');
         if (f.binary || rule.addedContent.patterns.some(p => new RegExp(p,'im').test(added)) || rule.addedContent.removedPatterns.some(p => new RegExp(p,'im').test(f.deleted || ''))) matches.push({ source: 'added-content', ...at });
       }
-      if (!classifierSource(f) && rule.contentPatterns.some(p => new RegExp(p,'im').test(contentFor(rule, f, citationFree(f.path, `${f.added || ''}\n${f.deleted || ''}`))))) matches.push({ source: 'changed-content', ...at });
+      if (!classifierSource(f) && rule.contentPatterns.some(p => new RegExp(p,'im').test(publicOperationFor(rule, f, sbi, contentFor(rule, f, citationFree(f.path, `${f.added || ''}\n${f.deleted || ''}`)))))) matches.push({ source: 'changed-content', ...at });
     }
     if (rule.categories.includes('SecurityConfig') && files.some(f => policy.forbiddenPatterns.some(p => new RegExp(p,'im').test(`${f.added || ''}\n${f.deleted || ''}`)))) matches.push({ source: 'forbidden-security-pattern' });
     if (rule.categories.includes('Secret') && files.some(f => f.excludedSecret === true || isSecretPath(f.path) || hasSecret(`${f.added || ''}\n${f.deleted || ''}`))) matches.push({ source: 'secret-file-or-content' });
