@@ -34,14 +34,35 @@ Harnessが確かめるのは、IDと文書の対応が取れているかどう�
 
 ## 変更内容の検査（ローカルのrunとCI）
 
-秘密情報・禁止パターン・ログへの個人情報出力の検査（secret-scan、forbidden-pattern-check、pii-log-check）は、ローカルのrunとCIの両方で行う。検査する範囲は次のとおり異なる。
+秘密情報・禁止パターン・ログへの個人情報出力の検査（secret-scan、forbidden-pattern-check、pii-log-check）は、ローカルのrunとCIの両方で行う。検査する範囲は次のとおり。
 
-| 実行場所 | 検査するファイルと内容 | 検査対象が0件のとき |
-| --- | --- | --- |
-| ローカルのrun（harness:run） | run worktreeのbaselineからコミットまでの差分にあるファイル（削除とSBI Issueのsnapshotを除く）と、SBIがファイル名で許可したファイル。どちらも全文を読む | SKIPとし、Securityは不合格になる |
-| CI（harness:judge --base） | PRの差分にあるファイル（削除を除く）の追加行 | PASSのまま |
-| CI（harness:judge --all、mainへのpush） | 差分がないため検査しない | PASSのまま |
+| 実行場所 | 検査するファイルと内容 |
+| --- | --- |
+| ローカルのrun（harness:run） | run worktreeのbaselineからコミットまでの差分にあるファイルと、SBIがファイル名で許可したファイル。どちらも全文を読む |
+| CI（harness:judge --base、PR） | PRの差分にあるファイルの追加行 |
+| CI（harness:judge --all、mainへのpush） | HEADで追跡している全ファイル（git ls-tree HEAD）の全文。追跡していないファイルやnode_modulesは読まない |
 
-SBI Issueから作ったSBIはディレクトリ単位で範囲を許可し、ファイル名では何も許可しない。そのため、ローカルのrunは許可範囲ではなく実際の差分を検査する。
-SBI Issueのsnapshot（.harness/state/sbi-<N>.json）はHarnessがIssue本文から書くもので、Agentが書いたコードではないため、ローカルのrunでは検査対象に数えない。CIはPRの差分として検査する。
-CIで検査対象が0件のときの扱い（削除だけのPR、mainへのpush）と、ローカルのrunで削除だけの変更が検査対象0件のためSKIPとなる扱いは、#184 で決める。
+差分のファイルは、ローカルのrunとCIで同じ関数（securityTargets）で次のどれか1つに分ける（#184）。
+
+- 削除: 内容は検査しない。
+- 検査不能: バイナリ（blobにNULを含むもの）、モードだけの変更、mainへのpushで読むsubmodule。読める行がないので、検査したファイルの数には入れない。それだけを理由に不合格にはしない。秘密情報のパスかどうかは調べ、secret-scanは中身のバイトを、そのままとNULを除いた形の両方で読んで秘密値を探す（UTF-16で書いた値も見つける）。
+  バイナリかどうかと変更行は、検査するツリーの.gitattributesを使わずにgitが判定する。パスはpathspecとしてではなく、そのままの名前として渡す。差分の本文の文言では判定しない。
+- SBI Issueのsnapshot（.harness/state/sbi-<N>.json）: HarnessがIssue本文から書くもので、Agentが書いたコードではない。secret-scanだけが読み、禁止パターンと個人情報出力の検査からは外す（#181 ではローカルのrunで全検査から外していたが、#184 で秘密情報だけは検査するよう改めた）。
+- 秘密情報のパス: 内容を読まずに違反とする。.env.exampleなどのテンプレートは、秘密値がないことを確かめたものだけ除く。
+- 検査対象: 上のどれでもないファイル。
+
+検査対象が0件になるときの判定は、ローカルのrunとCIで同じにする。
+
+| ケース | 判定 |
+| --- | --- |
+| 差分が空、またはSBI Issueのsnapshotしか変わっていない | 不合格 |
+| 差分のファイル数と、上の分類の合計が一致しない | 不合格 |
+| 削除ではない差分のファイルが読めない | 不合格 |
+| 追加行がない変更（削除だけ。snapshotを除く） | 合格とし、証跡にreason: deletion-only、削除したファイル、削除した行数を残す。セキュリティの保護を外す行の削除（removedPatterns）は、変更の分類で別に検知する |
+| 検査不能なファイルだけの変更 | 合格。証跡で検査したファイルと検査不能なファイルを分けて残す |
+
+renameやcopyは差分に現れない（--no-renames）。移したファイルは削除と追加になり、追加側の行を検査するので、削除だけの変更とは扱わない。
+
+テストのfixtureが、検知するパターンをそのまま書く必要があるときは、security.jsonのcontentScanExceptionsに、ファイル・対象の検査・外す文字列・理由を書いて外す。外した場合は証跡に残る。
+
+PRのCI（harness.ymlとcompletion-judge.ymlのJudge）は、PRのbase commitを環境変数HARNESS_BASE_SHAで受け取り、比較に使うbaseがそのcommitを含むことを確かめる。含まなければ不合格にする。mainへのpush（--all）はbaseを持たないので確かめない。
