@@ -21,7 +21,9 @@ const answerSchema = z.strictObject({
   violations: z.array(z.strictObject({ scenario: z.string(), files: z.array(z.strictObject({ path: z.string(), content: z.string() })) })),
   escalation: z.string().nullable(),
 });
-export const violationResponseSchema = z.toJSONSchema(answerSchema);
+// Without $schema, like the hand-written schemas: the Claude CLI cannot load the draft 2020-12 meta-schema Zod declares.
+const { $schema: _, ...violationJsonSchema } = z.toJSONSchema(answerSchema);
+export const violationResponseSchema = violationJsonSchema;
 export const parseViolationAnswer = answer => answerSchema.safeParse(answer);
 
 export function violationPrompt({ sbiIssue, scenarios }) {
