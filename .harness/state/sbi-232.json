@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "source": {
+    "repo": "yanagisawahidetoshi/sonomama-harness",
+    "number": 232,
+    "url": "https://github.com/yanagisawahidetoshi/sonomama-harness/issues/232"
+  },
+  "runId": "2026-11-01T10-25-48-137Z-f2f0ab31",
+  "titleDigest": "67e3a6bc36ea7723fb96fb73e9a4189d6e2143d71af4e5b5b76e86f3748fb68d",
+  "bodyDigest": "535408903e293934b32fed8218dd6ad7ac6a556c4cf753b240fa98a5b8247618",
+  "sbi": {
+    "id": "ISSUE-232",
+    "kind": "implementation",
+    "title": "SBI-001 OpenAPI 3.1 契約に GET /api/v1/health とレスポンス schema を定義する",
+    "description": "packages/api-schema に最初の OpenAPI 3.1 契約を作り、認証不要の疎通確認 endpoint GET /api/v1/health と、そのレスポンス schema を定義する。",
+    "gherkin": "Feature: SBI-001 OpenAPI 3.1 契約に GET /api/v1/health とレスポンス schema を定義する\n  Scenario: 契約が OpenAPI 3.1 として妥当\n    Given packages/api-schema に health endpoint を含む契約がある\n    When OpenAPI validation を実行する\n    Then エラーが 0 件で終了する\n\n  Scenario: health endpoint のレスポンス定義が要件どおり\n    Given 契約に GET /api/v1/health が定義されている\n    When 200 レスポンスの定義を読む\n    Then Content-Type は application/json\n    And schema は必須の status を持ち、値は ok だけを許す\n    And operation の security は空配列である",
+    "acceptanceCriteria": [
+      {
+        "id": "AC-1",
+        "description": "packages/api-schema の契約ファイルが OpenAPI 3.1 として validation エラー 0 件で通る",
+        "verifier": "sbi-232-health-contract"
+      },
+      {
+        "id": "AC-2",
+        "description": "契約に GET /api/v1/health が定義され、200 レスポンスの Content-Type が application/json になっている",
+        "verifier": "sbi-232-health-contract"
+      },
+      {
+        "id": "AC-3",
+        "description": "200 レスポンスの schema が、必須プロパティ status（string、enum は ok のみ）を持つ object として定義されている",
+        "verifier": "sbi-232-health-contract"
+      },
+      {
+        "id": "AC-4",
+        "description": "GET /api/v1/health の operation に `security: []` が明示されている",
+        "verifier": "sbi-232-health-contract"
+      }
+    ],
+    "allowedFiles": [],
+    "allowedDirs": [
+      "packages/api-schema/"
+    ],
+    "risks": [],
+    "ambiguous": false,
+    "requiresDesignDecision": false,
+    "securityImpact": [],
+    "requiredSecurityRules": [],
+    "requiredVerifiers": [],
+    "affectedAreas": [],
+    "preImplementationGate": false,
+    "minimumRiskLevel": 2,
+    "estimatedFiles": 3,
+    "e2e": "不要",
+    "issueUrl": "https://github.com/yanagisawahidetoshi/sonomama-harness/issues/232",
+    "pbiUrl": "https://github.com/yanagisawahidetoshi/sonomama-harness/issues/231"
+  }
+}
