@@ -9,7 +9,7 @@ import { assertWritablePath } from './workspace.mjs';
 import { configSchema, generatedRegistrationSchema } from './schemas.mjs';
 import { readAcceptance, withAcceptance } from './acceptance-registry.mjs';
 import { specDigest } from './spec-approval.mjs';
-import { approvedSpec, generateAcceptance, verifyGeneratedRegistration } from './acceptance-generation.mjs';
+import { approvedSpec, generateAcceptance, generationResponseSchema, verifyGeneratedRegistration } from './acceptance-generation.mjs';
 
 const pbi = { owner: 'acme', repo: 'app', number: 3, url: 'https://github.com/acme/app/issues/3', title: '講座' };
 const body = renderSbiBody({
@@ -248,4 +248,11 @@ describe('Re-verifying a generated registration', () => {
     await writeFile(join(root, 'apps/api/spec/acceptance/sbi_7/helper.rb'), 'def auth(_) = {}');
     assert.match((await verifyGeneratedRegistration({ root, registration, issue })).join('\n'), /helper\.rb/);
   }));
+});
+
+describe('The response schema handed to the generation agent', () => {
+  // The Claude CLI rejects a --json-schema that declares the draft 2020-12 meta-schema before calling the model.
+  it('given the schema the Harness passes to the agent when the CLI reads it then it declares no $schema', () => {
+    assert.equal(Object.hasOwn(generationResponseSchema, '$schema'), false);
+  });
 });

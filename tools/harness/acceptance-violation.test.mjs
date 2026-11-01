@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { inspectViolation, judgeViolation, violationLimits } from './acceptance-violation.mjs';
+import { inspectViolation, judgeViolation, violationLimits, violationResponseSchema } from './acceptance-violation.mjs';
 
 // #147: controlled violation. For a Scenario that already passes before the implementation, the generation agent proposes a minimal change
 // to the application that must make that Scenario's expected outcome fail. The Harness accepts or rejects the proposal mechanically.
@@ -121,5 +121,12 @@ describe('Judging the run of a controlled violation', () => {
   }
   it('when the run produced no report then it is an environment failure, not a test quality result', () => {
     assert.equal(judge([], { error: 'Docker is not running' }).outcome, 'environment');
+  });
+});
+
+describe('The response schema handed to the violation agent', () => {
+  // The Claude CLI rejects a --json-schema that declares the draft 2020-12 meta-schema before calling the model.
+  it('given the schema the Harness passes to the agent when the CLI reads it then it declares no $schema', () => {
+    assert.equal(Object.hasOwn(violationResponseSchema, '$schema'), false);
   });
 });
