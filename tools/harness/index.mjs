@@ -14,7 +14,7 @@ import { runAiReview } from './ai-review.mjs';
 import { assessRisk } from './risk-classifier.mjs';
 import { mergeDecision } from './merge-policy.mjs';
 import { authenticatedRecords, recordDecision, waitsForIssue } from './human-approvals.mjs';
-import { classifySecurity, verifySecurity, combineSecurity, securityPassed } from './security-enforcement.mjs';
+import { classifySecurity, verifySecurity, combineSecurity, securityPassed, localTargets } from './security-enforcement.mjs';
 import { withEvidenceProtection, redact, redactText, hasSecret, assertSafeInput, isSecretPath } from './evidence-protection.mjs';
 import { githubPrCli, githubState, pullRequestBody } from './github-pr.mjs';
 import { digest, prepareWorkspace, commitWorkspace, changedFiles, workspaceIntegrity, toolFingerprint, assertWritablePath, workspaceFingerprint, sourceIntegrity, assertWorktreeOwner, assertSafeCommit, git } from './workspace.mjs';
@@ -163,10 +163,9 @@ async function verifyHead({ root, summary, inputs, result, iterDir, iteration, r
   summary.securityAssessment = combineSecurity(summary.securityAssessment, classifySecurity({files:await riskFiles(root,summary,inputs,files),sbi},securityPolicy));
   summary.executionSecurityAssessment = summary.securityAssessment;
   // The committed diff, not allowedFiles alone: an SBI Issue allows directories only, and its allowedFiles is empty.
-  // The Issue snapshot the Harness commits is Issue text, not code, so it neither counts as a target nor fails on a pattern the Issue names.
-  const snapshot = inputs.sbiSnapshot && snapshotPath(inputs.sbiSnapshot);
-  const changed = [...new Set([...files.filter(f => f.status !== 'D').map(f => f.path), ...sbi.allowedFiles])].filter(path => path !== snapshot).map(path => ({ path }));
-  result.securityVerification = redact(await verifySecurity({ workspace, sbi, assessment: summary.securityAssessment, policy: securityPolicy, config, headSha:summary.headSha, verification:result.verification, changed, requireTargets: true }));
+  // The diff is classified as in CI (#184) and read whole; a file the SBI allows by name but the diff lacks is read when it exists.
+  const changed = localTargets(files, sbi.allowedFiles);
+  result.securityVerification = redact(await verifySecurity({ workspace, sbi, assessment: summary.securityAssessment, policy: securityPolicy, config, headSha:summary.headSha, verification:result.verification, changed, entries: files.length }));
   result.security = { id:'security',required:true,status:securityPassed(result.securityVerification)?'PASS':'FAIL' };
   result.gateApproved = gateCleared(summary);
   await json(join(directory,'security-assessment.json'),{...summary.securityAssessment,headSha:summary.headSha});

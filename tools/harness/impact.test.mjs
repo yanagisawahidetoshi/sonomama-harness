@@ -688,6 +688,11 @@ describe('CI workflow setup', () => {
       assert.equal(judge.env.HARNESS_HEAD_SHA, head);
     });
 
+    // #184: a pull request also names its base commit, so the Judge checks that the base it diffs from contains it; a push to main has none.
+    it('when the Judge runs on a pull request then it is told the base commit of the event', () => {
+      assert.equal(judge.env.HARNESS_BASE_SHA, '${{ github.event.pull_request.base.sha }}');
+    });
+
     it('when the impact reported no maestro output then the maestro job does not start', () => {
       assert.match(workflow.jobs.maestro.if, /needs\.impact\.outputs\.maestro != ''/);
     });
@@ -746,6 +751,108 @@ describe('CI Completion Judge for a legacy hand-written SBI (#217)', () => {
       const result = await runCompletionJudge({ root, base: 'main', needs });
       assert.deepEqual(result.source.required, ['sbi-snapshot']);
       assert.equal(result.source.status, 'FAIL');
+    }));
+  });
+});
+
+// #184: the Completion Judge reads its content targets from the PR diff, or from every tracked file at HEAD on a push to main (--all).
+describe('CI Security content targets (#184)', () => {
+  const needs = { impact: { result: 'success' }, verifiers: { result: 'success' }, 'harness-test': { result: 'skipped' }, 'harness-demo': { result: 'skipped' } };
+  const unsafe = ['NODE', 'TLS', 'REJECT', 'UNAUTHORIZED'].join('_');
+  const commit = async (root, message) => { await git(root, ['add', '--all']); await git(root, ['commit', '--allow-empty', '-m', message]); };
+  // Commits setup on main, then makes the PR change on a feature branch.
+  const pr = async (root, { setup = async () => {}, change }) => {
+    await setup(root);
+    await commit(root, 'main');
+    await git(root, ['switch', '-c', 'feature']);
+    if (change) { await change(root); await commit(root, 'feature'); }
+  };
+  const check = (judged, id = 'forbidden-pattern-check') => judged.security.checks.find(c => c.id === id);
+
+  describe('given a pull request', () => {
+    it('when the PR diff is empty then the content checks fail and so does the Judge', () => fixture(async root => {
+      await pr(root, {});
+      const judged = await runCompletionJudge({ root, base: 'main', needs });
+      assert.equal(check(judged).status, 'FAIL');
+      assert.match(check(judged).reason, /no changed file/);
+      assert.equal(judged.status, 'FAIL');
+    }));
+
+    it('when the PR only deletes a file then the content checks pass as deletion-only with the deleted file', () => fixture(async root => {
+      await pr(root, { setup: root => writeFile(join(root, 'docs/old-184.md'), '# old\n'), change: root => git(root, ['rm', '-q', 'docs/old-184.md']) });
+      const judged = await runCompletionJudge({ root, base: 'main', needs });
+      for (const id of ['secret-scan', 'forbidden-pattern-check']) {
+        assert.equal(check(judged, id).status, 'PASS', id);
+        assert.equal(check(judged, id).reason, 'deletion-only', id);
+        assert.deepEqual(check(judged, id).deleted, ['docs/old-184.md'], id);
+      }
+    }));
+
+    it('when the PR adds an SBI snapshot whose Issue names a forbidden pattern then forbidden-pattern-check excludes it and secret-scan reads it', () => fixture(async root => {
+      await pr(root, { change: async root => {
+        const sbi = await readJson(join(root, '.harness/state/sample-sbi.json'));
+        await writeFile(join(root, '.harness/state/sbi-9.json'), JSON.stringify({ ...sbi, description: `${unsafe} = 0 を使わない` }));
+        await writeFile(join(root, 'docs/tls-184.md'), '# TLS\n');
+      } });
+      const judged = await runCompletionJudge({ root, base: 'main', needs });
+      assert.equal(check(judged).status, 'PASS');
+      assert.deepEqual(check(judged).excluded, ['.harness/state/sbi-9.json']);
+      assert.deepEqual(check(judged, 'secret-scan').scanned, ['.harness/state/sbi-9.json', 'docs/tls-184.md']);
+    }));
+
+    it('when the PR adds a binary file then it is uninspectable and not counted as scanned', () => fixture(async root => {
+      await pr(root, { change: root => writeFile(join(root, 'docs/logo-184.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1, 2, 0])) });
+      const judged = await runCompletionJudge({ root, base: 'main', needs });
+      assert.equal(check(judged).status, 'PASS');
+      assert.deepEqual(check(judged).scanned, []);
+      assert.deepEqual(check(judged).uninspectable, ['docs/logo-184.png']);
+    }));
+
+    it('when the base SHA the workflow names is not what the base ref resolves to then fails', () => fixture(async root => {
+      await pr(root, { change: root => writeFile(join(root, 'docs/x-184.md'), '# x\n') });
+      const judged = await runCompletionJudge({ root, base: 'main', needs, expectedBaseSha: 'b'.repeat(40) });
+      assert.equal(judged.status, 'FAIL');
+      assert.ok(judged.reasons.some(r => /^base sha: main is /.test(r)), judged.reasons.join('; '));
+    }));
+
+    it('when the base SHA the workflow names matches the base ref then no base reason is added', () => fixture(async root => {
+      await pr(root, { change: root => writeFile(join(root, 'docs/x-184.md'), '# x\n') });
+      const expectedBaseSha = (await git(root, ['rev-parse', 'main'])).stdout.trim();
+      const judged = await runCompletionJudge({ root, base: 'main', needs, expectedBaseSha });
+      assert.equal(judged.reasons.some(r => r.startsWith('base sha:')), false, judged.reasons.join('; '));
+    }));
+  });
+
+  describe('given a push to main (--all)', () => {
+    it('when judged then every tracked file at HEAD is read in full and nothing untracked is', () => fixture(async root => {
+      await writeFile(join(root, 'untracked-184.mjs'), `process.env.${unsafe} = 0;\n`);
+      await mkdir(join(root, 'node_modules/pkg'), { recursive: true });
+      await writeFile(join(root, 'node_modules/pkg/index.js'), `process.env.${unsafe} = 0;\n`);
+      const tracked = (await git(root, ['ls-tree', '-r', '--name-only', 'HEAD'])).stdout.split('\n').filter(Boolean);
+      const judged = await runCompletionJudge({ root, all: true, needs });
+      const c = check(judged);
+      assert.equal(c.status, 'PASS', JSON.stringify(c.findings));
+      assert.equal(c.diff.entries, tracked.length);
+      assert.equal(c.scanned.length + c.excluded.length + c.uninspectable.length, tracked.length);
+      assert.ok(c.scanned.includes('apps/admin/.env.example'));
+      assert.equal(c.scanned.includes('untracked-184.mjs'), false);
+      assert.equal(c.scanned.some(path => path.startsWith('node_modules/')), false);
+      assert.deepEqual(c.exceptions.map(e => e.path), ['tools/harness/security-enforcement.test.mjs']);
+    }));
+
+    it('when a tracked fixture spells out a forbidden pattern then the policy exception is recorded with its path and reason', () => fixture(async root => {
+      const c = check(await runCompletionJudge({ root, all: true, needs }));
+      const policy = await readJson(join(root, '.harness/rules/security.json'));
+      assert.deepEqual(c.exceptions, policy.contentScanExceptions.map(e => ({ path: e.path, reason: e.reason })));
+    }));
+
+    it('when a tracked file at HEAD holds a forbidden pattern then fails even though the working tree no longer has it', () => fixture(async root => {
+      await writeFile(join(root, 'docs/unsafe-184.mjs'), `process.env.${unsafe} = 0;\n`);
+      await commit(root, 'unsafe');
+      await writeFile(join(root, 'docs/unsafe-184.mjs'), 'export {};\n');
+      const judged = await runCompletionJudge({ root, all: true, needs });
+      assert.equal(check(judged).status, 'FAIL');
+      assert.deepEqual(check(judged).findings.map(f => f.path), ['docs/unsafe-184.mjs']);
     }));
   });
 });

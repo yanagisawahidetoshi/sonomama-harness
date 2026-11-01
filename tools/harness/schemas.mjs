@@ -321,6 +321,8 @@ export const securityPolicySchema = z.strictObject({
     directory: z.union([z.literal('.'), relativePath]).optional(), commands: z.array(z.array(text).min(1)).optional(),
     appliesTo: z.array(text).optional() })),
   secretPatterns: z.array(text).min(1), forbiddenPatterns: z.array(text), piiLogPatterns: z.array(text),
+  // #184: a test fixture that must spell out a pattern the content checks detect is named here, file by file, with the strings and the reason.
+  contentScanExceptions: z.array(z.strictObject({ path: relativePath, verifiers: z.array(text).min(1), ignoredPatterns: z.array(narrowPattern).min(1), reason: text })).optional(),
 }).refine(p => new Set(p.rules.map(r => r.id)).size === p.rules.length && new Set(p.verifiers.map(v => v.id)).size === p.verifiers.length, 'duplicate security rule/verifier');
 // preImplementationRuleIds keeps its name so that rule IDs stay matched with security.json and docs; since #175 it lists the rules a human
 // decides at SBI approval, not a gate before implementation.

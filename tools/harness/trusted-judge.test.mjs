@@ -170,6 +170,11 @@ describe('Workflow of the trusted Completion Judge', () => {
     assert.doesNotMatch(text(workflow), /secrets\.|create-github-app-token/);
   });
 
+  it('when the Judge judges then it is told the base commit of the pull request (#184)', async () => {
+    const { jobs } = await load();
+    assert.equal(steps(jobs.judge).find(s => s.id === 'judge').env.HARNESS_BASE_SHA, '${{ github.event.pull_request.base.sha }}');
+  });
+
   it('when a PR changes the judge workflow then its own Completion Judge still runs main\'s workflow and the change needs a human', async () => {
     const workflow = await load();
     assert.deepEqual(Object.keys(workflow.on), ['pull_request_target']);
@@ -235,6 +240,20 @@ describe('Trusted Completion Judge over a PR tree and its evidence run', () => {
     const judged = await judge({ root, workspace, headSha, run: null, jobs: [] });
     assert.equal(judged.status, 'FAIL');
     assert.match(judged.reasons.join('\n'), /evidence: no completed pull_request run/);
+  }));
+
+  it('when the base ref does not contain the base commit the event names then fails (#184)', () => fixture(async root => {
+    const { workspace, headSha } = await branch(root, ws => writeFile(join(ws, 'docs/note.md'), 'note\n'));
+    const judged = await judge({ root, workspace, headSha, baseSha: headSha, jobs: [job('impact'), job('harness-test', 'skipped'), job('harness-demo', 'skipped')] });
+    assert.equal(judged.status, 'FAIL');
+    assert.match(judged.reasons.join('\n'), /^base sha: main is [0-9a-f]{12}, which does not contain/m);
+  }));
+
+  it('when the base ref contains the base commit the event names then passes (#184)', () => fixture(async root => {
+    const baseSha = (await git(root, ['rev-parse', 'main'])).stdout.trim();
+    const { workspace, headSha } = await branch(root, ws => writeFile(join(ws, 'docs/note.md'), 'note\n'));
+    const judged = await judge({ root, workspace, headSha, baseSha, jobs: [job('impact'), job('harness-test', 'skipped'), job('harness-demo', 'skipped')] });
+    assert.deepEqual(judged.reasons, []);
   }));
 
   it('when the PR tree is not the head the event names then fails', () => fixture(async root => {
