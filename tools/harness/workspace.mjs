@@ -3,7 +3,7 @@ import { join, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { isSecretPath, hasTrackedCredential, isSafeEnvTemplate } from './evidence-protection.mjs';
 import { execute, exists } from './io.mjs';
-import { contractPath } from './openapi-public-operation.mjs';
+import { contractPath } from './api-contract-path.mjs';
 export const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const gitOptions = ['-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', '-c', 'user.name=SONOMAMA Harness', '-c', 'user.email=harness@localhost'];
 export async function git(workspace, args, optional = false) {

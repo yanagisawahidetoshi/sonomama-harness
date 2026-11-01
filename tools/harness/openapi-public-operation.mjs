@@ -1,8 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { parse as parseYaml } from 'yaml';
+import { contractPath } from './api-contract-path.mjs';
 
-// The single OpenAPI Source of Truth, as api-schema-reader.mjs reads it.
-export const contractPath = /^packages\/api-schema\/openapi\.(ya?ml|json)$/;
 const methods = ['get', 'put', 'post', 'patch', 'delete', 'options', 'head', 'trace'];
 const object = value => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 // Merge keys are resolved, so an operation that takes its requirements from an anchor is compared with them.
