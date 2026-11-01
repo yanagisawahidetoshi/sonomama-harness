@@ -27,6 +27,15 @@ SEC-AUTH-001は、`authenticate`で始まる語（`authenticate_user!`、`authen
 既知の制約: `devise`のモジュールの並びを次の行へ続けた場合（`devise :database_authenticatable,`の次の行の`:lockable, :timeoutable`など）、続きの行だけの変更は`devise`の宣言の一部だと行からはわからないので検出しない。`security`キーは先頭にもoperationの下にも書け、値が配列・ブロック・aliasのどれでも、空配列や`bearerAuth`以外のschemeでも、その行の追加・変更・削除を検出する。値が`{`で始まるJavaScriptのオブジェクトなど、OpenAPIのsecurityではない形は対象にしない。
 Harnessのコード（`tools/harness/`直下の`.mjs`）は、自身の承認台帳（`authenticatedRecords`、`authenticated local ledger`）、承認する人の確認（`Authenticated human`）、GitHubやgh CLIによる本人確認（`GitHub authenticates`、`the authenticated gh CLI`）、OpenAPIを読んだ結果（`authenticated endpoint`、`.authenticated`など）を`authenticate`で始まる語で書く。アプリの認証を変えるものではないので、security.jsonの`contentExceptions`に列挙した文脈だけを本文の検出から除く。除くのは列挙した文字列（大文字・小文字も一致するもの）だけで、同じ行の他の語、`authenticate_user!`、サブディレクトリやシェルスクリプト、`apps/`・`packages/`・`prototypes/`などHarness以外のパス、Harnessの外へ出すrenameは検出する。除く文脈が増えてきたら、語の列挙ではなく構文や文脈で判定する方式へ移る。
 `contentExceptions`の大文字・小文字の扱いは除外ごとに`ignoreCase`で決める。書かない除外は、列挙した大文字・小文字のとおりの文字列だけを除く。指定を忘れても除外が広がらないようにするためで、契約テスト基盤の`securitySchemes`（OpenAPIの名前そのもの）とHarnessの既知の文脈はこの既定のままにする。Legacy SBI・Trusted Acceptanceの除外は、本文パターンと同じく大文字・小文字を区別しない（`ignoreCase: true`）。
+ただし、承認済みSBIで認証不要とした新規endpointの追加は、認証の変更とみなさない（[ADR-0010](../adr/0010-approved-public-endpoint.md)、#243）。API契約（`packages/api-schema/openapi.yaml`など）の変更前後をparseして比べ、次をすべて満たすときだけ、`security`キーの行を本文の検出から除く（security.jsonの`publicOperationException`）。
+
+- 追加したoperationの`security`が空配列で、変更前の契約にはそのoperationが無い。
+- 先頭の`security`と`components.securitySchemes`が変わらず、既存のoperationは`security`を含めて変わらない（削除もしない）。
+- 承認済みSBIのタイトル・目的・受け入れ要件のどれか1つの文が、そのoperationだけを`GET /api/v1/health`のように名指しし、認証が要らないこと（上の`ignoredMetadataPatterns`の形）か`security: []`を求めることを書いている。SBIが名指ししていない公開operationが1つでもあれば除かない。CIのSBIを使わない判定は構造だけを見るが、契約の変更にはRun snapshotが要る（ADR-0006）ので、SBIごとの判定も必ず行う。
+
+既存endpointの認証の解除・変更・削除、共通の認証設定の変更、承認された公開範囲の拡大は、これまでどおりレベル3のHuman Gateにする。parseできない、変更前の内容が分からない、renameした、契約以外のファイルである、など区別できない場合は除かない。`bearerAuth`・`jwt`などの語やファイル名による検出は、この場合もそのまま適用する。
+既知の制約: 実装前の判定は許可ファイルの今の内容を変更として読むので、既存の契約に`security`や`securitySchemes`があると、公開endpointを足すだけのSBIでも実装前にSEC-AUTH-001になる。
+
 既知の制約: 本文の検出は変更した行だけを読むので、次のOpenAPIの書き方は検出しない。変更前後のOpenAPIをparseして比べる方式を#218で扱う。
 - 既存の`security`の下でscheme名の行だけを書き換える変更（`- PartnerAuth: []`を`- OtherAuth: []`にするなど）
 - 1行のJSON（`{"openapi": "3.1.0", "security": []}`）や、flow mappingの中のキー（`get: {security: []}`）

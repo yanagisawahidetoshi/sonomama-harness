@@ -356,3 +356,30 @@ describe('AI Review result bound to the reviewed SHA (#187)', () => {
     }));
   });
 });
+
+// #243: the run judges a contract change from the whole file before and after, both before applying code and after the implementation.
+describe('A public operation the approved SBI declares is not a new security decision', () => {
+  const contract = 'packages/api-schema/openapi.yaml';
+  const header = "openapi: 3.1.0\ninfo:\n  title: SONOMAMA API\n  version: 0.1.0\npaths:\n";
+  const health = "  /api/v1/health:\n    get:\n      security: []\n      responses:\n        '200':\n          description: ok\n";
+  const publicSbi = (root, description = '認証不要の疎通確認 endpoint GET /api/v1/health を契約に定義し、greeting.mjsでgreetを実装する。') =>
+    update(root, sbiPath, s => { s.allowedFiles = ['greeting.mjs', contract]; s.description = description; });
+  const proposing = content => async () => ({ files: [{ path: 'greeting.mjs', content: good }, { path: contract, content }] });
+  const matched = async (root, run) => (await readJson(join(root, run.runDir, 'security-assessment.json'))).matchedRules;
+  describe('given an SBI that declares GET /api/v1/health public and a repository without a contract', () => {
+    it('when the agent creates the contract with that operation then the run neither stops nor matches SEC-AUTH-001', () => fixture(async root => {
+      await publicSbi(root);
+      const run = await runHarness({ root, quiet: true, agent: proposing(header + health) });
+      assert.notEqual(run.escalation?.code, 'NEW_SECURITY_SCOPE');
+      assert.equal((await matched(root, run)).includes('SEC-AUTH-001'), false);
+    }));
+  });
+  describe('given an SBI that does not declare the operation public', () => {
+    it('when the agent creates the contract with a public operation then stops as NEW_SECURITY_SCOPE with SEC-AUTH-001', () => fixture(async root => {
+      await publicSbi(root, '疎通確認の契約を定義し、greeting.mjsでgreetを実装する。');
+      const run = await runHarness({ root, quiet: true, agent: proposing(header + health) });
+      assert.equal(run.escalation?.code, 'NEW_SECURITY_SCOPE');
+      assert.match(run.reason, /SEC-AUTH-001/);
+    }));
+  });
+});

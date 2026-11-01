@@ -239,7 +239,11 @@ async function executeLoop({ root, summary, inputs, quiet, agent = runAgent, rev
         }
       }
       if (new Set(response.files.map(f => f.path)).size !== response.files.length) throw new Error('scope duplicate path');
-      const proposedFiles = response.files.map(f => ({ path: f.path, status: 'M', added: f.content, deleted: '', binary: false }));
+      // The whole file before the proposal goes with it, so SEC-AUTH-001 can tell a new public operation from weakened authentication (#243).
+      const proposedFiles = await Promise.all(response.files.map(async f => {
+        const before = await readFile(join(workspace, f.path), 'utf8').catch(e => { if (e.code === 'ENOENT') return undefined; throw e; });
+        return { path: f.path, status: before === undefined ? 'A' : 'M', added: f.content, deleted: '', binary: false, before, after: f.content };
+      }));
       const proposedSecurity = classifySecurity({files:proposedFiles,sbi},securityPolicy);
       const newRules = proposedSecurity.matchedRules.filter(id => !summary.securityAssessment.matchedRules.includes(id));
       if (newRules.length) {

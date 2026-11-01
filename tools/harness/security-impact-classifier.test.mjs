@@ -767,3 +767,94 @@ describe('Security Impact Classifier on test runner configuration', () => {
     assert.equal(detected(assess([{ path: 'apps/admin/src/features/auth/useSignIn.test.ts', status: 'M', added: "it('signs in', () => {});" }]), 'SEC-VERIFY-001'), false);
   });
 });
+
+// #243: a new operation the approved SBI declares public is not an AuthN change; weakening existing or shared authentication still is.
+describe('Security Impact Classifier on a public operation added to the OpenAPI contract', () => {
+  const contract = 'packages/api-schema/openapi.yaml';
+  const header = 'openapi: 3.1.0\ninfo:\n  title: SONOMAMA API\n  version: 0.1.0\n';
+  const schemes = 'components:\n  securitySchemes:\n    bearerAuth:\n      type: http\n      scheme: bearer\n';
+  const items = "  /api/v1/items:\n    get:\n      security:\n        - bearerAuth: []\n      responses:\n        '200':\n          description: ok\n";
+  const operation = (path, security = '      security: []\n') => `  ${path}:\n    get:\n${security}      responses:\n        '200':\n          description: ok\n`;
+  const document = (paths, rest = schemes) => `${header}${rest}paths:\n${paths}`;
+  const before = document(items);
+  // A change as the Harness passes it: the changed lines and the whole file before and after.
+  // Lines are compared as a multiset, so a repeated line such as security: still shows as added.
+  const minus = (a, b) => { const rest = (b ?? '').split('\n'); return (a ?? '').split('\n').filter(l => { const i = rest.indexOf(l); if (i < 0) return true; rest.splice(i, 1); return false; }).join('\n'); };
+  const change = (from, to, path = contract) => ({ path, status: from === undefined ? 'A' : 'M', before: from, after: to, added: minus(to, from), deleted: minus(from, to) });
+  const approved = { title: 'SBI-001 疎通確認APIを契約に定義する', description: '認証不要の疎通確認 endpoint GET /api/v1/health を定義する。', risks: [], acceptanceCriteria: [{ id: 'AC-1', description: 'GET /api/v1/health が 200 を返す', verifier: 'v' }] };
+  const bySbi = (files, sbi) => classifySecurity({ files, sbi }, policy);
+  describe('given a new operation with security: [] on a new path, and the shared security settings unchanged', () => {
+    const added = change(before, document(items + operation('/api/v1/health')));
+    it('when the approved SBI says the operation needs no authentication then does not match SEC-AUTH-001', () => {
+      assert.equal(detected(bySbi([added], approved), 'SEC-AUTH-001'), false);
+    });
+    it('when the approved SBI requires security: [] on the operation in an acceptance criterion then does not match SEC-AUTH-001', () => {
+      const sbi = { ...approved, description: '疎通確認 endpoint を定義する。', acceptanceCriteria: [{ id: 'AC-4', description: 'GET /api/v1/health の operation に `security: []` が明示されている', verifier: 'v' }] };
+      assert.equal(detected(bySbi([added], sbi), 'SEC-AUTH-001'), false);
+    });
+    it('when it is classified without an SBI, as the CI does besides each SBI, then does not match SEC-AUTH-001', () => {
+      assert.equal(detected(assess([added]), 'SEC-AUTH-001'), false);
+    });
+    it('when the approved SBI does not name the operation then matches SEC-AUTH-001', () => {
+      assert.ok(detected(bySbi([added], { ...approved, description: '疎通確認用の endpoint を定義する。' }), 'SEC-AUTH-001'));
+    });
+    it('when the approved SBI names it without saying it needs no authentication then matches SEC-AUTH-001', () => {
+      assert.ok(detected(bySbi([added], { ...approved, description: '疎通確認 endpoint GET /api/v1/health を定義する。' }), 'SEC-AUTH-001'));
+    });
+    it('when the approved SBI declares another operation public then matches SEC-AUTH-001', () => {
+      assert.ok(detected(bySbi([added], { ...approved, description: '認証不要の endpoint GET /api/v1/status を定義する。' }), 'SEC-AUTH-001'));
+    });
+    it('when a second public operation the SBI does not name is added too then matches SEC-AUTH-001', () => {
+      const both = change(before, document(items + operation('/api/v1/health') + operation('/api/v1/debug')));
+      assert.ok(detected(bySbi([both], approved), 'SEC-AUTH-001'));
+    });
+    it('when the same change also adds another authentication word then matches SEC-AUTH-001', () => {
+      const jwt = change(before, document(items + operation('/api/v1/health').replace("description: ok", 'description: returns a jwt')));
+      assert.ok(detected(bySbi([jwt], approved), 'SEC-AUTH-001'));
+    });
+  });
+  describe('given the contract is created with one public operation, as SBI #232 does', () => {
+    it('when the approved SBI says the operation needs no authentication then does not match SEC-AUTH-001', () => {
+      assert.equal(detected(bySbi([change(undefined, document(operation('/api/v1/health'), ''))], approved), 'SEC-AUTH-001'), false);
+    });
+    it('when the new contract also declares a top-level security then matches SEC-AUTH-001', () => {
+      assert.ok(detected(bySbi([change(undefined, document(operation('/api/v1/health'), 'security: []\n'))], approved), 'SEC-AUTH-001'));
+    });
+  });
+  describe('given a change that weakens or changes existing or shared authentication', () => {
+    for (const [name, to] of [
+      ['an existing operation drops its security requirement', document(items.replace('      security:\n        - bearerAuth: []\n', '      security: []\n') + operation('/api/v1/health'))],
+      ['an existing operation is removed with its security requirement', document(operation('/api/v1/health'))],
+      ['the top-level security is added', document(items + operation('/api/v1/health'), `security: []\n${schemes}`)],
+      ['the security schemes change', document(items + operation('/api/v1/health'), schemes.replace('scheme: bearer', 'scheme: basic'))],
+      ['a new operation requires a scheme', document(items + operation('/api/v1/health', '      security:\n        - bearerAuth: []\n'))],
+    ]) {
+      it(`when ${name} then matches SEC-AUTH-001 even though the SBI declares the new operation public`, () => {
+        assert.ok(detected(bySbi([change(before, to)], approved), 'SEC-AUTH-001'));
+      });
+    }
+    it('when the top-level security is removed then matches SEC-AUTH-001', () => {
+      const shared = document(items, `security:\n  - bearerAuth: []\n${schemes}`);
+      assert.ok(detected(bySbi([change(shared, document(items + operation('/api/v1/health')))], approved), 'SEC-AUTH-001'));
+    });
+  });
+  describe('given a change the classifier cannot tell apart', () => {
+    for (const [name, file] of [
+      ['the contract after the change cannot be parsed', change(before, `${document(items + operation('/api/v1/health'))}  : [\n`)],
+      ['the contract before the change is not given for a modified file', { ...change(before, document(items + operation('/api/v1/health'))), before: undefined }],
+      ['the contract after the change is not given', { ...change(before, document(items + operation('/api/v1/health'))), after: undefined }],
+      ['the file is not the API contract', change(before, document(items + operation('/api/v1/health')), 'apps/admin/openapi.yaml')],
+    ]) {
+      it(`when ${name} then matches SEC-AUTH-001`, () => {
+        assert.ok(detected(bySbi([file], approved), 'SEC-AUTH-001'));
+      });
+    }
+  });
+  describe('given the security policy', () => {
+    it('when it is read then only SEC-AUTH-001 excuses an approved public operation, and only for its security key pattern', () => {
+      for (const rule of policy.rules.filter(r => r.id !== 'SEC-AUTH-001')) assert.equal(rule.publicOperationException, undefined, rule.id);
+      const auth = policy.rules.find(r => r.id === 'SEC-AUTH-001');
+      assert.deepEqual(auth.publicOperationException, { ignoredPatterns: [auth.contentPatterns.find(p => p.includes('security'))] });
+    });
+  });
+});

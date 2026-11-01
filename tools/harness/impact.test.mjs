@@ -4,12 +4,12 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fixture, update } from './test-fixture.mjs';
 import { readJson } from './io.mjs';
-import { analyzeImpact, describeImpact, describeJudge, judgeCi, judgeTestedCommit, runCompletionJudge } from './impact.mjs';
+import { analyzeImpact, changedFiles, describeImpact, describeJudge, judgeCi, judgeTestedCommit, runCompletionJudge } from './impact.mjs';
 import { renderSbiBody } from './planner.mjs';
 import { sbiFromIssue } from './sbi-issue.mjs';
 import { withAcceptance } from './acceptance-registry.mjs';
 import { snapshotFromIssue, snapshotPath } from './sbi-source.mjs';
-import { git } from './workspace.mjs';
+import { changedFiles as workspaceChangedFiles, git } from './workspace.mjs';
 import { verify } from './verifier.mjs';
 import { check } from './check.mjs';
 import { parse } from 'yaml';
@@ -853,6 +853,33 @@ describe('CI Security content targets (#184)', () => {
       const judged = await runCompletionJudge({ root, all: true, needs });
       assert.equal(check(judged).status, 'FAIL');
       assert.deepEqual(check(judged).findings.map(f => f.path), ['docs/unsafe-184.mjs']);
+    }));
+  });
+});
+
+// #243: SEC-AUTH-001 judges an API contract change from the whole file before and after, so both diffs carry it for the contract.
+describe('Changed files of the API contract', () => {
+  const contract = 'packages/api-schema/openapi.yaml';
+  const commit = async (root, content) => {
+    await writeFile(join(root, contract), content);
+    await git(root, ['add', contract]); await git(root, ['commit', '-q', '-m', 'contract']);
+    return (await git(root, ['rev-parse', 'HEAD'])).stdout.trim();
+  };
+  describe('given a commit that creates the contract and one that changes it', () => {
+    it('when the CI lists the changes from the base then the contract carries the whole file before and after', () => fixture(async root => {
+      const base = await commit(root, 'openapi: 3.1.0\n');
+      await commit(root, 'openapi: 3.1.0\npaths: {}\n');
+      const file = (await changedFiles(root, base)).find(f => f.path === contract);
+      assert.deepEqual({ before: file.before, after: file.after }, { before: 'openapi: 3.1.0\n', after: 'openapi: 3.1.0\npaths: {}\n' });
+    }));
+    it('when the run lists the changes from the baseline then the contract carries the whole file before and after, and nothing before a new contract', () => fixture(async root => {
+      const empty = (await git(root, ['rev-parse', 'HEAD'])).stdout.trim();
+      const created = await commit(root, 'openapi: 3.1.0\n');
+      const changed = await commit(root, 'openapi: 3.1.0\npaths: {}\n');
+      const [added] = (await workspaceChangedFiles(root, empty, created)).filter(f => f.path === contract);
+      assert.deepEqual({ status: added.status, before: added.before, after: added.after }, { status: 'A', before: undefined, after: 'openapi: 3.1.0\n' });
+      const [modified] = (await workspaceChangedFiles(root, created, changed)).filter(f => f.path === contract);
+      assert.deepEqual({ before: modified.before, after: modified.after }, { before: 'openapi: 3.1.0\n', after: 'openapi: 3.1.0\npaths: {}\n' });
     }));
   });
 });
