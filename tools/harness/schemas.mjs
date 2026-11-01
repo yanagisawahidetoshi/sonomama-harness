@@ -313,6 +313,8 @@ export const securityPolicySchema = z.strictObject({
     ignoredMetadataPatterns: z.array(narrowPattern).optional(),
     // A match in the SBI text alone requires every verifier of the rule whatever the changed paths, so no approval stands in for them (#165).
     metadataRequiresAllVerifiers: z.literal(true).optional(),
+    // A changed path under these patterns that none of the rule's verifiers covers requires them all, failing closed (#246 N2).
+    uncoveredPathsRequireAllVerifiers: z.array(narrowPattern).optional(),
     // Only the added lines of a file under pathPatterns count, so a change that turns a setting dangerous matches and one that narrows it does not.
     // ignoredPatterns drop safe forms (an egress block) first; a binary file there cannot be read and matches (#157).
     addedContent: z.strictObject({ pathPatterns: z.array(narrowPattern).min(1), patterns: z.array(narrowPattern).min(1), ignoredPatterns: z.array(narrowPattern).default([]),

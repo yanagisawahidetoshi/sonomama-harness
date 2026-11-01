@@ -220,7 +220,9 @@ authn-test（apps/api/spec/authentication）、rails-rls-test（apps/api/spec/rl
 
 verifierは`setupCommands`（依存のinstall）と`commands`（検証本体）の2段で動き、時間の上限を別にする（#246）。setupの上限は`setupTimeoutMs`（既定360秒）、検証本体は`timeoutMs`（120秒）で、verifierごとに上書きできる。
 setupが時間切れならSETUP_TIMEOUT、失敗ならSETUP_FAILEDとして検証本体を実行せずにFAILにする。検証本体の失敗はVERIFY_FAILED・VERIFY_TIMEOUT。どれもPASSにはしない。証跡のcheckには`failure`と各フェーズの所要時間（`phases`）を残し、ログにも`[setup 139.8s, verify 19.0s]`の形で出す。
-SBIが宣言・記述したruleでも、必須にするのは変更パスがappliesToに当たるverifierだけ（ruleのLEVEL 3・Gate・2人承認はそのまま）。パスがわからないときは全部を必須にする。
+SBIが宣言・記述したruleでも、必須にするのは変更パスがappliesToに当たるverifierだけ（ruleのLEVEL 3・Gate・2人承認はそのまま）。変更パスが1つも無い評価では全部を必須にする。
+preflightは事前の通知とGate判定だけに使い、完了判定ではrunもCIも実際のdiffでverifierを選び直す。SEC-AUTH-001で`apps/`のどの認証テストにも入らないパスを変えたときは、認証テストを全部必須にする。
+テストの実行・除外の設定（spec_helper・rails_helper・.rspec・vite / vitest / jestの設定、package.jsonのjest）を変えるとSEC-VERIFY-001でLEVEL 3・2人のReviewになる（自動の検証は足さない）。
 SEC-DESTRUCTIVE-001にSBI本文だけが一致したときは、パスにかかわらずdata-lifecycle-testを必須にする（[threat-model](docs/security/threat-model.md)）。
 必要になったplaceholderはSKIPにせずNOT_CONFIGUREDにする。
 harness.jsonのsecurityVerifiersにid、workspace内directory、信頼するcommandsを登録して接続する。

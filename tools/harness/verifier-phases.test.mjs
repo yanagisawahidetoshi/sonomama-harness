@@ -115,7 +115,7 @@ describe('Verifier setup configuration', () => {
         assert.ok(v.setupCommands?.some(c => c[0] === 'pnpm' && c[1] === 'install'), id);
       }
     });
-    it('when the setup limit is read then it is longer than the verification limit and the slowest install measured on a loaded machine (169s)', () => {
+    it('when the setup limit is read then it is longer than the verification limit and the slowest install measured on a loaded machine (201s)', () => {
       const parsed = configSchema.parse(config);
       assert.ok(parsed.setupTimeoutMs > parsed.timeoutMs);
       assert.ok(parsed.setupTimeoutMs >= 300000);

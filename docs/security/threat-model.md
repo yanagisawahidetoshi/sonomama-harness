@@ -18,6 +18,9 @@
 | SEC-PRODINFRA-001 | 本番のインフラ・デプロイ設定の変更と、インフラを危険な方向へ変える変更 | 禁止パターンの検査（forbidden-pattern-check） | 必要 | レベル3 |
 | SEC-DESTRUCTIVE-001 | 破壊的な操作、本番データ | データの保存と削除のテスト（data-lifecycle-test） | 必要 | レベル3 |
 | SEC-DESIGN-001 | セキュリティに関わる重要な設計、ADR | 禁止パターンの検査（forbidden-pattern-check） | 不要 | レベル2 |
+| SEC-VERIFY-001 | テストの実行・除外の設定（`spec_helper.rb`・`rails_helper.rb`・`.rspec`・`vite.config.*`・`vitest.config.*`・`jest.config.*`、`package.json`のjestの設定） | 禁止パターンの検査（forbidden-pattern-check）。自動の検証は足さず、人が2人でReviewする | 不要 | レベル3 |
+
+SEC-VERIFY-001（#246）は、テストを検証から外す設定の変更（除外のパターン、タグの絞り込み、実行するファイルの指定）を人が見るためのルールで、ほかのSecurity Verifierの件数による判定を迂回できないようにする。`package.json`は追加・削除した行に`"jest": {`や`testMatch`・`testPathIgnorePatterns`などのキーがある場合だけ対象にし、jestの版の更新だけでは当てない。行単位で読むので、jestの設定の中の値だけを書き換える変更は検出できない（既知の制約）。
 
 SEC-PRODINFRA-001は、Infrastructureのパス（`infra`・`terraform`・`terragrunt`・`k8s`・`helm`・`charts`・`deploy`・`live`・`cdk`・`pulumi`・`cloudformation`・`environments`配下、`.tf`・`.tfvars`・`.hcl`・`.tf.json`）のうち`prod`・`prd`・`production`を含むもの（`non-prod`・`pre-prod`は除く）、`prod`を名前に含むGitHub Actionsのworkflow、インフラのファイルの追加行に次の設定が入った変更を対象にする。削除保護・破壊防止の解除（`prevent_destroy = false`・`deletion_protection = false`・`force_destroy = true`・`skip_final_snapshot = true`）、IAMの全権限（`"*"`・`'*'`の要素）、すべての送信元へのingress（`0.0.0.0/0`・`::/0`。行頭から始まるHCLのegressブロックは除く）。保護をオンにしていた行（`prevent_destroy = true`・`deletion_protection = true`）の削除も同じ扱いにする。危険な方向かどうかは追加行だけで判定するので、既存の設定を狭める変更はレベル2のままになる。中身を読めないバイナリのインフラファイルはレベル3にする。この「追加行だけ」の判定はPRの差分（CI）に対するもの。`harness:run`の実装前の確認ではファイル全体を追加行として読むので、既存の公開設定を含むファイルを触るとレベル3として止まる（fail-closed）。KubernetesのYAMLのegressも除外しないのでレベル3になる。誤検知の多い条件は増やさず、必要になったら別のIssueで足す。
 

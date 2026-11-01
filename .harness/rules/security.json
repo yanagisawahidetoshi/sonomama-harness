@@ -75,6 +75,9 @@
         "admin-authn-test",
         "mobile-authn-test"
       ],
+      "uncoveredPathsRequireAllVerifiers": [
+        "^apps/"
+      ],
       "policyDocument": "docs/security/authorization.md",
       "ignoredMetadataPatterns": [
         "認証(は|が)?(不要|なし|無し)(?![^\\n。]*?(ように|可能に|にする|に変更|に変え|化|外す|削除|廃止|やめ|緩和|許可))",
@@ -448,6 +451,40 @@
         "forbidden-pattern-check"
       ],
       "policyDocument": "docs/security/threat-model.md"
+    },
+    {
+      "id": "SEC-VERIFY-001",
+      "description": "テストの実行・除外の設定（spec_helper.rb・rails_helper.rb・.rspec・vite / vitest / jest の設定、package.jsonのjestの設定）の変更を検知し、LEVEL 3・2人のReviewを強制する。テストを検証から外す改ざんを人が見る。自動の検証は足さない（#246）",
+      "categories": [
+        "VerifierConfig"
+      ],
+      "pathPatterns": [
+        "(^|/)spec/(spec_helper|rails_helper)\\.rb$",
+        "(^|/)\\.rspec$",
+        "(^|/)(vite|vitest|jest)\\.config\\.[^/]+$"
+      ],
+      "contentPatterns": [],
+      "addedContent": {
+        "pathPatterns": [
+          "(^|/)package\\.json$"
+        ],
+        "patterns": [
+          "\"jest\"\\s*:\\s*\\{",
+          "\"(testMatch|testRegex|testPathIgnorePatterns|testPathPattern|modulePathIgnorePatterns|roots|projects|preset|setupFiles|setupFilesAfterEnv|testEnvironment)\"\\s*:"
+        ],
+        "removedPatterns": [
+          "\"jest\"\\s*:\\s*\\{",
+          "\"(testMatch|testRegex|testPathIgnorePatterns|testPathPattern|modulePathIgnorePatterns|roots|projects|preset|setupFiles|setupFilesAfterEnv|testEnvironment)\"\\s*:"
+        ]
+      },
+      "metadataPatterns": [],
+      "preImplementationGate": false,
+      "minimumRiskLevel": 3,
+      "requiredHumanApprovals": 2,
+      "requiredVerifiers": [
+        "forbidden-pattern-check"
+      ],
+      "policyDocument": "docs/security/threat-model.md"
     }
   ],
   "verifiers": [
@@ -469,7 +506,8 @@
       "directory": ".",
       "appliesTo": [
         "^apps/api/",
-        "^packages/"
+        "^packages/",
+        "^compose\\.yaml$"
       ],
       "commands": []
     },

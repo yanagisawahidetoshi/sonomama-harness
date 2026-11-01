@@ -56,7 +56,10 @@ export function classifySecurity({ files = [], sbi = {}, legacySbi = false }, ra
     if (rule.categories.includes('Secret') && files.some(f => f.excludedSecret === true || isSecretPath(f.path) || hasSecret(`${f.added || ''}\n${f.deleted || ''}`))) matches.push({ source: 'secret-file-or-content' });
     if (matches.length) {
       rule.categories.forEach(c => impacts.add(c)); matchedRules.push(rule.id);
-      rule.requiredVerifiers.filter(id => applies(rule, id, matches)).forEach(id => required.add(id));
+      // #246 N2: a changed path the rule names (apps/ for SEC-AUTH-001) that none of its verifiers covers requires them all.
+      const scoped = rule.requiredVerifiers.filter(id => appliesTo.get(id));
+      const uncovered = changedPaths.some(path => (rule.uncoveredPathsRequireAllVerifiers || []).some(p => new RegExp(p).test(path)) && !scoped.some(id => covers(id, [path])));
+      rule.requiredVerifiers.filter(id => uncovered || applies(rule, id, matches)).forEach(id => required.add(id));
       gate ||= rule.preImplementationGate; minimum = Math.max(minimum, rule.minimumRiskLevel); approvals = Math.max(approvals, rule.requiredHumanApprovals);
       reasons.push({ ruleId: rule.id, policyDocument: rule.policyDocument, matches });
     }

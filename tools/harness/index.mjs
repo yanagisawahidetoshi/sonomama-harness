@@ -161,7 +161,10 @@ async function verifyHead({ root, summary, inputs, result, iterDir, iteration, r
     requiredVerifiers:summary.securityAssessment.requiredVerifiers.filter(id=>generalIds.has(id)),
     acceptanceRunner: inputs.acceptanceRunner, generatedSpecDigest: summary.acceptance?.specDigest }));
   await json(join(iterDir,'verifier-selection.json'),result.verification.checks.map(({id,selectionReasons,required,status})=>({id,selectionReasons,required,status})));
-  summary.securityAssessment = combineSecurity(summary.securityAssessment, classifySecurity({files:await riskFiles(root,summary,inputs,files),sbi},securityPolicy));
+  // #246 N1: the preflight announces and decides the gate; the completion requires the verifiers the actual diff needs, as CI does.
+  // Rules, level and approvals still never go below what the preflight found.
+  const actualSecurity = classifySecurity({files:await riskFiles(root,summary,inputs,files),sbi},securityPolicy);
+  summary.securityAssessment = { ...combineSecurity(summary.securityAssessment, actualSecurity), requiredVerifiers: actualSecurity.requiredVerifiers };
   summary.executionSecurityAssessment = summary.securityAssessment;
   // The committed diff, not allowedFiles alone: an SBI Issue allows directories only, and its allowedFiles is empty.
   // The diff is classified as in CI (#184) and read whole; a file the SBI allows by name but the diff lacks is read when it exists.
