@@ -120,7 +120,9 @@ export async function verifySecurity({ workspace, assessment, policy, config, he
     // An uninspectable file has no line to scan, but secret-scan still reads its bytes (#184); it is not counted as scanned.
     if (t.target === 'uninspectable') {
       uninspectable.push(path);
-      try { raw.push({ path, text: text ?? await readFile(join(workspace, path), 'latin1') }); } catch (e) { if (e.code !== 'ENOENT') throw e; missing(); }
+      // The bytes are read as they are and without NUL bytes, so a UTF-16 encoded value is found as well.
+      try { const bytes = text ?? await readFile(join(workspace, path), 'latin1'); raw.push({ path, text: `${bytes}\n${bytes.replaceAll('\0', '')}` }); }
+      catch (e) { if (e.code !== 'ENOENT') throw e; missing(); }
       continue;
     }
     if (text !== undefined) { content.push({ path, text, snapshot: t.target === 'snapshot', optional: t.optional }); continue; }

@@ -77,10 +77,10 @@ export async function workspaceIntegrity(workspace, headSha) {
   const dirty = (await git(workspace, ['status', '--porcelain', '--untracked-files=all'])).stdout;
   if (current !== headSha || dirty) throw new Error('HEAD/snapshot changed; checks and approvals must be regenerated in a new run');
 }
-// #184: what is binary and which lines changed come from the blobs, never from a .gitattributes in the tree under review (an empty attribute source
+// #184: paths are literal, never pathspecs; what is binary and which lines changed come from the blobs, never from a .gitattributes in the tree under review (an empty attribute source
 // and no attributes file), and the lines are read by the hunk headers, so an added line that starts with "++" or spells "Binary files" stays a line.
 const emptyTree = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
-const plainDiff = ['--attr-source', emptyTree, '-c', 'core.attributesFile=/dev/null', 'diff', '--no-ext-diff', '--no-textconv', '--no-renames'];
+const plainDiff = ['--literal-pathspecs', '--attr-source', emptyTree, '-c', 'core.attributesFile=/dev/null', 'diff', '--no-ext-diff', '--no-textconv', '--no-renames'];
 function hunkLines(diff) {
   const added = [], deleted = [], lines = diff.split('\n');
   for (let i = 0; i < lines.length; i++) {
@@ -107,7 +107,7 @@ export async function changedFiles(workspace, baselineSha, headSha) {
     const diff = (await git(workspace, [...plainDiff, '--unified=0', baselineSha, headSha, '--', path])).stdout;
     const header = diff.split(/^@@ /m)[0];
     const { added, deleted } = binary.has(path) ? { added: [], deleted: [] } : hunkLines(diff);
-    const tree = (await git(workspace, ['ls-tree', headSha, '--', path])).stdout;
+    const tree = (await git(workspace, ['--literal-pathspecs', 'ls-tree', headSha, '--', path])).stdout;
     files.push({ path, status, mode: tree.slice(0, 6), modeChanged: /^old mode /m.test(header), binary: binary.has(path),
       added: added.join('\n'), deleted: deleted.join('\n'), addedLines: added.length, deletedLines: deleted.length });
   }
