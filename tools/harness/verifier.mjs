@@ -97,8 +97,8 @@ export async function verify({ root, workspace, config, sbi, files = sbi.allowed
         }
         commands.push(command);
       }
-      const {status,reason,processes}=await runIsolated({workspace,adapter,config,cwd,commands});
-      checks.push({...base,required:true,status,...(reason&&{reason}),cwd,isolation:adapter.isolation||'container',processes,skippedCommands});
+      const {status,reason,failure,phases,processes}=await runIsolated({workspace,adapter,config,cwd,commands});
+      checks.push({...base,required:true,status,...(reason&&{reason}),...(failure&&{failure}),...(phases&&{phases}),cwd,isolation:adapter.isolation||'container',processes,skippedCommands});
     }
   }
   return {status:checksPassed(checks)?'PASS':'FAIL',acceptance:[...new Set(acceptance)],lane:lane.name,checks};

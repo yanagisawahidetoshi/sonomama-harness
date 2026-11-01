@@ -27,7 +27,7 @@ describe('Application and trusted acceptance boundary', () => {
     it('when an allowed application test is repaired then trusted verification still decides completion', () => fixture(async root => {
       await update(root,sbiPath,s=>s.allowedFiles.push('apps/admin/widget.test.mjs'));
       await writeFile(join(root,'apps/admin/package.json'),'{"private":true}');
-      await update(root,'.harness/config/harness.json',c=>c.verifiers.find(v=>v.id==='admin').commands=[['node','-e','process.exit(0)']]);
+      await update(root,'.harness/config/harness.json',c=>Object.assign(c.verifiers.find(v=>v.id==='admin'),{setupCommands:[],commands:[['node','-e','process.exit(0)']]}));
       const run=await runFixture({root,quiet:true,agent:async()=>({files:[{path:'greeting.mjs',content:good},{path:'apps/admin/widget.test.mjs',content:'// Given widget; When render; Then visible'}]})});
       assert.equal(run.executionStatus,'DONE');
       assert.equal(run.iterations[0].verification.checks.find(c=>c.id==='sample-bdd').trust,'acceptance');
@@ -99,7 +99,7 @@ describe('Verifier applicability', () => {
     it('when full verification runs then executes existing configured apps regardless of path', () => fixture(async root => {
       const {config,sbi}=await check(root);
       await writeFile(join(root,'apps/admin/package.json'),'{}');
-      config.verifiers.find(v=>v.id==='admin').commands=[['node','-e','process.exit(0)']];
+      Object.assign(config.verifiers.find(v=>v.id==='admin'),{setupCommands:[],commands:[['node','-e','process.exit(0)']]});
       const result=await verify({root,workspace:root,config,sbi:{...sbi,acceptanceCriteria:[]},files:[],full:true});
       assert.equal(result.checks.find(c=>c.id==='admin').status,'PASS');
     }));
@@ -113,7 +113,7 @@ describe('Commands gated on dependency and native config changes', () => {
     const {config,sbi}=await check(root);
     const v=config.verifiers.find(x=>x.id===id);
     const doctor=['node','-e','process.exit(1)'];
-    v.commands=[['node','-e','process.exit(0)'],doctor];
+    v.setupCommands=[];v.commands=[['node','-e','process.exit(0)'],doctor];
     v.gatedCommands[0].command=doctor;
     return {config,sbi:{...sbi,acceptanceCriteria:[]},doctor:doctor.join(' ')};
   };
@@ -196,7 +196,7 @@ describe('Commands gated on dependency and native config changes', () => {
       await update(root,'.harness/config/harness.json',c=>{
         const v=c.verifiers.find(x=>x.id==='expo');
         const doctor=['node','-e','process.exit(1)'];
-        v.commands=[['node','-e','process.exit(0)'],doctor];
+        v.setupCommands=[];v.commands=[['node','-e','process.exit(0)'],doctor];
         v.gatedCommands[0].command=doctor;
       });
       await commitFixture(root);

@@ -209,11 +209,21 @@ requiredな検証はすべてPASSが必要。FAIL・SKIP・NOT_CONFIGURED、未�
 Completion JudgeもMerge Policy Judgeも拒否する。未設定の必須検証は修正ループで解決できないため即Escalation。
 
 組み込みはsecret-scan / forbidden-pattern-check / pii-log-check。
-Rails Brakeman / bundler-audit / RLS / OpenAPI security、dependency-audit、
-authz-ui-test、sensitive-storage-check、data-lifecycle-testは接続用placeholderを用意する。
+Rails Brakeman / bundler-audit / OpenAPI security、dependency-audit、
+authz-ui-test、sensitive-storage-checkは接続用placeholderを用意する（どのruleも必須にしていない）。
 migration-safetyはharness.jsonのsecurityVerifiersで接続済み。apps/api/db/migrateの静的検査（drop_table・remove_column・rename・change_column・execute等はFAIL、許可マーカーなし。expand/contractのcontract段階だけ、申請ファイルと2人の承認Reviewで通す。[手順](docs/workflows/database-migrations.md)）と、
 ローカルtest DB（Compose内の専用DB、RAILS_ENV=test）へのdb:migrate → VERSION=0までのrollback → 再適用を行う。
 rails-authz-testも接続済み。apps/api/spec/authorizationの*_spec.rbをローカルtest DBで実行する。specが無い、exampleが0件、skip・pending・focusがある場合はFAIL。
+authn-test（apps/api/spec/authentication）、rails-rls-test（apps/api/spec/rls）、data-lifecycle-test（apps/api/spec/data_lifecycle）も同じ条件で接続済み（#165）。
+クライアントの認証はアプリごとに分け、admin-authn-testは管理画面のVitest、mobile-authn-testはモバイルのJestで、それぞれのsrc/features/authのテストをコンテナ内で実行する。
+どのverifierも合否は実行結果の件数（RSpecのJSON集計、Vitest・JestのJSON report）で決め、0件・pending・todo・失敗・絞り込みで実行されなかったテストがあればFAIL。skip等の静的な検査は補助（`it.fails`・`test.failing`は静的に禁止）。
+
+verifierは`setupCommands`（依存のinstall）と`commands`（検証本体）の2段で動き、時間の上限を別にする（#246）。setupの上限は`setupTimeoutMs`（既定360秒）、検証本体は`timeoutMs`（120秒）で、verifierごとに上書きできる。
+setupが時間切れならSETUP_TIMEOUT、失敗ならSETUP_FAILEDとして検証本体を実行せずにFAILにする。検証本体の失敗はVERIFY_FAILED・VERIFY_TIMEOUT。どれもPASSにはしない。証跡のcheckには`failure`と各フェーズの所要時間（`phases`）を残し、ログにも`[setup 139.8s, verify 19.0s]`の形で出す。
+SBIが宣言・記述したruleでも、必須にするのは変更パスがappliesToに当たるverifierだけ（ruleのLEVEL 3・Gate・2人承認はそのまま）。変更パスが1つも無い評価では全部を必須にする。
+preflightは事前の通知とGate判定だけに使い、完了判定ではrunもCIも実際のdiffでverifierを選び直す。SEC-AUTH-001で`apps/`のどの認証テストにも入らないパスを変えたときは、認証テストを全部必須にする。
+テストの実行・除外の設定（spec_helper・rails_helper・.rspec・vite / vitest / jestの設定、package.jsonのjest）を変えるとSEC-VERIFY-001でLEVEL 3・2人のReviewになる（自動の検証は足さない）。
+SEC-DESTRUCTIVE-001にSBI本文だけが一致したときは、パスにかかわらずdata-lifecycle-testを必須にする（[threat-model](docs/security/threat-model.md)）。
 必要になったplaceholderはSKIPにせずNOT_CONFIGUREDにする。
 harness.jsonのsecurityVerifiersにid、workspace内directory、信頼するcommandsを登録して接続する。
 組み込みの必須検査は置き換えられない。実ツール本体の導入・本番の権限検証はまだ行っていない。

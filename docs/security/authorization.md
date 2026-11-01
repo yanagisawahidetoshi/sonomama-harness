@@ -11,7 +11,7 @@
 
 | ルールID | 対象となる変更 | 必ず実行する検証 |
 | --- | --- | --- |
-| SEC-AUTH-001 | 認証、APIの認証 | 認証のテスト（authn-test） |
+| SEC-AUTH-001 | 認証、APIの認証 | 変更したアプリの認証のテスト（APIはauthn-test、管理画面はadmin-authn-test、モバイルはmobile-authn-test） |
 | SEC-AUTHZ-001 | 認可、APIの認可 | Railsの認可テスト（rails-authz-test） |
 | SEC-RLS-001 | RLS | RailsのRLSテスト（rails-rls-test） |
 | SEC-ROLE-001 | 役割や権限のモデル | Railsの認可テスト（rails-authz-test） |
@@ -43,4 +43,23 @@ SBIの本文（タイトル・目的・受け入れ要件と、PRに入るRun sn
 Railsの認可テスト（rails-authz-test）は、`apps/api/spec/authorization/`の`*_spec.rb`をテスト用DBで実行する。specが無い、テストが0件、skip・pending・focusで実行されないテストがある場合は失敗にする。
 役割ごとの許可・拒否のspecは、認可を実装するSBIが、ここから参照する権限表に沿って書く。権限表が決まるまでは、`apps/api/`の認可を変えるPRはこの検証で必ず失敗する。
 
-Railsの認可テストとRLSテストは`apps/api/`の変更、認証のテストは`apps/`・`packages/`・`prototypes/`の変更でだけ実行する。ADRなどの文書だけで認可を記述した場合も、SBI承認とレベル3の判定は必要になる。
+認証・RLSのテストも同じ条件で失敗にする（#165）。どれも、テストが無い・0件・skipなどで実行されないテストがある・テストが失敗した場合はFAIL、すべて実行して通ればPASS。
+
+| 検証 | 実行するテスト | 実行方法 |
+| --- | --- | --- |
+| authn-test | `apps/api/spec/authentication/`の`*_spec.rb` | テスト用DB（`sonomama_authn_test`）でRSpec |
+| rails-rls-test | `apps/api/spec/rls/`の`*_spec.rb` | テスト用DB（`sonomama_rls_test`）でRSpec |
+| admin-authn-test | `apps/admin/src/features/auth/`の`*.test.ts(x)` | 管理画面のVitest（コンテナ内） |
+| mobile-authn-test | `apps/mobile/src/features/auth/`の`*.test.ts(x)` | モバイルのJest（コンテナ内） |
+
+合否は実行結果の件数で決める（#246）。RSpecはJSONの集計で、実行したテストが1件以上・pendingが0件・宣言したテストがすべて実行された（focusやタグの絞り込みで外れたものが無い）ことを見る。Vitest（`--reporter=json`）とJest（`--json`）は、`numTotalTests`が1以上で、`numPendingTests`・`numTodoTests`・`numFailedTests`が0、読み込めないsuiteが無いことを見る。
+静的な検査は補助として残し、RSpecの`xit`・`skip`・`pending`・`focus`（`{ skip }`・`do skip ... end`・`RSpec.xdescribe`・`; xit`の形も）、Vitest・Jestの`.skip`・`.skipIf`・`.runIf`・`.only`・`.todo`・`it['skip']`・`{ skip: true }`などのoption・`const { skip } = it`・`xit`・`fit`を見つけて失敗にする。失敗するテストを成功扱いにする`it.fails`（Vitest）・`test.failing`（Jest）は件数では見分けられないので、静的な検査で禁止する。
+モバイルの静的な検査は、jest-expoが実行するファイル（`*.test.*`・`*.spec.*`・`__tests__/`配下、`.mts`・`.cts`を含む）をすべて読む。
+
+どの検証を実行するかは、変更したパスで決める。Railsの認可テストとRLSテストは`apps/api/`、APIの認証テストは`apps/api/`・`packages/`（OpenAPIの認証定義はAPIが実装するため）・`compose.yaml`、管理画面とモバイルの認証テストはそれぞれ`apps/admin/`・`apps/mobile/`の変更でだけ実行する。
+SBIがルールを宣言した場合や、SBIの本文がルールに一致した場合も同じで、ルールのSBI承認・レベル3・2人のReviewはそのまま付けたうえで、変更したパスが当たる検証だけを必須にする。たとえば管理画面だけを変える認証のSBIでは、APIとモバイルの認証テストは要求しない。
+実装前の確認（preflight）は、SBIの`allowedFiles`・`allowedDirs`から必要な検証を事前に知らせ、Gateを判定するだけに使う。完了の判定では、ローカルのrunもCIと同じく、実際のdiffに対して検証を選び直す（#246）。変更しなかった領域の検証は残らない。ルール・レベル・承認人数はpreflightより下げない。
+変更したパスが1つも無い評価（設定の検査でSBIだけを読むときなど）では、ルールの検証をすべて必須にする（fail-closed）。runではSBIに`allowedFiles`か`allowedDirs`が必ずあり、CIには常にdiffがあるので、通常の判定はこの経路を通らない。
+SEC-AUTH-001に一致し、`apps/`の下で変更したパスのうち、どの認証テストの対象にも入らないものが1つでもあれば（`apps/README.md`など）、認証テストをすべて必須にする（security.jsonの`uncoveredPathsRequireAllVerifiers`、#246）。APIの認証テストは`compose.yaml`の変更にも当てる。
+`prototypes/`の認証の変更には、アプリの認証テストを要求しない。SEC-AUTH-001には一致するので、SBI承認・レベル3・2人のReviewで止める。
+ADRなどの文書だけで認可を記述した場合も、SBI承認とレベル3の判定は必要になる。

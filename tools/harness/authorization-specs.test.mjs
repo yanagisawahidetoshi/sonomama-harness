@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fixture, update, commitFixture } from './test-fixture.mjs';
 import { inspectAuthorizationSpec, checkAuthorizationSpecs } from './authorization-specs.mjs';
+import { rspecRunner } from './security-specs.mjs';
 import { classifySecurity } from './security-enforcement.mjs';
 import { runVerifier } from './impact.mjs';
 import { execute, readJson } from './io.mjs';
@@ -100,11 +101,11 @@ describe('rails-authz-test Security Verifier configuration', () => {
         assert.equal(command.join(' ').includes('production'), false, command.join(' '));
       }
     });
-    it('when its Rails commands run then the database is prepared before only the authorization specs run, failing on zero examples', () => {
+    // #246 review: the run is judged by its counts too (zero, pending or filtered examples fail), with the runner every Rails Security Verifier shares.
+    it('when its Rails commands run then the database is prepared before only the authorization specs run, judged by their counts', () => {
       const tasks = railsAuthz.commands.filter(c => c[0] === 'docker' && c.includes('run')).map(c => c.slice(c.indexOf('api') + 1).join(' '));
       const prepare = tasks.indexOf('bin/rails db:prepare');
-      // RSpec has no CLI flag for fail_if_no_examples, so the verifier sets it through the runner.
-      const rspec = tasks.indexOf('bundle exec ruby -e require "rspec/core"; RSpec.configure { |c| c.fail_if_no_examples = true }; exit RSpec::Core::Runner.run(["spec/authorization"])');
+      const rspec = tasks.indexOf(`bundle exec ruby -e ${rspecRunner('spec/authorization')}`);
       assert.ok(prepare >= 0 && rspec > prepare, tasks.join(' | '));
     });
     it('when its commands finish then the containers are stopped', () => {
