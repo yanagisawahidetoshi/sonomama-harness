@@ -11,7 +11,7 @@
 
 | ルールID | 対象となる変更 | 必ず実行する検証 |
 | --- | --- | --- |
-| SEC-AUTH-001 | 認証、APIの認証 | 認証のテスト（authn-test） |
+| SEC-AUTH-001 | 認証、APIの認証 | 変更したアプリの認証のテスト（APIはauthn-test、管理画面はadmin-authn-test、モバイルはmobile-authn-test） |
 | SEC-AUTHZ-001 | 認可、APIの認可 | Railsの認可テスト（rails-authz-test） |
 | SEC-RLS-001 | RLS | RailsのRLSテスト（rails-rls-test） |
 | SEC-ROLE-001 | 役割や権限のモデル | Railsの認可テスト（rails-authz-test） |
@@ -43,4 +43,18 @@ SBIの本文（タイトル・目的・受け入れ要件と、PRに入るRun sn
 Railsの認可テスト（rails-authz-test）は、`apps/api/spec/authorization/`の`*_spec.rb`をテスト用DBで実行する。specが無い、テストが0件、skip・pending・focusで実行されないテストがある場合は失敗にする。
 役割ごとの許可・拒否のspecは、認可を実装するSBIが、ここから参照する権限表に沿って書く。権限表が決まるまでは、`apps/api/`の認可を変えるPRはこの検証で必ず失敗する。
 
-Railsの認可テストとRLSテストは`apps/api/`の変更、認証のテストは`apps/`・`packages/`・`prototypes/`の変更でだけ実行する。ADRなどの文書だけで認可を記述した場合も、SBI承認とレベル3の判定は必要になる。
+認証・RLSのテストも同じ条件で失敗にする（#165）。どれも、テストが無い・0件・skipなどで実行されないテストがある・テストが失敗した場合はFAIL、すべて実行して通ればPASS。
+
+| 検証 | 実行するテスト | 実行方法 |
+| --- | --- | --- |
+| authn-test | `apps/api/spec/authentication/`の`*_spec.rb` | テスト用DB（`sonomama_authn_test`）でRSpec |
+| rails-rls-test | `apps/api/spec/rls/`の`*_spec.rb` | テスト用DB（`sonomama_rls_test`）でRSpec |
+| admin-authn-test | `apps/admin/src/features/auth/`の`*.test.ts(x)` | 管理画面のVitest（コンテナ内） |
+| mobile-authn-test | `apps/mobile/src/features/auth/`の`*.test.ts(x)` | モバイルのJest（コンテナ内） |
+
+RSpecでは`xit`・`skip`・`pending`・`focus`などを、Vitest・Jestでは`.skip`・`.skipIf`・`.runIf`・`.only`・`.todo`・`xit`・`fit`などを、静的な検査で見つけて失敗にする。
+
+どの検証を実行するかは、変更したパスで決める。Railsの認可テストとRLSテストは`apps/api/`、APIの認証テストは`apps/api/`と`packages/`（OpenAPIの認証定義はAPIが実装するため）、管理画面とモバイルの認証テストはそれぞれ`apps/admin/`・`apps/mobile/`の変更でだけ実行する。
+SBIがルールを宣言した場合や、SBIの本文がルールに一致した場合も同じで、ルールのSBI承認・レベル3・2人のReviewはそのまま付けたうえで、変更したパスが当たる検証だけを必須にする。たとえば管理画面だけを変える認証のSBIでは、APIとモバイルの認証テストは要求しない。変更したパスがまだわからないとき（実装前の確認で対象のパスが無いときなど）は、ルールの検証をすべて必須にする。
+`prototypes/`の認証の変更には、アプリの認証テストを要求しない。SEC-AUTH-001には一致するので、SBI承認・レベル3・2人のReviewで止める。
+ADRなどの文書だけで認可を記述した場合も、SBI承認とレベル3の判定は必要になる。

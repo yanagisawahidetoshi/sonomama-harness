@@ -209,11 +209,15 @@ requiredな検証はすべてPASSが必要。FAIL・SKIP・NOT_CONFIGURED、未�
 Completion JudgeもMerge Policy Judgeも拒否する。未設定の必須検証は修正ループで解決できないため即Escalation。
 
 組み込みはsecret-scan / forbidden-pattern-check / pii-log-check。
-Rails Brakeman / bundler-audit / RLS / OpenAPI security、dependency-audit、
-authz-ui-test、sensitive-storage-check、data-lifecycle-testは接続用placeholderを用意する。
+Rails Brakeman / bundler-audit / OpenAPI security、dependency-audit、
+authz-ui-test、sensitive-storage-checkは接続用placeholderを用意する（どのruleも必須にしていない）。
 migration-safetyはharness.jsonのsecurityVerifiersで接続済み。apps/api/db/migrateの静的検査（drop_table・remove_column・rename・change_column・execute等はFAIL、許可マーカーなし。expand/contractのcontract段階だけ、申請ファイルと2人の承認Reviewで通す。[手順](docs/workflows/database-migrations.md)）と、
 ローカルtest DB（Compose内の専用DB、RAILS_ENV=test）へのdb:migrate → VERSION=0までのrollback → 再適用を行う。
 rails-authz-testも接続済み。apps/api/spec/authorizationの*_spec.rbをローカルtest DBで実行する。specが無い、exampleが0件、skip・pending・focusがある場合はFAIL。
+authn-test（apps/api/spec/authentication）、rails-rls-test（apps/api/spec/rls）、data-lifecycle-test（apps/api/spec/data_lifecycle）も同じ条件で接続済み（#165）。
+クライアントの認証はアプリごとに分け、admin-authn-testは管理画面のVitest、mobile-authn-testはモバイルのJestで、それぞれのsrc/features/authのテストをコンテナ内で実行する。テストが0件、skip・only・todo等がある、失敗した場合はFAIL。
+SBIが宣言・記述したruleでも、必須にするのは変更パスがappliesToに当たるverifierだけ（ruleのLEVEL 3・Gate・2人承認はそのまま）。パスがわからないときは全部を必須にする。
+SEC-DESTRUCTIVE-001にSBI本文だけが一致したときは、パスにかかわらずdata-lifecycle-testを必須にする（[threat-model](docs/security/threat-model.md)）。
 必要になったplaceholderはSKIPにせずNOT_CONFIGUREDにする。
 harness.jsonのsecurityVerifiersにid、workspace内directory、信頼するcommandsを登録して接続する。
 組み込みの必須検査は置き換えられない。実ツール本体の導入・本番の権限検証はまだ行っていない。

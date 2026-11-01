@@ -17,12 +17,17 @@ const classifierSource = f => [f.path, f.previousPath].filter(Boolean).every(pat
 const contentFor = (rule, f, text) => (rule.contentExceptions || [])
   .filter(e => [f.path, f.previousPath].filter(Boolean).every(path => e.pathPatterns.some(p => new RegExp(p).test(path))))
   .reduce((rest, e) => e.ignoredPatterns.reduce((t, p) => t.replace(new RegExp(p, e.ignoreCase ? 'gim' : 'gm'), ''), rest), text);
-// An SBI that declares a rule requires all its verifiers; a matched file requires only the verifiers whose appliesTo covers that file.
+// A matched file requires only the verifiers whose appliesTo covers that file. A rule the SBI declares or describes keeps its gate, level
+// and approvals, but requires only the verifiers whose appliesTo covers a changed path (#165); with no path known yet, it requires them all.
+// A rule with metadataRequiresAllVerifiers (SEC-DESTRUCTIVE-001) stays fail-closed on a match in the SBI text alone.
 const sbiSources = new Set(['requiredSecurityRules', 'securityImpact', 'SBI/acceptance']);
 export function classifySecurity({ files = [], sbi = {}, legacySbi = false }, rawPolicy) {
   const policy = securityPolicySchema.parse(rawPolicy);
   const appliesTo = new Map(policy.verifiers.map(v => [v.id, v.appliesTo]));
-  const applies = (id, matches) => !appliesTo.get(id) || matches.some(m => sbiSources.has(m.source) || [m.path, m.previousPath].some(path => path && appliesTo.get(id).some(p => new RegExp(p).test(path))));
+  const changedPaths = files.flatMap(f => [f.path, f.previousPath]).filter(Boolean);
+  const covers = (id, paths) => paths.some(path => path && appliesTo.get(id).some(p => new RegExp(p).test(path)));
+  const applies = (rule, id, matches) => !appliesTo.get(id) || matches.some(m => (m.source === 'SBI/acceptance' && rule.metadataRequiresAllVerifiers)
+    || (sbiSources.has(m.source) ? !changedPaths.length || covers(id, changedPaths) : covers(id, [m.path, m.previousPath])));
   const impacts = new Set(), matchedRules = [], reasons = [];
   const required = new Set([...policy.alwaysRequiredVerifiers, ...(sbi.requiredVerifiers || [])]);
   let gate = Boolean(sbi.preImplementationGate), minimum = Math.max(2, sbi.minimumRiskLevel || 2), approvals = 0;
@@ -50,7 +55,7 @@ export function classifySecurity({ files = [], sbi = {}, legacySbi = false }, ra
     if (rule.categories.includes('Secret') && files.some(f => f.excludedSecret === true || isSecretPath(f.path) || hasSecret(`${f.added || ''}\n${f.deleted || ''}`))) matches.push({ source: 'secret-file-or-content' });
     if (matches.length) {
       rule.categories.forEach(c => impacts.add(c)); matchedRules.push(rule.id);
-      rule.requiredVerifiers.filter(id => applies(id, matches)).forEach(id => required.add(id));
+      rule.requiredVerifiers.filter(id => applies(rule, id, matches)).forEach(id => required.add(id));
       gate ||= rule.preImplementationGate; minimum = Math.max(minimum, rule.minimumRiskLevel); approvals = Math.max(approvals, rule.requiredHumanApprovals);
       reasons.push({ ruleId: rule.id, policyDocument: rule.policyDocument, matches });
     }

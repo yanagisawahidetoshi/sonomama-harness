@@ -28,6 +28,11 @@ SEC-PRODINFRA-001は、Infrastructureのパス（`infra`・`terraform`・`terrag
 
 SEC-DESTRUCTIVE-001は、本番データ、本番API、Cognito User Poolへの接続も対象にする。試作であっても、これらに影響する場合はSBIでその影響を宣言し、SBI承認とデータの保存と削除のテストを必要とする。本番環境の接続先が増えたら、試作の変更から本番への影響を見つけるためのパターンも広げる。
 
+データの保存と削除のテスト（data-lifecycle-test）は、`apps/api/spec/data_lifecycle/`の`*_spec.rb`をテスト用DB（`sonomama_data_lifecycle_test`）で実行する（#165）。specが無い、テストが0件、skip・pending・focusで実行されないテストがある、テストが失敗した場合は失敗にする。
+
+SBIの本文（タイトル・目的・受け入れ要件）だけがSEC-DESTRUCTIVE-001に一致した場合は、変更したパスにかかわらずこのテストを必須にする（security.jsonの`metadataRequiresAllVerifiers`）。人の承認でこのテストの代わりにはしない。
+「本番APIには変更を加えない」のように、変更の対象外であることを述べる文も一致する。対象外であることを検出側が構造的に読み取る仕組みは今は作らない。語を消すだけの言い換え（「本番API」を別の言い方にするなど）は、検出を逃れる行為として扱う。SBIが`securityImpact`でこのルールを宣言した場合は、他のルールと同じく変更したパスで検証を選ぶ。
+
 ## Harnessの実行境界
 
 Agentが書いたコードとapplication testは信頼しない。Harnessは処理を次の3つに分けて実行する。
@@ -48,7 +53,7 @@ untrusted applicationのコンテナは次の条件で起動する。ローカ�
 - node_modulesとpnpm storeはverifierごとの使い捨てvolumeに置き、コンテナ内でinstallする。
 - Dockerが使えないとき、imageを作れないとき、コンテナを起動できないときは`FAIL`（`isolation unavailable`）にする。ホストで代わりに実行しない。
 
-Rails・migration-safety・rails-authz-test（Docker Compose）はコンテナの中から入れ子で起動できない。trusted HarnessがComposeを起動し、その前にworkspaceのCompose fileを検査する。workspace外やHarness状態のbind mount、`privileged`等の特権設定、`env_file`、environment以外での環境変数展開は拒否する。Composeの環境変数はDocker CLIに必要なものと、CIが指定するBuildKit cacheの場所（`HARNESS_BUILD_CACHE_FROM`・`HARNESS_BUILD_CACHE_TO`）だけにする。Compose fileのcache設定はこの変数の参照だけを許し、ホストのパスをAgentに選ばせない。同じverifierに並ぶ`tools/harness/*.mjs`のスクリプトは、`isolation: harness`と同じ条件でホストで動かす。Composeの各コマンドには、workspaceのCompose fileの後にHarnessが作るoverrideを重ねる。workspaceから`build`するサービス（`api`）は、Compose fileに`user: root`と書いてあってもホストのuid:gid（rootではない）で動き、HOMEはコンテナの`/tmp`になる。`/rails/tmp`と`/rails/log`はimageの側で誰でも書けるようにしてある（sticky bit付き）。書けなければVerifierは失敗する。imageをpullするだけのサービス（`db`のpostgres）は、image自身が決めた実行ユーザー（起動処理の後に`postgres`ユーザーへ切り替わる）のまま動かす。
+Rails・migration-safety・rails-authz-test・authn-test・rails-rls-test・data-lifecycle-test（Docker Compose）はコンテナの中から入れ子で起動できない。trusted HarnessがComposeを起動し、その前にworkspaceのCompose fileを検査する。workspace外やHarness状態のbind mount、`privileged`等の特権設定、`env_file`、environment以外での環境変数展開は拒否する。Composeの環境変数はDocker CLIに必要なものと、CIが指定するBuildKit cacheの場所（`HARNESS_BUILD_CACHE_FROM`・`HARNESS_BUILD_CACHE_TO`）だけにする。Compose fileのcache設定はこの変数の参照だけを許し、ホストのパスをAgentに選ばせない。同じverifierに並ぶ`tools/harness/*.mjs`のスクリプトは、`isolation: harness`と同じ条件でホストで動かす。Composeの各コマンドには、workspaceのCompose fileの後にHarnessが作るoverrideを重ねる。workspaceから`build`するサービス（`api`）は、Compose fileに`user: root`と書いてあってもホストのuid:gid（rootではない）で動き、HOMEはコンテナの`/tmp`になる。`/rails/tmp`と`/rails/log`はimageの側で誰でも書けるようにしてある（sticky bit付き）。書けなければVerifierは失敗する。imageをpullするだけのサービス（`db`のpostgres）は、image自身が決めた実行ユーザー（起動処理の後に`postgres`ユーザーへ切り替わる）のまま動かす。
 
 Mobile E2E の `maestro` CI job（#145）は、この隔離の例外として人が認めた（#68）。`expo prebuild`・Gradle の build・Metro・Android Emulator・Maestro を、GitHub-hosted runner のホストで直接動かす。そのため、Agent が変えられる設定（`app.json` の plugin、babel・metro の設定、native の依存）が runner の上で実行される。残るリスクを次の条件で抑える。
 

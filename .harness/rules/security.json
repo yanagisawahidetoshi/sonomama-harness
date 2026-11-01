@@ -71,7 +71,9 @@
       "minimumRiskLevel": 3,
       "requiredHumanApprovals": 2,
       "requiredVerifiers": [
-        "authn-test"
+        "authn-test",
+        "admin-authn-test",
+        "mobile-authn-test"
       ],
       "policyDocument": "docs/security/authorization.md",
       "ignoredMetadataPatterns": [
@@ -377,6 +379,7 @@
       "requiredVerifiers": [
         "data-lifecycle-test"
       ],
+      "metadataRequiresAllVerifiers": true,
       "policyDocument": "docs/security/threat-model.md"
     },
     {
@@ -465,7 +468,26 @@
       "kind": "command",
       "directory": ".",
       "appliesTo": [
-        "^(apps|packages|prototypes)/"
+        "^apps/api/",
+        "^packages/"
+      ],
+      "commands": []
+    },
+    {
+      "id": "admin-authn-test",
+      "kind": "command",
+      "directory": "apps/admin",
+      "appliesTo": [
+        "^apps/admin/"
+      ],
+      "commands": []
+    },
+    {
+      "id": "mobile-authn-test",
+      "kind": "command",
+      "directory": "apps/mobile",
+      "appliesTo": [
+        "^apps/mobile/"
       ],
       "commands": []
     },
