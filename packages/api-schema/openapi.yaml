@@ -1,0 +1,35 @@
+openapi: 3.1.0
+info:
+  title: SONOMAMA API
+  version: 0.1.0
+  description: SONOMAMA の API 契約（SSOT）。
+paths:
+  /api/v1/health:
+    get:
+      operationId: getHealth
+      summary: 疎通確認
+      description: API の疎通を確認する。認証不要。
+      tags:
+        - health
+      security: []
+      responses:
+        '200':
+          description: API が応答可能である。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum:
+            - ok
+tags:
+  - name: health
+    description: 疎通確認
