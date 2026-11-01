@@ -5,7 +5,7 @@ API仕様の基準となるファイル（SSOT）`packages/api-schema/openapi.ya
 ```text
 OpenAPI（packages/api-schema/openapi.yaml） = 契約 / SSOT
   ├─ Swagger UI（pnpm api:docs）         = 契約を見る
-  └─ Prism（pnpm api:mock <Issue URL>）  = 契約からMock APIを提供する
+  └─ Prism（pnpm api:mock）  = 契約からMock APIを提供する
 ```
 
 ## 手順

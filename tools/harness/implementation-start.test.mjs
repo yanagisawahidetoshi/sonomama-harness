@@ -1,8 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFile, mkdir } from 'node:fs/promises';
+import { writeFile, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { fixture, update, human, runFixture as runHarness } from './test-fixture.mjs';
+import { fixture, update, human, commitFixture, runFixture as runHarness } from './test-fixture.mjs';
 import { resumeRun, judge } from './index.mjs';
 import { recordDecision } from './human-approvals.mjs';
 import { mergeDecision } from './merge-policy.mjs';
@@ -367,7 +367,9 @@ describe('A public operation the approved SBI declares is not a new security dec
   const proposing = content => async () => ({ files: [{ path: 'greeting.mjs', content: good }, { path: contract, content }] });
   const matched = async (root, run) => (await readJson(join(root, run.runDir, 'security-assessment.json'))).matchedRules;
   describe('given an SBI that declares GET /api/v1/health public and a repository without a contract', () => {
+    // main tracks the OpenAPI of the health check (SBI #232), so the fixture removes it to stand for a repository without one.
     it('when the agent creates the contract with that operation then the run neither stops nor matches SEC-AUTH-001', () => fixture(async root => {
+      await rm(join(root, contract)); await commitFixture(root);
       await publicSbi(root);
       const run = await runHarness({ root, quiet: true, agent: proposing(header + health) });
       assert.notEqual(run.escalation?.code, 'NEW_SECURITY_SCOPE');
@@ -376,6 +378,7 @@ describe('A public operation the approved SBI declares is not a new security dec
   });
   describe('given an SBI that does not declare the operation public', () => {
     it('when the agent creates the contract with a public operation then stops as NEW_SECURITY_SCOPE with SEC-AUTH-001', () => fixture(async root => {
+      await rm(join(root, contract)); await commitFixture(root);
       await publicSbi(root, '疎通確認の契約を定義し、greeting.mjsでgreetを実装する。');
       const run = await runHarness({ root, quiet: true, agent: proposing(header + health) });
       assert.equal(run.escalation?.code, 'NEW_SECURITY_SCOPE');

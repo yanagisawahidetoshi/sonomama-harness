@@ -50,7 +50,7 @@ SEC-AUTH-001 は、OpenAPI の `security` キーの行が変わると認証の�
 ## 理由
 
 公開する endpoint を新しく作るかどうかは、SBI の仕様承認で人が判断している。既存の認証を弱める変更や共通設定の変更は、その SBI だけでは影響範囲を判断できないので、別に人が判断する。
-API Schema Planner の Security Impact も、新規の公開 endpoint は AuthN の影響にせず、認証必須の endpoint を公開へ変える変更を影響とする（`tools/harness/api-schema-security.mjs`）。判定をこれに揃える。
+API Schema Planner の Security Impact も、新規の公開 endpoint は AuthN の影響にせず、認証必須の endpoint を公開へ変える変更を影響とする（`tools/harness/api-schema-security.mjs`）。判定をこれに揃える。（注記 2026-11-01: API Schema Planner と `api-schema-security.mjs` は #164 で削除した。この ADR の判定は `security-enforcement.mjs` 側にある。）
 
 ## 影響
 

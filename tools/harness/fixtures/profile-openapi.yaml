@@ -1,0 +1,145 @@
+openapi: 3.1.0
+info:
+  title: SONOMAMA API
+  version: 0.1.0
+paths:
+  /api/v1/me/profile:
+    get:
+      operationId: getMyProfile
+      summary: ログイン中の受講生のプロフィールを取得する
+      tags:
+        - profile
+      security:
+        - bearerAuth: []
+      x-sonomama-authz:
+        enforcedBy: rails
+        roles: []
+        rule: JWTのsubに対応する本人のプロフィールだけを返す
+      x-sonomama-data:
+        pii: true
+        logCaution:
+          - displayNameをログへ出さない
+      responses:
+        "200":
+          description: HTTP 200
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Profile"
+        "401":
+          description: HTTP 401
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: HTTP 500
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/courses:
+    get:
+      operationId: listCourses
+      summary: 講座一覧を取得する
+      tags:
+        - course
+      security: []
+      x-sonomama-data:
+        pii: false
+        logCaution: []
+      responses:
+        "200":
+          description: HTTP 200
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Course"
+        "500":
+          description: HTTP 500
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 認証Providerが発行するJWT（Bearer）。検証と業務認可（x-sonomama-authz）はRails APIが行う。
+  schemas:
+    Error:
+      type: object
+      description: 全APIで共通のエラーレスポンス
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: 機械判定用のエラーコード
+        message:
+          type: string
+          description: 利用者向けのメッセージ
+        details:
+          type: array
+          items:
+            $ref: "#/components/schemas/ErrorDetail"
+          description: 入力エラーなどの詳細
+    ErrorDetail:
+      type: object
+      required:
+        - message
+      properties:
+        field:
+          type:
+            - string
+            - "null"
+          description: 対象のフィールド
+        message:
+          type: string
+    Profile:
+      type: object
+      description: 受講生プロフィール
+      required:
+        - id
+        - displayName
+        - bio
+        - role
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: idの値
+        displayName:
+          type: string
+          description: displayNameの値
+        bio:
+          type:
+            - string
+            - "null"
+          description: bioの値
+        role:
+          type: string
+          enum:
+            - student
+            - mentor
+          description: roleの値
+      x-sonomama-pii: true
+    Course:
+      type: object
+      description: 講座
+      required:
+        - id
+        - title
+      properties:
+        id:
+          type: string
+          description: idの値
+        title:
+          type: string
+          description: titleの値
+      x-sonomama-pii: false

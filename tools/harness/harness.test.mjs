@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, cp, readFile, writeFile, rm, mkdir } from 'node:fs/promises';
+import { mkdtemp, cp, readFile, readdir, writeFile, rm, mkdir, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { check, judge, providerCommand, runExitCode } from './index.mjs';
@@ -178,6 +178,44 @@ describe('OpenAPI Schema as a normal SBI', () => {
     it('when the CLI usage is printed then it does not offer pnpm planner:api-schema or planner:api-schema-approve', async () => {
       const { stderr } = await execute(process.execPath, [new URL('./cli.mjs', import.meta.url).pathname, 'unknown']);
       assert.doesNotMatch(stderr, /pnpm planner:api-schema( |-approve)/);
+    });
+  });
+  // #164: the old API Schema Planner, its signed approval ledger and its commands are gone; the merged OpenAPI is the approved contract.
+  describe('given the old API Schema Planner was removed', () => {
+    const harness = new URL('./', import.meta.url);
+    const removed = ['api-schema-planner', 'api-schema-approval', 'api-schema-files', 'api-schema-judge', 'api-schema-render', 'api-schema-security'];
+    it('when its modules are looked up then none of them exists', async () => {
+      for (const name of removed) await assert.rejects(access(new URL(`${name}.mjs`, harness)), { code: 'ENOENT' }, name);
+    });
+    it('when the Harness sources are read then none refers to its modules, labels, proposal directory or approval ledger', async () => {
+      const legacy = new RegExp(`(${removed.join('|')})\\.mjs|api-schema-approved|needs-api-schema-review|\\.harness/api-schema|human/api-schema|apiSchemaApproval|planApiSchema`);
+      for (const file of (await readdir(harness)).filter(f => f.endsWith('.mjs') && !f.endsWith('.test.mjs'))) {
+        assert.doesNotMatch(await readFile(new URL(file, harness), 'utf8'), legacy, file);
+      }
+    });
+    for (const command of ['api-schema', 'api-schema-approve', 'api-schema-status']) {
+      it(`when the CLI is asked for ${command} then refuses it as an unknown command`, async () => {
+        const { code, stderr } = await execute(process.execPath, [new URL('./cli.mjs', import.meta.url).pathname, command, 'https://github.com/acme/app/issues/12']);
+        assert.equal(code, 1);
+        assert.match(stderr, /Usage:/);
+      });
+    }
+    it('when the CLI usage is printed then it offers api:mock without an Issue URL and no API Schema command', async () => {
+      const { stderr } = await execute(process.execPath, [new URL('./cli.mjs', import.meta.url).pathname, 'unknown']);
+      assert.doesNotMatch(stderr, /api-schema(-approve|-status)?( |$)|API Schema Planner/m);
+      assert.match(stderr, /pnpm api:mock \[--dynamic\]/);
+    });
+    it('when the package scripts are read then planner:api-schema-status is gone and api:mock stays', async () => {
+      const { scripts } = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
+      assert.equal(scripts['planner:api-schema-status'], undefined);
+      assert.ok(scripts['api:mock']);
+    });
+    it('when the skills and workflows are looked up then the API Schema Planner skill and workflow are gone', async () => {
+      for (const path of ['../../.harness/skills/api-schema.md', '../../.ai/workflows/api-schema.md']) await assert.rejects(access(new URL(path, import.meta.url)), { code: 'ENOENT' }, path);
+    });
+    it('when the schemas are read then none of the API Schema Planner schemas is exported', async () => {
+      const schemas = await import('./schemas.mjs');
+      assert.deepEqual(Object.keys(schemas).filter(name => /^apiSchema/.test(name)), []);
     });
   });
 });

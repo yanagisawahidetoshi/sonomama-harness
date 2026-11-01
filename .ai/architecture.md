@@ -17,7 +17,7 @@ State → Agent → Verifier → Reviewer → Completion Judge。
 失敗時は証跡を次iterationに渡す。各runは新しい作業領域を持つ。
 実装はtools/harness、設定は.harness/config、判断規則は.harness/rules。
 Reviewerは決定的なポリシーチェックで、設計・セキュリティの専門レビューは含まない。
-実際のmergeは対象外。PBI → SBI PlannerはSBI Issueの作成まで。実行は`harness:run <SBI Issue URL>`で、OpenAPIの変更も通常のSBI（Schema SBI）として扱う。API Schema Plannerは内部機能で、OpenAPI Proposalの生成とレビュー依頼までしか行わない。
+実際のmergeは対象外。PBI → SBI PlannerはSBI Issueの作成まで。実行は`harness:run <SBI Issue URL>`で、OpenAPIの変更も通常のSBI（Schema SBI）として扱う。旧API Schema Plannerは削除した（#164）。
 GitHub PR Adapter（`harness:run`がDONE後に呼ぶ。`harness:pr`は復旧用）は検証済みSHAのPR作成と、GitHub Review・必須CIによるMERGE_ALLOWED判定まで。CIのjob構成は[workflows/ci.md](workflows/ci.md)。
 
 ## Review adapterの接続点

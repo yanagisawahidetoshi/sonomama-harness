@@ -26,7 +26,7 @@ OSユーザーの別名は別人として数えない。複数人の本運用に
 SHA・source・SBI・Rules・検証コードが変わったら新規runで再検証・再承認する。
 途中iterationとESCALATEDのrunはresumeしない。merge判定だけを再評価する。
 承認撤回後もresumeでMERGE_ALLOWEDを取り消せる。
-PBI → SBI Plannerは[pbi-sbi-planner.md](pbi-sbi-planner.md)。API変更を伴うSBIは実装前に[api-schema.md](api-schema.md)でAPI契約を承認する。Harnessは実mergeを行わず、GitHubのRuleset・CODEOWNERSも変更しない（mainのRulesetは人が適用済み）。
+PBI → SBI Plannerは[pbi-sbi-planner.md](pbi-sbi-planner.md)。API変更はSchema SBI（`packages/api-schema`だけを変えるSBI）として先に実装し、mainへmergeされたOpenAPIを後続のSBIが使う。Harnessは実mergeを行わず、GitHubのRuleset・CODEOWNERSも変更しない（mainのRulesetは人が適用済み）。
 
 ## ローカル開発とPR品質ゲート
 

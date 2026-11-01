@@ -6,7 +6,7 @@ node_modules/
 
 # Local human approval signing material; never commit or copy to the agent workspace.
 .harness/state/human/
-# Signed record of what the API Schema Planner generated; local trust state like the approval ledger.
+# Local state the removed API Schema Planner may have left behind (#164); never commit it.
 .harness/state/api-schema/
 
 # Sensitive source files are never review/export artifacts.

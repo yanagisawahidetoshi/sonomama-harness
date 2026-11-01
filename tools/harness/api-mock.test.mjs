@@ -1,68 +1,35 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { copyFile, writeFile, readFile } from 'node:fs/promises';
+import { copyFile, writeFile, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parse as parseYaml, stringify as toYaml } from 'yaml';
-import { fixture, commitFixture, human } from './test-fixture.mjs';
-import { githubMock } from './test-github.mjs';
-import { planApiSchema, approvedLabel } from './api-schema-planner.mjs';
-import { recordApiSchemaDecision } from './api-schema-approval.mjs';
-import { githubCli } from './planner-github.mjs';
-import { parseIssueUrl } from './planner.mjs';
+import { fixture, commitFixture } from './test-fixture.mjs';
 import { startApiMock, mockSchemaPath, waitForApiMock, stopApiMock } from './api-mock.mjs';
 import { checkApiMock, dummyBearer, mockEnvironment } from './api-mock-check.mjs';
 
-const issueUrl = 'https://github.com/acme/app/issues/12';
-const issue = { number: 12, title: 'プロフィールAPIを追加する', body: '## 背景\n受講生が自分のプロフィールを取得する。', html_url: issueUrl, state: 'open', labels: [] };
-const mockGitHub = githubMock({ issue });
-const noConstraints = { minLength: null, maxLength: null, minimum: null, maximum: null, pattern: null };
-const prop = (name, overrides = {}) => ({ name, type: 'string', format: null, enum: null, ref: null, items: null, required: true, nullable: false, description: `${name}の値`, example: null, constraints: noConstraints, ...overrides });
-const response = (status, component = null, array = false) => ({ status, description: `HTTP ${status}`, body: component ? { component, array } : null });
 // An authenticated endpoint with nullable and enum properties, and a public endpoint returning an array: the shapes the mock must serve.
-const proposal = {
-  title: 'プロフィールAPI', summary: '受講生が自分のプロフィールを取得する', version: 'v1', securityImpact: ['APIAuthentication', 'APIAuthorization', 'PII'],
-  endpoints: [
-    { method: 'GET', path: '/api/v1/me/profile', operationId: 'getMyProfile', summary: 'ログイン中の受講生のプロフィールを取得する', tags: ['profile'], change: 'add',
-      authN: 'bearer-jwt', authZ: { roles: [], rule: 'JWTのsubに対応する本人のプロフィールだけを返す' }, pii: true, logCaution: ['displayNameをログへ出さない'],
-      parameters: [], requestBody: null, responses: [response(200, 'Profile'), response(401, 'Error'), response(500, 'Error')] },
-    { method: 'GET', path: '/api/v1/courses', operationId: 'listCourses', summary: '講座一覧を取得する', tags: ['course'], change: 'add',
-      authN: 'public', authZ: { roles: [], rule: null }, pii: false, logCaution: [],
-      parameters: [], requestBody: null, responses: [response(200, 'Course', true), response(500, 'Error')] },
-  ],
-  components: [
-    { name: 'Profile', description: '受講生プロフィール', pii: true, properties: [prop('id', { format: 'uuid' }), prop('displayName'), prop('bio', { nullable: true }), prop('role', { enum: ['student', 'mentor'] })] },
-    { name: 'Course', description: '講座', pii: false, properties: [prop('id'), prop('title')] },
-  ],
-};
-const plan = (root, options = {}) => planApiSchema({ root, issueUrl, provider: 'claude', quiet: true, agent: async () => ({ proposal, escalation: null }), ...options });
-const approve = (root, id) => recordApiSchemaDecision({ root, issueUrl, decision: 'APPROVE', identityProvider: human(id) });
-const proposalYaml = root => join(root, '.harness/api-schema/12/openapi.yaml');
-// What the human does after approval: copy the approved OpenAPI byte-for-byte into the Source of Truth.
-const reflect = root => copyFile(proposalYaml(root), join(root, mockSchemaPath));
-async function approved(root, { reflected = true } = {}) {
-  await plan(root); await commitFixture(root);
-  await approve(root, 'alice'); await approve(root, 'bob');
-  if (reflected) await reflect(root);
-}
+// The OpenAPI on main is the approved contract: a Schema SBI changes it through a reviewed PR (#164).
+const profileContract = new URL('./fixtures/profile-openapi.yaml', import.meta.url);
+const sourceOfTruth = async root => { await copyFile(profileContract, join(root, mockSchemaPath)); await commitFixture(root); };
 const recorder = () => {
   const calls = [];
   return { calls, spawner: (command, args, options) => { calls.push({ command, args, options }); return { pid: 1 }; } };
 };
 const refused = async (root, pattern, options = {}) => {
   const { calls, spawner } = recorder();
-  await assert.rejects(startApiMock({ root, issueUrl, spawner, ...options }), pattern);
+  await assert.rejects(startApiMock({ root, spawner, ...options }), pattern);
   assert.deepEqual(calls, [], 'Prism must not start');
 };
 
 describe('API Mock Server', () => {
-  describe('given an approved proposal reflected byte-for-byte into packages/api-schema/openapi.yaml', () => {
-    it('when api:mock starts then Prism mocks the Source of Truth on 127.0.0.1:4010 in static mode without proxy', () => fixture(root => mockGitHub({}, async () => {
-      await approved(root);
+  describe('given the OpenAPI Source of Truth in packages/api-schema/openapi.yaml', () => {
+    it('when api:mock starts then Prism mocks the Source of Truth on 127.0.0.1:4010 in static mode without proxy', () => fixture(async root => {
+      await sourceOfTruth(root);
       const { calls, spawner } = recorder();
-      const result = await startApiMock({ root, issueUrl, spawner });
+      const result = await startApiMock({ root, spawner });
       assert.equal(calls.length, 1);
       const [{ command, args }] = calls;
       assert.match(command, /prism$/);
@@ -70,116 +37,96 @@ describe('API Mock Server', () => {
       assert.ok(!args.includes('proxy') && !args.includes('-d') && !args.includes('--dynamic'));
       assert.equal(result.schemaPath, mockSchemaPath);
       assert.match(result.digest, /^[0-9a-f]{64}$/);
-    })));
-    it('when dynamic mode is requested then Prism generates random values from the schema', () => fixture(root => mockGitHub({}, async () => {
-      await approved(root);
+    }));
+    it('when dynamic mode is requested then Prism generates random values from the schema', () => fixture(async root => {
+      await sourceOfTruth(root);
       const { calls, spawner } = recorder();
-      await startApiMock({ root, issueUrl, spawner, dynamic: true });
+      await startApiMock({ root, spawner, dynamic: true });
       assert.deepEqual(calls[0].args.slice(-1), ['-d']);
-    })));
+    }));
+    it('when no API Schema approval has ever been recorded then still starts, because the merged OpenAPI is the approved contract', () => fixture(async root => {
+      await sourceOfTruth(root);
+      const { calls, spawner } = recorder();
+      await startApiMock({ root, spawner });
+      assert.equal(calls.length, 1);
+    }));
   });
 
-  describe('given an approved OpenAPI and no Prism installed', () => {
-    it('when api:mock starts then refuses and tells to run pnpm install instead of exiting silently', () => fixture(root => mockGitHub({}, async () => {
-      await approved(root);
+  describe('given the Source of Truth and no Prism installed', () => {
+    it('when api:mock starts then refuses and tells to run pnpm install instead of exiting silently', () => fixture(async root => {
+      await sourceOfTruth(root);
       await refused(root, /pnpm install/, { prism: join(root, 'node_modules/.bin/prism') });
-    })));
+    }));
   });
 
-  describe('given a proposal that is not approved', () => {
-    it('when api:mock starts then refuses and explains that the API schema is not approved', () => fixture(root => mockGitHub({}, async () => {
-      await plan(root); await commitFixture(root); await reflect(root);
-      await refused(root, /承認されていません[\s\S]*0\/2/);
-    })));
-    it('when only one of the two required humans approved then refuses', () => fixture(root => mockGitHub({}, async () => {
-      await plan(root); await commitFixture(root); await approve(root, 'alice'); await reflect(root);
-      await refused(root, /承認されていません[\s\S]*1\/2/);
-    })));
-    it('when the Issue carries the api-schema-approved label but the signed ledger has no approval then refuses', () => fixture(root => mockGitHub({}, async github => {
-      await plan(root); await commitFixture(root); await reflect(root);
-      await githubCli.ensureLabels(parseIssueUrl(issueUrl), [approvedLabel]);
-      await githubCli.addLabels(parseIssueUrl(issueUrl), [approvedLabel]);
-      assert.ok((await github.state()).issue.labels.some(l => l.name === approvedLabel));
-      await refused(root, /承認されていません/);
-    })));
-    it('when no proposal exists for the Issue then refuses', () => fixture(root => mockGitHub({}, async () => {
-      await refused(root, /承認されていません[\s\S]*proposalがありません/);
-    })));
-  });
-
-  describe('given an approved proposal and a Source of Truth that does not match it', () => {
-    it('when packages/api-schema/openapi.yaml differs from the approved OpenAPI then refuses and names the digest mismatch', () => fixture(root => mockGitHub({}, async () => {
-      await approved(root);
-      await writeFile(join(root, mockSchemaPath), toYaml({ openapi: '3.1.0', info: { title: 'SONOMAMA API', version: '0.1.0' }, paths: {} }));
-      await refused(root, /digest/);
-    })));
-    it('when packages/api-schema/openapi.yaml has not been reflected yet then refuses', () => fixture(root => mockGitHub({}, async () => {
-      await approved(root, { reflected: false });
+  describe('given a Source of Truth that cannot be served', () => {
+    // main tracks the OpenAPI of the health check (SBI #232), so the fixture removes it to stand for a repository without one.
+    it('when packages/api-schema/openapi.yaml does not exist then refuses and names it', () => fixture(async root => {
+      await rm(join(root, mockSchemaPath));
       await refused(root, /packages\/api-schema\/openapi\.yaml/);
-    })));
-    it('when the Source of Truth is openapi.json instead of openapi.yaml then refuses', () => fixture(root => mockGitHub({}, async () => {
-      await approved(root, { reflected: false });
-      await writeFile(join(root, 'packages/api-schema/openapi.json'), JSON.stringify(parseYaml(await readFile(proposalYaml(root), 'utf8'))));
+    }));
+    it('when the Source of Truth is openapi.json instead of openapi.yaml then refuses', () => fixture(async root => {
+      await rm(join(root, mockSchemaPath));
+      await writeFile(join(root, 'packages/api-schema/openapi.json'), JSON.stringify(parseYaml(await readFile(profileContract, 'utf8'))));
       await refused(root, /packages\/api-schema\/openapi\.yaml/);
-    })));
-    it('when both openapi.yaml and openapi.json exist then refuses', () => fixture(root => mockGitHub({}, async () => {
-      await approved(root);
+    }));
+    it('when both openapi.yaml and openapi.json exist then refuses', () => fixture(async root => {
+      await sourceOfTruth(root);
       await writeFile(join(root, 'packages/api-schema/openapi.json'), '{}');
       await refused(root, /複数/);
-    })));
+    }));
   });
 
-  describe('given an approved OpenAPI that refers to a remote document', () => {
-    it('when api:mock starts then refuses so that the mock never fetches anything outside the local file', () => fixture(root => mockGitHub({}, async () => {
+  describe('given an OpenAPI that refers to a remote document', () => {
+    it('when api:mock starts then refuses so that the mock never fetches anything outside the local file', () => fixture(async root => {
       await writeFile(join(root, mockSchemaPath), toYaml({
         openapi: '3.1.0', info: { title: 'SONOMAMA API', version: '0.1.0' },
         paths: { '/api/v1/health': { get: { operationId: 'getHealth', responses: { 200: { description: 'OK', content: { 'application/json': { schema: { $ref: 'https://example.com/schemas/health.json' } } } } } } } },
       }));
       await commitFixture(root);
-      await approved(root);
       await refused(root, /\$ref[\s\S]*https:\/\/example\.com/);
-    })));
+    }));
   });
 
   describe('given the api:mock CLI', () => {
-    // Argument errors stop before any file or GitHub access, so the CLI of this repository (with its dependencies) is used directly.
+    // Argument errors stop before any file access, so the CLI of this repository (with its dependencies) is used directly.
     const cli = args => new Promise(resolve => {
       const child = spawn(process.execPath, [fileURLToPath(new URL('./cli.mjs', import.meta.url)), 'api-mock', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
       let output = '';
       child.stdout.on('data', chunk => { output += chunk; }); child.stderr.on('data', chunk => { output += chunk; });
       child.on('close', code => resolve({ code, output }));
     });
-    it('when a schema path is given instead of relying on the approval then rejects the option', async () => {
-      const result = await cli([issueUrl, '--schema', mockSchemaPath]);
+    it('when a schema path is given then rejects the option, because the mock serves only the Source of Truth', async () => {
+      const result = await cli(['--schema', mockSchemaPath]);
       assert.equal(result.code, 1);
       assert.match(result.output, /Invalid arguments for api-mock/);
     });
-    it('when no Issue URL is given then explains that an Issue URL is required', async () => {
-      const result = await cli([]);
+    it('when an Issue URL is given then rejects it, because no per-Issue approval selects the contract any more', async () => {
+      const result = await cli(['https://github.com/acme/app/issues/12']);
       assert.equal(result.code, 1);
-      assert.match(result.output, /Issue URL/);
+      assert.match(result.output, /api-mock takes no Issue URL/);
     });
   });
 
-  describe('given Prism serving an approved OpenAPI', () => {
+  describe('given Prism serving the Source of Truth', () => {
     const freePort = () => new Promise(resolve => { const server = createServer().listen(0, '127.0.0.1', () => { const { port } = server.address(); server.close(() => resolve(port)); }); });
     // Assertions start only once Prism answers HTTP, and the next test starts only after this Prism has exited.
     async function serving(root, test) {
-      await approved(root);
+      await sourceOfTruth(root);
       const port = await freePort();
       const spawner = (command, args, options) => spawn(command, args, { ...options, stdio: ['ignore', 'pipe', 'pipe'] });
-      const mock = await startApiMock({ root, issueUrl, spawner, port });
+      const mock = await startApiMock({ root, spawner, port });
       try {
         await waitForApiMock(mock);
         await test(mock.url);
       } finally { await stopApiMock(mock.child); }
     }
-    it('when a client calls the authenticated endpoint without a bearer token then responds 401 with the shared Error schema', () => fixture(root => mockGitHub({}, () => serving(root, async base => {
+    it('when a client calls the authenticated endpoint without a bearer token then responds 401 with the shared Error schema', () => fixture(root => serving(root, async base => {
       const res = await fetch(`${base}/api/v1/me/profile`);
       assert.equal(res.status, 401);
       assert.deepEqual(Object.keys(await res.json()).sort(), ['code', 'details', 'message']);
-    }))));
-    it('when a client calls it with a mock bearer token then responds a stable JSON matching the schema including nullable and enum', () => fixture(root => mockGitHub({}, () => serving(root, async base => {
+    })));
+    it('when a client calls it with a mock bearer token then responds a stable JSON matching the schema including nullable and enum', () => fixture(root => serving(root, async base => {
       const call = () => fetch(`${base}/api/v1/me/profile`, { headers: { Authorization: 'Bearer mock-token' } });
       const res = await call();
       assert.equal(res.status, 200);
@@ -189,17 +136,17 @@ describe('API Mock Server', () => {
       assert.ok(body.bio === null || typeof body.bio === 'string');
       assert.ok(['student', 'mentor'].includes(body.role));
       assert.deepEqual(await (await call()).json(), body, 'static mode returns the same response every time');
-    }))));
-    it('when a client calls a public endpoint returning a list then responds a JSON array', () => fixture(root => mockGitHub({}, () => serving(root, async base => {
+    })));
+    it('when a client calls a public endpoint returning a list then responds a JSON array', () => fixture(root => serving(root, async base => {
       const res = await fetch(`${base}/api/v1/courses`);
       assert.equal(res.status, 200);
       const body = await res.json();
       assert.ok(Array.isArray(body));
       for (const course of body) assert.deepEqual(Object.keys(course).sort(), ['id', 'title']);
-    }))));
-    it('when a client calls a path outside the OpenAPI then responds 404', () => fixture(root => mockGitHub({}, () => serving(root, async base => {
+    })));
+    it('when a client calls a path outside the OpenAPI then responds 404', () => fixture(root => serving(root, async base => {
       assert.equal((await fetch(`${base}/api/v1/unknown`)).status, 404);
-    }))));
+    })));
   });
 });
 

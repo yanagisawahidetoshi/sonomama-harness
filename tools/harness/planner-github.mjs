@@ -43,9 +43,6 @@ async function userContentEdits({ owner, repo, number }) {
 const labelDefinitions = {
   sbi: { color: '0e8a16', description: 'Planner-generated SBI' },
   'needs-review': { color: 'fbca04', description: 'SBI awaiting human review; not ready for the Execution Harness' },
-  'api-schema': { color: '1d76db', description: 'Issue with a Planner-generated API Schema Proposal' },
-  'needs-api-schema-review': { color: 'fbca04', description: 'API Schema Proposal awaiting human review; implementation must wait' },
-  'api-schema-approved': { color: '0e8a16', description: 'Projection of a signed API Schema approval; not the source of truth' },
   'spec-approved': { color: '0e8a16', description: 'A human approved the SBI spec; the Execution Harness may start (ADR-0009)' },
   'plan-approved': { color: '0e8a16', description: 'A human approved the SBI set of the PBI (ADR-0009)' },
 };

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fixture, update } from './test-fixture.mjs';
 import { readJson } from './io.mjs';
@@ -277,7 +277,9 @@ describe('Single verifier execution', () => {
       assert.ok(fixtureConfig.verifiers.length > 1);
     }));
 
+    // main tracks the OpenAPI of the health check (SBI #232), so the fixture removes it to stand for a repository without one.
     it('when a cross-layer verifier finds no OpenAPI document then skips it as a placeholder', () => fixture(async root => {
+      await rm(join(root, 'packages/api-schema/openapi.yaml'));
       const { config: fixtureConfig, sbi: sample } = await check(root);
       const result = await verify({ root, workspace: root, config: fixtureConfig, sbi: { ...sample, acceptanceCriteria: [], requiredVerifiers: [] }, files: files(touched.api, touched.mobile), only: new Set(['api-contract']), selected: new Map([['api-contract', false]]) });
       assert.deepEqual(result.checks.map(c => [c.id, c.status, c.reason]), [['api-contract', 'SKIP', 'missing app (placeholder)']]);
@@ -872,7 +874,9 @@ describe('Changed files of the API contract', () => {
       const file = (await changedFiles(root, base)).find(f => f.path === contract);
       assert.deepEqual({ before: file.before, after: file.after }, { before: 'openapi: 3.1.0\n', after: 'openapi: 3.1.0\npaths: {}\n' });
     }));
+    // main tracks the OpenAPI of the health check (SBI #232), so the fixture removes it to stand for a repository without one.
     it('when the run lists the changes from the baseline then the contract carries the whole file before and after, and nothing before a new contract', () => fixture(async root => {
+      await git(root, ['rm', '-q', contract]); await git(root, ['commit', '-q', '-m', 'no contract']);
       const empty = (await git(root, ['rev-parse', 'HEAD'])).stdout.trim();
       const created = await commit(root, 'openapi: 3.1.0\n');
       const changed = await commit(root, 'openapi: 3.1.0\npaths: {}\n');
