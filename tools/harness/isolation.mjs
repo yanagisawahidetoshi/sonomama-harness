@@ -100,6 +100,9 @@ async function secretPaths(workspace, directory = '') {
   return found;
 }
 
+// The finally below removes the container, but not when the Harness process is killed. The container then stops by itself once
+// every command could have used its whole limit (each command has its own), and --rm removes it with its volumes.
+const lifetimeSeconds = (setup, commands, limits) => Math.ceil((setup.length * limits.setup + commands.length * limits.verify + 60000 + 300000) / 1000);
 async function container({ workspace, adapter, setup, commands, docker, cwd, limits }) {
   if (/[,=]/.test(workspace) || !inside(workspace, cwd)) return unavailable('workspace path cannot be mounted');
   const image = await ensureImage(docker);
@@ -117,13 +120,13 @@ async function container({ workspace, adapter, setup, commands, docker, cwd, lim
     }
     const volumes = [...(await moduleDirectories(workspace)).map(path => `/workspace/${path}`), '/pnpm-store'];
     const user = `${process.getuid()}:${process.getgid()}`;
-    const started = await execute(docker, ['run', '-d', '--name', name, '--network', adapter.network ? 'bridge' : 'none', '--user', user,
+    const started = await execute(docker, ['run', '-d', '--rm', '--name', name, '--network', adapter.network ? 'bridge' : 'none', '--user', user,
       // CHOWN and DAC_READ_SEARCH (to reach volumes under a 0700 workspace) are only usable by the root setup exec below;
       // the verifier user has no capabilities and cannot gain any.
       '--cap-drop', 'ALL', '--cap-add', 'CHOWN', '--cap-add', 'DAC_READ_SEARCH', '--security-opt', 'no-new-privileges', '--read-only', '--pids-limit', '4096', '--tmpfs', '/tmp:rw,exec,mode=1777',
       ...Object.entries(containerEnv).flatMap(([k, v]) => ['-e', `${k}=${v}`]),
       '--mount', `type=bind,src=${workspace},dst=/workspace`, ...masks, ...volumes.flatMap(dst => ['--mount', `type=volume,dst=${dst}`]),
-      '--workdir', '/workspace', image, 'sleep', 'infinity'], { env: dockerCliEnv(), timeoutMs: 120000 });
+      '--workdir', '/workspace', image, 'sleep', String(lifetimeSeconds(setup, commands, limits))], { env: dockerCliEnv(), timeoutMs: 120000 });
     if (!started.ok) return unavailable('container could not be started', started);
     const prepared = await execute(docker, ['exec', '-u', '0', name, 'chown', user, ...volumes], { env: dockerCliEnv(), timeoutMs: 60000 });
     if (!prepared.ok) return unavailable('container volumes could not be prepared', prepared);
