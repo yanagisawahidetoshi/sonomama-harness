@@ -508,7 +508,23 @@ describe('Security content targets from a real git diff (#184)', () => {
     assert.equal(judged.ci['secret-scan'].status, 'FAIL');
     assert.deepEqual(judged.ci['secret-scan'].uninspectable, ['docs/b4.txt']);
     assert.deepEqual(judged.ci['secret-scan'].scanned, []);
-    assert.deepEqual([...new Set(judged.ciEvidence.violations.map(v => `${v.verifier} ${v.path}`))], ['secret-scan docs/b4.txt']);
+    assert.deepEqual(judged.ciEvidence.violations.map(v => [v.verifier, v.path, v.code]), [['secret-scan', 'docs/b4.txt', 'credential_value'], ['secret-scan', 'docs/b4.txt', 'secret']]);
+  }));
+
+  it('when a file holds a credential encoded as UTF-16 then secret-scan finds it in the run and in CI', () => fixture(async root => {
+    const judged = await judgeBoth(root, root => writeFile(join(root, 'docs/utf16.txt'), Buffer.from(`${token}\n`, 'utf16le')));
+    assert.equal(judged.files[0].binary, true);
+    agree(judged);
+    assert.equal(judged.ci['secret-scan'].status, 'FAIL');
+    assert.deepEqual([...new Set(judged.ci['secret-scan'].findings.map(f => f.path))], ['docs/utf16.txt']);
+  }));
+
+  it('when a file name looks like a pathspec then it is read as a literal path and its credential fails in the run and in CI', () => fixture(async root => {
+    const judged = await judgeBoth(root, root => writeFile(join(root, ':!keep.md'), `${token}\n`));
+    assert.deepEqual(judged.files.map(f => [f.path, f.binary, f.addedLines]), [[':!keep.md', false, 1]]);
+    agree(judged);
+    assert.equal(judged.ci['secret-scan'].status, 'FAIL');
+    assert.deepEqual(judged.ci['secret-scan'].scanned, [':!keep.md']);
   }));
 
   it('when main tracks a text file with one NUL byte and a credential then --all fails on secret-scan', () => fixture(async root => {
