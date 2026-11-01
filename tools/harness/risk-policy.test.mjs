@@ -9,7 +9,7 @@ const file = (path, added = 'Simple documentation.', extra = {}) => ({ path, sta
 const risk = (files, extra = {}) => assessRisk({ files, metadata: {}, humanGate: false, ...extra }, policy);
 const checks = ['verification', 'policy-review', 'security', 'completion', 'semantic-review'].map(id => ({ id, required: true, status: 'PASS' }));
 const approval = (reviewer, extra = {}) => ({ reviewer, kind: 'human', purpose: 'merge', decision: 'APPROVE', commitSha: 'a'.repeat(40), contextDigest: 'context', ...extra });
-const decide = (level, approvals = [], extra = {}) => mergeDecision({ risk: { level, requiredHumanApprovals: level === 3 ? 2 : level === 2 ? 1 : 0 }, checks, approvals, securityVerification: { status: 'PASS', violations: [], requiredVerifiers: ['secret-scan'], checks: [{ id: 'secret-scan', required: true, status: 'PASS' }] }, headSha: 'a'.repeat(40), contextDigest: 'context', humanGate: false, ...extra });
+const decide = (level, approvals = [], extra = {}) => mergeDecision({ risk: { level, requiredHumanApprovals: level === 3 ? 2 : level === 2 ? 1 : 0 }, checks, approvals, securityVerification: { status: 'PASS', violations: [], requiredVerifiers: ['secret-scan'], checks: [{ id: 'secret-scan', required: true, status: 'PASS' }] }, headSha: 'a'.repeat(40), contextDigest: 'context', humanGate: false, fromSbiIssue: true, ...extra });
 
 // The representative change of each level (#157). LEVEL 1 is the default, so an ordinary change reaches it without any explicit safe rule.
 const level1 = [
@@ -152,6 +152,15 @@ describe('Merge Policy Judge', () => {
       assert.equal(result.decision, 'MERGE_ALLOWED');
       assert.equal(result.autoMergeEligible, true);
       assert.equal(result.merged, undefined);
+    });
+    // #220: --sbi PATH has no ready binding or spec approval, so only a run from an approved SBI Issue is ever a candidate for auto merge.
+    it('when level 1 comes from --sbi PATH instead of an approved SBI Issue then it is never auto merge eligible', () => {
+      const result = decide(1, [], { fromSbiIssue: false });
+      assert.equal(result.decision, 'MERGE_ALLOWED');
+      assert.equal(result.autoMergeEligible, false);
+    });
+    it('when it is not said where the SBI came from then it is never auto merge eligible', () => {
+      assert.equal(decide(1, [], { fromSbiIssue: undefined }).autoMergeEligible, false);
     });
     it('when level 2 has no approvals then waits for human review', () => assert.equal(decide(2).decision, 'WAITING_FOR_HUMAN_REVIEW'));
     it('when level 2 has one valid human approval then allows merge', () => assert.equal(decide(2, [approval('A')]).decision, 'MERGE_ALLOWED'));

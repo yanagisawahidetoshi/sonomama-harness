@@ -8,13 +8,14 @@ import {recordDecision} from './human-approvals.mjs';
 const state='.harness/state/sample-sbi.json';
 describe('Lane quality and promotion enforcement',()=>{
   describe('given a dummy-data prototype with independent acceptance checks',()=>{
-    it('when light gates pass then needs no human approval and is auto merge eligible like Production',()=>fixture(async root=>{
+    // #220: this run comes from --sbi PATH, a local self-test, so it is never auto merge eligible; the prototype rule itself is in risk-policy.test.mjs.
+    it('when light gates pass then needs no human approval, while the --sbi run is not auto merge eligible',()=>fixture(async root=>{
       const {agent}=await prototype(root);
       const run=await runFixture({root,quiet:true,agent});
       assert.equal(run.lane.name,'prototype'); assert.equal(run.gate.required,false);
       assert.equal(run.executionStatus,'DONE'); assert.equal(run.status,'MERGE_ALLOWED');
       assert.equal(run.risk.level,1);
-      assert.ok(run.risk.reasons.includes('default_low')); assert.equal(run.merge.requiredApprovals,0);assert.equal(run.merge.autoMergeEligible,true);
+      assert.ok(run.risk.reasons.includes('default_low')); assert.equal(run.merge.requiredApprovals,0);assert.equal(run.merge.autoMergeEligible,false);
       const check=run.iterations[0].verification.checks.find(c=>c.id==='prototype-web');
       assert.equal(check.processes.length,4);assert.equal(check.status,'PASS');
       assert.ok(run.iterations[0].securityVerification.requiredVerifiers.includes('secret-scan'));

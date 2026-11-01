@@ -25,7 +25,7 @@ import { loadSbiIssue, inScope } from './sbi-issue.mjs';
 import { generateAcceptance, isGeneratedAcceptanceInput, isGeneratedRegistrationPath } from './acceptance-generation.mjs';
 import { judgeDetection, runGeneratedAcceptance } from './acceptance-run.mjs';
 import { inspectViolation, judgeViolation, parseViolationAnswer, violationPrompt, violationResponseSchema, withViolationCopy } from './acceptance-violation.mjs';
-import { snapshotFromIssue, snapshotPath, riskView, snapshotVerified, matchSbiSource } from './sbi-source.mjs';
+import { snapshotFromIssue, snapshotPath, riskView, snapshotVerified, snapshotMismatch } from './sbi-source.mjs';
 import { verifyReverifyLink, committedSnapshot, parsePullUrl, reverifyTrailers, mergeTree, gitVersion } from './reverify.mjs';
 import { parseIssueUrl } from './planner.mjs';
 import { githubCli } from './planner-github.mjs';
@@ -125,7 +125,7 @@ async function assessMerge(root, summary, inputs, quiet, github = githubPrCli) {
   const githubPr = await readGitHub(root, summary, inputs, github);
   if (githubPr) await json(join(directory, 'github-state.json'), redact({ ...githubPr, readAt: new Date().toISOString(), source: 'GitHub API projection; GitHub is the source of truth' }));
   summary.merge = mergeDecision({ risk: summary.risk, checks, approvals: records, headSha: summary.headSha, contextDigest,
-    humanGate: humanGateRisk(summary), securityVerification, lane:summary.lane, github: githubPr,
+    humanGate: humanGateRisk(summary), securityVerification, lane:summary.lane, github: githubPr, fromSbiIssue: Boolean(summary.sbiIssue),
     baseline: summary.pullRequest ? { ref: summary.pullRequest.base, sha: summary.baselineSha } : null });
   await json(join(directory, 'approvals.json'), { headSha: summary.headSha, approvals: records, source: 'authenticated local ledger; this file is not an authority' });
   await json(join(directory, 'merge-decision.json'), { ...summary.merge, checks });
@@ -406,9 +406,9 @@ async function runProtected({ root, provider, sbiPath, issueUrl, quiet = false, 
   const inputs = { config, rules, sbi, riskPolicy, securityPolicy, humanGates, securityDocuments, lanePolicy, sbiSnapshot, toolFingerprint: await toolFingerprint(root), skill: await readFile(join(root, '.harness/skills/implement.md'), 'utf8') };
   const summary = { id, runDir: `.harness/runs/${id}`, sbi: sbi.id, sbiPath: source ? null : sbiPath || config.sbi, provider,
     ...(source ? { sbiIssue: sbiSnapshot.source } : {}),
-    // harness:run opens the PR itself once execution is DONE, but only for an SBI it was given. The fake provider (harness:demo)
-    // and the configured sample SBI never publish.
-    publish: publish === true && provider !== 'fake' && Boolean(sbiPath || source), fullVerification:full, status: 'PENDING', executionStatus: 'PENDING', reason: null, consecutiveFailures: 0, iterations: [], events: [],
+    // harness:run opens the PR itself once execution is DONE, but only for a run from an approved SBI Issue (#220). --sbi PATH and the
+    // configured sample SBI have no ready binding or spec approval and stay local self-tests; the fake provider (harness:demo) never publishes.
+    publish: publish === true && provider !== 'fake' && Boolean(source), fullVerification:full, status: 'PENDING', executionStatus: 'PENDING', reason: null, consecutiveFailures: 0, iterations: [], events: [],
     baselineSha, headSha: baselineSha, workspaceDigest: await workspaceFingerprint(workspace), inputsDigest: digest(inputs), gate: { required: false, state: 'NOT_REQUIRED' },
     merge: { state: 'NOT_ASSESSED', autoMergeEligible: false }, startedAt: new Date().toISOString() };
   await json(join(directory, 'inputs.json'), inputs);
@@ -424,7 +424,15 @@ async function runProtected({ root, provider, sbiPath, issueUrl, quiet = false, 
   if (stopped) return stopped;
   return withRunLock(root, id, () => executeLoop({ root, summary, inputs, quiet, agent, reviewer, semanticReviewer }));
 }
-async function resumeProtected({ root, runId, quiet = false, agent = runAgent, reviewer = review, semanticReviewer, github = githubPrCli }) {
+// The SBI Issue as loadSbiIssue reads it now must still give the snapshot the run took: ready or the spec approval still covers it,
+// and the spec is unchanged. Anything else throws with what differs, so the run goes back to a new SBI approval.
+async function assertSbiSourceUnchanged({ root, ref, runId, snapshot, issues, message }) {
+  const source = await loadSbiIssue({ issueUrl: ref.url, config: (await check(root, undefined, undefined, { sbiIssue: ref.number })).config, github: issues });
+  const checked = await check(root, undefined, source.sbi, { sbiIssue: ref.number });
+  if (isDeepStrictEqual(snapshotFromIssue({ ref: source.ref, issue: source.issue, runId, sbi: checked.sbi }), snapshot)) return { source, checked };
+  throw new Error([message, ...snapshotMismatch({ snapshot, source, config: checked.config }).map(r => `- ${r}`)].join('\n'));
+}
+async function resumeProtected({ root, runId, quiet = false, agent = runAgent, reviewer = review, semanticReviewer, github = githubPrCli, issues = githubCli }) {
   root = await realpath(root);
   return withRunLock(root, runId, async () => {
     const stored = await readRunState(root, runId);
@@ -438,6 +446,9 @@ async function resumeProtected({ root, runId, quiet = false, agent = runAgent, r
       if (summary.executionStatus === 'DONE') return await settleMerge(root, summary, loaded.inputs, quiet, github);
       if (summary.gate.required && summary.gate.state !== 'APPROVED') throw new Error('This run waits for an implementation gate, which no longer exists (#175); approve the SBI and start a new run');
       if (summary.executionStatus !== 'PENDING' || summary.iterations.length) throw new Error('Only an unstarted run or a completed execution can resume; start a new run');
+      // #220: an Issue run reads its Issue again before it implements, so a removed ready, a withdrawn spec approval or an edited spec stops it.
+      if (summary.sbiIssue) await assertSbiSourceUnchanged({ root, ref: summary.sbiIssue, runId, snapshot: loaded.inputs.sbiSnapshot, issues,
+        message: `${summary.sbiIssue.url} はrunの開始時から変わったため、実装を再開しません。SBIを再承認し、新しいrunで実装してください` });
       return await executeLoop({ root, summary, inputs: loaded.inputs, quiet, agent, reviewer, semanticReviewer });
     } catch (error) {
       summary ??= stored;
@@ -453,6 +464,8 @@ async function publishProtected({ root, runId, quiet = false, github = githubPrC
     const { summary, inputs } = await loadRun(root, runId);
     if (summary.kind === 'reverify') throw new Error(`run ${runId} re-verifies ${summary.pullRequest.url}; it updates that PR through pnpm harness:reverify and never opens another`);
     if (summary.executionStatus !== 'DONE' || summary.status === 'ESCALATED') throw new Error(`Execution must be DONE and not ESCALATED before opening a pull request (now ${summary.executionStatus}/${summary.status})`);
+    // #220: --sbi PATH has no ready binding or spec approval. Only a run from an approved SBI Issue, which commits its snapshot, opens a PR.
+    if (!summary.sbiIssue || !inputs.sbiSnapshot) throw new Error(`run ${runId} did not start from an SBI Issue (--sbi PATH is a local self-test); only a run of an approved SBI Issue opens a pull request`);
     const { workspace } = runPaths(root, runId);
     await workspaceIntegrity(workspace, summary.headSha);
     const { remote, base } = inputs.config.github;
@@ -722,14 +735,8 @@ async function reverifyProtected({ root, pullUrl, quiet = false, reviewer = revi
   const { path, snapshot } = await committedSnapshot(root, baselineSha, pullHead);
   if (snapshot.runId !== parentRunId) throw new Error(`${path} のrun ${snapshot.runId} がPRのbranch ${branch} と一致しません`);
   if (snapshot.source.repo !== repository.name) throw new Error(`${path} は${repository.name}のSBI Issueではありません`);
-  const sbiIssue = snapshot.source.number;
-  const source = await loadSbiIssue({ issueUrl: snapshot.source.url, config: (await check(root, undefined, undefined, { sbiIssue })).config, github: issues });
-  const checked = await check(root, undefined, source.sbi, { sbiIssue });
-  const rebuilt = snapshotFromIssue({ ref: source.ref, issue: source.issue, runId: parentRunId, sbi: checked.sbi });
-  if (!isDeepStrictEqual(rebuilt, snapshot)) {
-    const reasons = matchSbiSource({ snapshot, issue: source.issue, config: checked.config });
-    throw new Error([`${path} のSBI snapshotが、現在のSBI Issueと${base}のTrusted Acceptance登録から組み立てたSBIと一致しません。SBIが変わったため再検証せず、新しいrunで実装してください`, ...reasons.map(r => `- ${r}`)].join('\n'));
-  }
+  const { checked } = await assertSbiSourceUnchanged({ root, ref: snapshot.source, runId: parentRunId, snapshot, issues,
+    message: `${path} のSBI snapshotが、現在のSBI Issueと${base}のTrusted Acceptance登録から組み立てたSBIと一致しません。SBIが変わったため再検証せず、新しいrunで実装してください` });
   await assertSafeCommit(root, baselineSha, pullHead);
   const verified = await verifiedRun(root, { pullRequest: { number: ref.number, branch, base, repository: repository.name }, parentRunId, baselineSha, pullHead });
   if (verified) return { ...verified, alreadyVerified: true };

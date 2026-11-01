@@ -7,10 +7,12 @@ import { tmpdir } from 'node:os';
 import { fixture, update } from './test-fixture.mjs';
 import { githubMock } from './test-github.mjs';
 import { git } from './workspace.mjs';
+import { githubCli } from './planner-github.mjs';
 import { analyzeImpact, describeImpact, judgeCi, runCompletionJudge } from './impact.mjs';
 import { renderSbiBody } from './planner.mjs';
 import { sbiSnapshotSchema } from './schemas.mjs';
 import { sbiFromIssue } from './sbi-issue.mjs';
+import * as sbiSource from './sbi-source.mjs';
 import { describeSbiSource, judgeSbiSource, riskView, snapshotFromIssue, snapshotPath, verifySbiSource } from './sbi-source.mjs';
 import { assessRisk } from './risk-classifier.mjs';
 import { classifySecurity } from './security-enforcement.mjs';
@@ -250,6 +252,23 @@ describe('Source SBI verification in the PR', () => {
     })));
   });
 
+  // #220: harness:reverify and harness:resume explain why the snapshot no longer matches the SBI Issue as loadSbiIssue reads it now.
+  // A spec-approved Issue has no registration until its run generates one, so the explanation rebuilds it as the run did (generate).
+  describe('given the snapshot of a run from a spec-approved SBI Issue without a registered Trusted Acceptance', () => {
+    const unregistered = { verifiers: [] };
+    const generated = snapshotFromIssue({ ref, issue: readyIssue, runId, sbi: sbiFromIssue({ ref, issue: readyIssue, config: unregistered, generate: true }) });
+    it('when the spec was edited then the explanation names the changed digest and SBI field, not a missing registration', () => {
+      const issue = { ...readyIssue, body: readyIssue.body.replace('ホームを表示する', 'ホームと一覧を表示する') };
+      const reasons = sbiSource.snapshotMismatch({ snapshot: generated, source: { ref, issue, mode: 'generate' }, config: unregistered });
+      assert.ok(reasons.some(r => r.includes('bodyDigest')), reasons.join('; '));
+      assert.ok(reasons.some(r => r.includes('description')), reasons.join('; '));
+      assert.ok(!reasons.some(r => r.includes('cannot be rebuilt')), reasons.join('; '));
+    });
+    it('when nothing changed then there is nothing to explain', () => {
+      assert.deepEqual(sbiSource.snapshotMismatch({ snapshot: generated, source: { ref, issue: readyIssue, mode: 'generate' }, config: unregistered }), []);
+    });
+  });
+
   describe('given a Production change without a valid snapshot', () => {
     it('when no snapshot is in the PR then fails without calling GitHub and names the Production path', () => mockGitHub({}, async github => repository(async root => {
       const files = await commit(root, { [admin]: 'export {};' }, 'feat: home');
@@ -444,6 +463,99 @@ describe('CI Completion Judge for the source SBI Issue', () => {
       const judged = await run(root);
       assert.equal(judged.status, 'FAIL');
       assert.ok(judged.reasons.some(r => r.startsWith('sbi source')), judged.reasons.join('; '));
+    })));
+
+    // #220: harness/<run-id> is the branch harness:run opens its PR from. Whatever the diff, such a PR passes only with the snapshot of that
+    // same run from an approved SBI Issue, so a PR that a regression opened from --sbi PATH, or a hand-made harness/* branch, cannot be merged.
+    const pull = branch => ({ number: 201, merged_at: null, body: '', user: { login: 'harness-operator', type: 'User' },
+      head: { ref: branch, sha: 'f'.repeat(40), repo: { full_name: 'acme/app' } }, base: { ref: 'main', sha: 'e'.repeat(40) } });
+    const otherRunId = '2026-10-29T00-00-00-000Z-5e6f7a8b';
+    const prototypePage = 'prototypes/web/src/main.tsx';
+
+    it('when a Harness PR changes only a prototype and carries no SBI snapshot then the Judge fails, though the diff alone needs no SBI', () => mockGitHub({ pulls: [pull(`harness/${runId}`)] }, () => fixture(async root => {
+      await prepare(root);
+      await commit(root, { [prototypePage]: 'export {};' }, 'SBI SBI-001, iteration 1');
+      const judged = await run(root, { pullNumber: '201' });
+      assert.equal(judged.impact.sbiRequired, false);
+      assert.equal(judged.status, 'FAIL');
+      assert.ok(judged.reasons.some(r => r.includes(`harness/${runId}`)), judged.reasons.join('; '));
+    })));
+
+    it('when a Harness PR carries the snapshot and Run trailers of its own run from a ready SBI Issue then the Judge passes', () => mockGitHub({ pulls: [pull(`harness/${runId}`)] }, () => fixture(async root => {
+      await prepare(root);
+      await commit(root, { [admin]: 'export const home = 1;', [snapshotPath(snapshot())]: snapshot() }, `feat: home${trailers()}`);
+      const judged = await run(root, { pullNumber: '201' });
+      assert.equal(judged.source.status, 'PASS', judged.source.reasons.join('; '));
+      assert.equal(judged.status, 'PASS', judged.reasons.join('; '));
+    })));
+
+    it('when a Harness PR changes only a prototype with the snapshot of its own run from a ready SBI Issue then the Judge passes', () => mockGitHub({ pulls: [pull(`harness/${runId}`)] }, () => fixture(async root => {
+      await prepare(root);
+      await commit(root, { [prototypePage]: 'export {};', [snapshotPath(snapshot())]: snapshot() }, `feat: prototype${trailers()}`);
+      const judged = await run(root, { pullNumber: '201' });
+      assert.equal(judged.source.status, 'PASS', judged.source.reasons.join('; '));
+    })));
+
+    it('when a Harness PR carries the snapshot of another run than its branch names then the Judge fails', () => mockGitHub({ pulls: [pull(`harness/${otherRunId}`)] }, () => fixture(async root => {
+      await prepare(root);
+      await commit(root, { [admin]: 'export const home = 1;', [snapshotPath(snapshot())]: snapshot() }, `feat: home${trailers()}`);
+      const judged = await run(root, { pullNumber: '201' });
+      assert.equal(judged.status, 'FAIL');
+      assert.ok(judged.reasons.some(r => r.includes(`harness/${otherRunId}`) && r.includes(runId)), judged.reasons.join('; '));
+    })));
+
+    // A second, valid snapshot of another ready Issue does not make the PR the change of another run; the Harness PR is held to its own run only.
+    it('when a Harness PR carries the snapshot of its own run and a valid snapshot of another ready SBI Issue then the Judge fails on the count alone', () => {
+      const otherRef = { owner: 'acme', repo: 'app', number: 8, url: 'https://github.com/acme/app/issues/8' };
+      const otherIssue = { number: 8, title: 'SBI-002 管理画面の一覧', body: renderSbiBody({ ...planned, id: 'SBI-002', title: '管理画面の一覧', purpose: '一覧を表示する',
+        acceptanceCriteria: [{ id: 'LIST-AC-1', description: '一覧が出る' }], scenarios: [{ ...planned.scenarios[0], acceptanceIds: ['LIST-AC-1'] }] }, pbi), html_url: otherRef.url, state: 'open', labels: labels('sbi', 'ready') };
+      const listAcceptance = { ...homeAcceptance, id: 'list-acceptance', trustedScript: '.harness/verification/list.mjs', acceptanceIds: ['LIST-AC-1'], sbiIssue: 8 };
+      const other = snapshotFromIssue({ ref: otherRef, issue: otherIssue, runId: otherRunId, sbi: sbiFromIssue({ ref: otherRef, issue: otherIssue, config: { verifiers: [listAcceptance] } }) });
+      // The gh stub serves one Issue by number; the second ready Issue is read through its created Issues (timeline and permission) and here.
+      const github = { ...githubCli, fetchIssue: ref => ref.number === 8 ? Promise.resolve(otherIssue) : githubCli.fetchIssue(ref) };
+      return mockGitHub({ pulls: [pull(`harness/${runId}`)], created: [otherIssue] }, () => fixture(async root => {
+        await writeFile(join(root, '.harness/verification/list.mjs'), 'console.log(JSON.stringify({ acceptance: ["LIST-AC-1"] }));');
+        await update(root, '.harness/config/harness.json', c => { c.verifiers.push(listAcceptance); });
+        await prepare(root);
+        await commit(root, { [admin]: 'export const home = 1;', [snapshotPath(snapshot())]: snapshot() }, `feat: home${trailers()}`);
+        await commit(root, { [snapshotPath(other)]: other }, `feat: list${trailers(other)}`);
+        const judged = await run(root, { pullNumber: '201', github });
+        assert.deepEqual(judged.source.reasons.filter(r => !r.startsWith('harness pr:')), [], 'both snapshots are valid on their own');
+        assert.equal(judged.source.status, 'FAIL');
+        assert.ok(judged.reasons.some(r => r.includes(`harness/${runId}`) && r.includes('exactly one')), judged.reasons.join('; '));
+      }));
+    });
+
+    it('when the pull request cannot be read then the Judge fails closed, since it cannot tell whether Harness opened it', () => mockGitHub({ pulls: [] }, () => fixture(async root => {
+      await prepare(root);
+      await commit(root, { [prototypePage]: 'export {};' }, 'feat: prototype');
+      const judged = await run(root, { pullNumber: '201' });
+      assert.equal(judged.status, 'FAIL');
+      assert.ok(judged.reasons.some(r => r.includes('#201') && r.includes('HTTP 404')), judged.reasons.join('; '));
+    })));
+
+    // A pull_request or pull_request_target event always has a PR number. Without it the Judge cannot tell a Harness PR apart, so it fails closed.
+    for (const eventName of ['pull_request', 'pull_request_target']) {
+      it(`when a ${eventName} event gives no pull request number then the Judge fails closed instead of skipping the Harness PR check`, () => mockGitHub({ pulls: [pull(`harness/${runId}`)] }, () => fixture(async root => {
+        await prepare(root);
+        await commit(root, { [prototypePage]: 'export {};' }, 'SBI SBI-001, iteration 1');
+        const judged = await run(root, { eventName });
+        assert.equal(judged.status, 'FAIL');
+        assert.ok(judged.reasons.some(r => r.startsWith('harness pr:') && r.includes(eventName)), judged.reasons.join('; '));
+      })));
+    }
+    it('when a push event gives no pull request number then there is no PR to check and the Judge passes as before', () => mockGitHub({}, () => fixture(async root => {
+      await prepare(root);
+      await commit(root, { [prototypePage]: 'export {};' }, 'feat: prototype');
+      const judged = await run(root, { eventName: 'push' });
+      assert.equal(judged.status, 'PASS', judged.reasons.join('; '));
+    })));
+
+    it('when a PR from another branch changes only a prototype then the Judge passes without an SBI, as before', () => mockGitHub({ pulls: [pull('claude/prototype-home')] }, () => fixture(async root => {
+      await prepare(root);
+      await commit(root, { [prototypePage]: 'export {};' }, 'feat: prototype');
+      const judged = await run(root, { pullNumber: '201' });
+      assert.equal(judged.status, 'PASS', judged.reasons.join('; '));
     })));
 
     // The Issue a variant of the plan renders and the snapshot a Run takes from it.

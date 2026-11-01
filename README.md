@@ -408,7 +408,7 @@ SPEC_AMBIGUOUS・DESIGN_DECISION_REQUIRED・AGENT_ESCALATION・NEW_SECURITY_SCOP
 ```sh
 pnpm harness:run <SBI Issue URL>                    # Claude（既定）
 pnpm harness:run <SBI Issue URL> --provider codex   # Codexだけ使える場合
-pnpm harness:run --provider fake --sbi .harness/state/sample-sbi.json   # Harness自己テスト用（SBI JSON指定）。PRは作らない
+pnpm harness:run --provider fake --sbi .harness/state/sample-sbi.json   # Harness自己テスト用（SBI JSON指定）。providerに関係なくPRは作らない
 ```
 
 既定値はharness.jsonのprovider（claude）。demoは常にfake。provider自動検出はしない。
