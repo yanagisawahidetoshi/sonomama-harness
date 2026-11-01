@@ -67,8 +67,9 @@ export async function prototype(root,{promotion=false,failing=false}={}) {
   await writeFile(join(root,folder,'package.json'),JSON.stringify({private:true,scripts:{typecheck:'node -e "process.exit(0)"',lint:`node -e "process.exit(${failing?1:0})"`,'format:check':'node -e "process.exit(0)"',build:'node -e "process.exit(0)"'}}));
   await update(root,'.harness/config/harness.json',c=>{
     c.verifiers.push({id:'visual',trust:'acceptance',trustedScript:'.harness/verification/visual.mjs',directory:'.',planned:['independent visual assertion'],commands:[],acceptanceIds:['VISUAL'],appliesTo:['^never/']});
-    if(promotion)c.verifiers.find(v=>v.id==='admin').commands=[['node','-e','process.exit(0)']];
-    // The fixture package has stub scripts only; the real verifier also installs dependencies and builds Storybook.
+    if(promotion)Object.assign(c.verifiers.find(v=>v.id==='admin'),{setupCommands:[],commands:[['node','-e','process.exit(0)']]});
+    // The fixture package has stub scripts only; the real verifier also installs dependencies (setup) and builds Storybook.
+    c.verifiers.find(v=>v.id==='prototype-web').setupCommands=[];
     c.verifiers.find(v=>v.id==='prototype-web').commands=['typecheck','lint','format:check','build'].map(script=>['pnpm','run',script]);
   });
   return {file,agent:async()=>({files:[{path:file,content:'visual'}]})};
