@@ -41,7 +41,8 @@ if (args[0] === 'run') console.log('container-id');
   } finally { await rm(dir, { recursive: true, force: true }); }
 }
 // An admin verifier without a network declaration; tests that need egress declare it explicitly.
-const admin = (config, patch = {}) => Object.assign(config.verifiers.find(v => v.id === 'admin'), { commands: [['node', '-e', 'process.exit(0)']], network: false }, patch);
+// The stand-in commands replace the install (setup, #246) as well as the verification.
+const admin = (config, patch = {}) => Object.assign(config.verifiers.find(v => v.id === 'admin'), { setupCommands: [], commands: [['node', '-e', 'process.exit(0)']], network: false }, patch);
 const run = calls => calls.find(c => c.args[0] === 'run');
 const mounts = call => call.args.flatMap((a, i) => call.args[i - 1] === '--mount' ? [Object.fromEntries(a.split(',').map(kv => kv.split('=')))] : []);
 const envNames = call => call.args.flatMap((a, i) => call.args[i - 1] === '-e' || call.args[i - 1] === '--env' ? [a.split('=')[0]] : []);
@@ -125,7 +126,7 @@ describe('Verifier isolation', () => {
       const { config } = await check(root);
       config.isolation = { docker };
       const doctor = ['pnpm', 'run', 'doctor'];
-      Object.assign(config.verifiers.find(v => v.id === 'expo'), { commands: [['node', '-e', 'process.exit(0)'], doctor], gatedCommands: [{ command: doctor, appliesTo: ['^apps/mobile/package\\.json$'] }] });
+      Object.assign(config.verifiers.find(v => v.id === 'expo'), { setupCommands: [], commands: [['node', '-e', 'process.exit(0)'], doctor], gatedCommands: [{ command: doctor, appliesTo: ['^apps/mobile/package\\.json$'] }] });
       const result = await verify({ root, workspace: root, config, sbi, files: [{ path: 'apps/mobile/src/app/index.tsx' }] });
       const checked = result.checks.find(c => c.id === 'expo');
       assert.equal(checked.status, 'PASS');

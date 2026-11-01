@@ -146,8 +146,8 @@ export async function verifySecurity({ workspace, assessment, policy, config, he
     }
     if (adapter.kind === 'command') {
       const cwd = join(workspace, adapter.directory || '.');
-      const {status,reason,processes}=await runIsolated({workspace,adapter,config,cwd});
-      checks.push({id,verifier:id,required:true,status,...(reason&&{reason}),cwd,isolation:adapter.isolation||'container',processes});
+      const {status,reason,failure,phases,processes}=await runIsolated({workspace,adapter,config,cwd});
+      checks.push({id,verifier:id,required:true,status,...(reason&&{reason}),...(failure&&{failure}),...(phases&&{phases}),cwd,isolation:adapter.isolation||'container',processes});
     } else {
       const patterns = adapter.kind === 'secret' ? policy.secretPatterns : adapter.kind === 'pii-log' ? policy.piiLogPatterns : policy.forbiddenPatterns;
       // The SBI snapshot is Issue text the Harness wrote, not code: only secret-scan reads it (#184).

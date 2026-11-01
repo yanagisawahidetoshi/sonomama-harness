@@ -5,6 +5,7 @@
   "maxConsecutiveFailures": 3,
   "maxIterations": 5,
   "timeoutMs": 120000,
+  "setupTimeoutMs": 360000,
   "github": {
     "remote": "origin",
     "base": "main",
@@ -233,14 +234,6 @@
       "commands": [
         [
           "pnpm",
-          "install",
-          "--frozen-lockfile",
-          "--prefer-offline",
-          "--filter",
-          "mobile"
-        ],
-        [
-          "pnpm",
           "run",
           "typecheck"
         ],
@@ -294,6 +287,16 @@
             "^(package\\.json|pnpm-workspace\\.yaml|\\.npmrc|\\.node-version|\\.nvmrc|\\.tool-versions)$"
           ]
         }
+      ],
+      "setupCommands": [
+        [
+          "pnpm",
+          "install",
+          "--frozen-lockfile",
+          "--prefer-offline",
+          "--filter",
+          "mobile"
+        ]
       ]
     },
     {
@@ -392,14 +395,6 @@
       "commands": [
         [
           "pnpm",
-          "install",
-          "--frozen-lockfile",
-          "--prefer-offline",
-          "--filter",
-          "admin"
-        ],
-        [
-          "pnpm",
           "run",
           "typecheck"
         ],
@@ -451,7 +446,17 @@
       "areas": [
         "admin"
       ],
-      "network": true
+      "network": true,
+      "setupCommands": [
+        [
+          "pnpm",
+          "install",
+          "--frozen-lockfile",
+          "--prefer-offline",
+          "--filter",
+          "admin"
+        ]
+      ]
     },
     {
       "id": "admin-acceptance",
@@ -545,14 +550,6 @@
       "commands": [
         [
           "pnpm",
-          "install",
-          "--frozen-lockfile",
-          "--prefer-offline",
-          "--filter",
-          "prototype-web"
-        ],
-        [
-          "pnpm",
           "run",
           "typecheck"
         ],
@@ -581,7 +578,17 @@
       "areas": [
         "prototype-web"
       ],
-      "network": true
+      "network": true,
+      "setupCommands": [
+        [
+          "pnpm",
+          "install",
+          "--frozen-lockfile",
+          "--prefer-offline",
+          "--filter",
+          "prototype-web"
+        ]
+      ]
     },
     {
       "id": "prototype-web-acceptance",
@@ -634,14 +641,6 @@
       "commands": [
         [
           "pnpm",
-          "install",
-          "--frozen-lockfile",
-          "--prefer-offline",
-          "--filter",
-          "prototype-mobile"
-        ],
-        [
-          "pnpm",
           "run",
           "typecheck"
         ],
@@ -672,6 +671,16 @@
             "^(package\\.json|pnpm-workspace\\.yaml|\\.npmrc|\\.node-version|\\.nvmrc|\\.tool-versions)$"
           ]
         }
+      ],
+      "setupCommands": [
+        [
+          "pnpm",
+          "install",
+          "--frozen-lockfile",
+          "--prefer-offline",
+          "--filter",
+          "prototype-mobile"
+        ]
       ]
     },
     {
@@ -889,7 +898,7 @@
           "exec",
           "ruby",
           "-e",
-          "require \"rspec/core\"; RSpec.configure { |c| c.fail_if_no_examples = true }; exit RSpec::Core::Runner.run([\"spec/authorization\"])"
+          "require \"rspec/core\"; require \"json\"; out = \"tmp/harness-security-rspec.json\"; RSpec.configure { |c| c.fail_if_no_examples = true }; status = RSpec::Core::Runner.run([\"spec/authorization\", \"--format\", \"progress\", \"--format\", \"json\", \"--out\", out]); s = JSON.parse(File.read(out))[\"summary\"]; declared = RSpec.world.example_groups.flat_map(&:descendants).sum { |g| g.examples.size }; problems = []; problems << \"no example ran\" if s[\"example_count\"].zero?; problems << \"#{s[\"pending_count\"]} pending or skipped\" if s[\"pending_count\"].positive?; problems << \"#{declared - s[\"example_count\"]} of #{declared} examples not run (focus or a filter)\" if s[\"example_count\"] != declared; warn \"Security specs: #{problems.join(\"; \")}\" unless problems.empty?; exit(status.zero? && problems.empty? ? 0 : 1)"
         ],
         [
           "docker",
@@ -950,7 +959,7 @@
           "exec",
           "ruby",
           "-e",
-          "require \"rspec/core\"; RSpec.configure { |c| c.fail_if_no_examples = true }; exit RSpec::Core::Runner.run([\"spec/authentication\"])"
+          "require \"rspec/core\"; require \"json\"; out = \"tmp/harness-security-rspec.json\"; RSpec.configure { |c| c.fail_if_no_examples = true }; status = RSpec::Core::Runner.run([\"spec/authentication\", \"--format\", \"progress\", \"--format\", \"json\", \"--out\", out]); s = JSON.parse(File.read(out))[\"summary\"]; declared = RSpec.world.example_groups.flat_map(&:descendants).sum { |g| g.examples.size }; problems = []; problems << \"no example ran\" if s[\"example_count\"].zero?; problems << \"#{s[\"pending_count\"]} pending or skipped\" if s[\"pending_count\"].positive?; problems << \"#{declared - s[\"example_count\"]} of #{declared} examples not run (focus or a filter)\" if s[\"example_count\"] != declared; warn \"Security specs: #{problems.join(\"; \")}\" unless problems.empty?; exit(status.zero? && problems.empty? ? 0 : 1)"
         ],
         [
           "docker",
@@ -1011,7 +1020,7 @@
           "exec",
           "ruby",
           "-e",
-          "require \"rspec/core\"; RSpec.configure { |c| c.fail_if_no_examples = true }; exit RSpec::Core::Runner.run([\"spec/rls\"])"
+          "require \"rspec/core\"; require \"json\"; out = \"tmp/harness-security-rspec.json\"; RSpec.configure { |c| c.fail_if_no_examples = true }; status = RSpec::Core::Runner.run([\"spec/rls\", \"--format\", \"progress\", \"--format\", \"json\", \"--out\", out]); s = JSON.parse(File.read(out))[\"summary\"]; declared = RSpec.world.example_groups.flat_map(&:descendants).sum { |g| g.examples.size }; problems = []; problems << \"no example ran\" if s[\"example_count\"].zero?; problems << \"#{s[\"pending_count\"]} pending or skipped\" if s[\"pending_count\"].positive?; problems << \"#{declared - s[\"example_count\"]} of #{declared} examples not run (focus or a filter)\" if s[\"example_count\"] != declared; warn \"Security specs: #{problems.join(\"; \")}\" unless problems.empty?; exit(status.zero? && problems.empty? ? 0 : 1)"
         ],
         [
           "docker",
@@ -1072,7 +1081,7 @@
           "exec",
           "ruby",
           "-e",
-          "require \"rspec/core\"; RSpec.configure { |c| c.fail_if_no_examples = true }; exit RSpec::Core::Runner.run([\"spec/data_lifecycle\"])"
+          "require \"rspec/core\"; require \"json\"; out = \"tmp/harness-security-rspec.json\"; RSpec.configure { |c| c.fail_if_no_examples = true }; status = RSpec::Core::Runner.run([\"spec/data_lifecycle\", \"--format\", \"progress\", \"--format\", \"json\", \"--out\", out]); s = JSON.parse(File.read(out))[\"summary\"]; declared = RSpec.world.example_groups.flat_map(&:descendants).sum { |g| g.examples.size }; problems = []; problems << \"no example ran\" if s[\"example_count\"].zero?; problems << \"#{s[\"pending_count\"]} pending or skipped\" if s[\"pending_count\"].positive?; problems << \"#{declared - s[\"example_count\"]} of #{declared} examples not run (focus or a filter)\" if s[\"example_count\"] != declared; warn \"Security specs: #{problems.join(\"; \")}\" unless problems.empty?; exit(status.zero? && problems.empty? ? 0 : 1)"
         ],
         [
           "docker",
@@ -1096,21 +1105,33 @@
         ],
         [
           "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          "src/features/auth/",
+          "--reporter=default",
+          "--reporter=json",
+          "--outputFile.json=/tmp/harness-security-tests.json"
+        ],
+        [
+          "node",
+          "../../tools/harness/security-specs.mjs",
+          "admin-authn-test",
+          "--report",
+          "/tmp/harness-security-tests.json"
+        ]
+      ],
+      "network": true,
+      "setupCommands": [
+        [
+          "pnpm",
           "install",
           "--frozen-lockfile",
           "--prefer-offline",
           "--filter",
           "admin"
-        ],
-        [
-          "pnpm",
-          "exec",
-          "vitest",
-          "run",
-          "src/features/auth/"
         ]
-      ],
-      "network": true
+      ]
     },
     {
       "id": "mobile-authn-test",
@@ -1123,21 +1144,32 @@
         ],
         [
           "pnpm",
+          "exec",
+          "jest",
+          "--ci",
+          "--json",
+          "--outputFile=/tmp/harness-security-tests.json",
+          "src/features/auth/"
+        ],
+        [
+          "node",
+          "../../tools/harness/security-specs.mjs",
+          "mobile-authn-test",
+          "--report",
+          "/tmp/harness-security-tests.json"
+        ]
+      ],
+      "network": true,
+      "setupCommands": [
+        [
+          "pnpm",
           "install",
           "--frozen-lockfile",
           "--prefer-offline",
           "--filter",
           "mobile"
-        ],
-        [
-          "pnpm",
-          "exec",
-          "jest",
-          "--ci",
-          "src/features/auth/"
         ]
-      ],
-      "network": true
+      ]
     }
   ],
   "impact": {

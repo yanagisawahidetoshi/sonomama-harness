@@ -52,7 +52,9 @@ Railsの認可テスト（rails-authz-test）は、`apps/api/spec/authorization/
 | admin-authn-test | `apps/admin/src/features/auth/`の`*.test.ts(x)` | 管理画面のVitest（コンテナ内） |
 | mobile-authn-test | `apps/mobile/src/features/auth/`の`*.test.ts(x)` | モバイルのJest（コンテナ内） |
 
-RSpecでは`xit`・`skip`・`pending`・`focus`などを、Vitest・Jestでは`.skip`・`.skipIf`・`.runIf`・`.only`・`.todo`・`xit`・`fit`などを、静的な検査で見つけて失敗にする。
+合否は実行結果の件数で決める（#246）。RSpecはJSONの集計で、実行したテストが1件以上・pendingが0件・宣言したテストがすべて実行された（focusやタグの絞り込みで外れたものが無い）ことを見る。Vitest（`--reporter=json`）とJest（`--json`）は、`numTotalTests`が1以上で、`numPendingTests`・`numTodoTests`・`numFailedTests`が0、読み込めないsuiteが無いことを見る。
+静的な検査は補助として残し、RSpecの`xit`・`skip`・`pending`・`focus`（`{ skip }`・`do skip ... end`・`RSpec.xdescribe`・`; xit`の形も）、Vitest・Jestの`.skip`・`.skipIf`・`.runIf`・`.only`・`.todo`・`it['skip']`・`{ skip: true }`などのoption・`const { skip } = it`・`xit`・`fit`を見つけて失敗にする。失敗するテストを成功扱いにする`it.fails`（Vitest）・`test.failing`（Jest）は件数では見分けられないので、静的な検査で禁止する。
+モバイルの静的な検査は、jest-expoが実行するファイル（`*.test.*`・`*.spec.*`・`__tests__/`配下、`.mts`・`.cts`を含む）をすべて読む。
 
 どの検証を実行するかは、変更したパスで決める。Railsの認可テストとRLSテストは`apps/api/`、APIの認証テストは`apps/api/`と`packages/`（OpenAPIの認証定義はAPIが実装するため）、管理画面とモバイルの認証テストはそれぞれ`apps/admin/`・`apps/mobile/`の変更でだけ実行する。
 SBIがルールを宣言した場合や、SBIの本文がルールに一致した場合も同じで、ルールのSBI承認・レベル3・2人のReviewはそのまま付けたうえで、変更したパスが当たる検証だけを必須にする。たとえば管理画面だけを変える認証のSBIでは、APIとモバイルの認証テストは要求しない。変更したパスがまだわからないとき（実装前の確認で対象のパスが無いときなど）は、ルールの検証をすべて必須にする。

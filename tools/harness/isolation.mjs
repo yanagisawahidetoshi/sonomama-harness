@@ -22,22 +22,52 @@ const harnessEnv = () => pick(['PATH', 'HARNESS_BASE_REF']);
 const protectedPaths = ['.git', '.harness/state', '.harness/runs', '.harness/exports'];
 // The docker error is kept for diagnosis; evidence is redacted when it is written.
 const unavailable = (reason, process) => ({ status: 'FAIL', reason: `isolation unavailable: ${reason}`, processes: process ? [process] : [] });
-const outcome = processes => ({ status: processes.every(p => p.ok) ? 'PASS' : 'FAIL', processes });
+// #246: setup (dependency install) and verification are two phases with their own time limits. A setup that fails stops before the
+// verification and is SETUP_TIMEOUT or SETUP_FAILED; every verification command runs, and a failure is VERIFY_TIMEOUT or VERIFY_FAILED.
+// Neither passes. Each process keeps its phase and duration, and each phase its duration, for the evidence and the log.
+async function phased({ setup, commands, limits, run }) {
+  const processes = [], phases = {};
+  const phase = async (name, list, timeoutMs, stopOnFailure) => {
+    const started = Date.now();
+    let failed = null;
+    for (const command of list) {
+      const result = { ...await run(command, timeoutMs), phase: name };
+      processes.push(result);
+      if (!result.ok) { failed ??= { result, command }; if (stopOnFailure) break; }
+    }
+    phases[name] = { durationMs: Date.now() - started, commands: list.length };
+    return failed;
+  };
+  const setupFailed = await phase('setup', setup, limits.setup, true);
+  if (setupFailed) {
+    const failure = setupFailed.result.timedOut ? 'SETUP_TIMEOUT' : 'SETUP_FAILED';
+    const why = setupFailed.result.timedOut ? `exceeded ${limits.setup}ms` : 'exited non-zero';
+    return { status: 'FAIL', failure, reason: `${failure}: setup command ${setupFailed.command.slice(0, 3).join(' ')} ${why}`, processes, phases: { ...phases, verify: { skipped: true } } };
+  }
+  await phase('verify', commands, limits.verify, false);
+  const failed = processes.filter(p => p.phase === 'verify' && !p.ok);
+  if (!failed.length) return { status: 'PASS', processes, phases };
+  if (failed.some(p => p.timedOut)) return { status: 'FAIL', failure: 'VERIFY_TIMEOUT', reason: `VERIFY_TIMEOUT: a verification command exceeded ${limits.verify}ms`, processes, phases };
+  return { status: 'FAIL', failure: 'VERIFY_FAILED', processes, phases };
+}
+export function describePhases({ phases } = {}) {
+  if (!phases?.setup && !phases?.verify) return '';
+  const seconds = p => `${(p.durationMs / 1000).toFixed(1)}s`;
+  return ` [${[phases.setup?.commands ? `setup ${seconds(phases.setup)}` : null, phases.verify ? (phases.verify.skipped ? 'verify not run' : `verify ${seconds(phases.verify)}`) : null].filter(Boolean).join(', ')}]`;
+}
 const inside = (parent, path) => { const rel = relative(parent, path); return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel)); };
 
 // commands is the selection the caller made (gated commands removed); it defaults to every configured command.
-export async function runIsolated({ workspace, adapter, config, cwd, commands = adapter.commands }) {
-  const docker = config.isolation?.docker || 'docker', timeoutMs = config.timeoutMs;
+// The verifier's own limits win over the configuration's; a setup limit falls back to the verification limit.
+export async function runIsolated({ workspace, adapter, config, cwd, commands = adapter.commands, setup = adapter.setupCommands ?? [] }) {
+  const docker = config.isolation?.docker || 'docker', timeoutMs = adapter.timeoutMs ?? config.timeoutMs;
+  const limits = { setup: adapter.setupTimeoutMs ?? config.setupTimeoutMs ?? timeoutMs, verify: timeoutMs };
   const mode = adapter.isolation || 'container';
-  if (mode === 'harness') {
-    const processes = [];
-    for (const [command, ...args] of commands) processes.push(await execute(command, args, { cwd, timeoutMs, env: harnessEnv() }));
-    return outcome(processes);
-  }
+  if (mode === 'harness') return phased({ setup, commands, limits, run: ([command, ...args], limit) => execute(command, args, { cwd, timeoutMs: limit, env: harnessEnv() }) });
   // Fail closed: without a reachable daemon nothing untrusted runs, and the check cannot pass.
   const ready = await execute(docker, ['info', '--format', '{{.ServerVersion}}'], { env: dockerCliEnv(), timeoutMs: 30000 });
   if (!ready.ok) return unavailable('docker is not available', ready);
-  return mode === 'compose' ? compose({ workspace, commands, docker, cwd, timeoutMs, network: adapter.network !== false }) : container({ workspace, adapter, commands, docker, cwd, timeoutMs });
+  return mode === 'compose' ? compose({ workspace, setup, commands, docker, cwd, limits, network: adapter.network !== false }) : container({ workspace, adapter, setup, commands, docker, cwd, limits });
 }
 
 async function ensureImage(docker) {
@@ -70,7 +100,7 @@ async function secretPaths(workspace, directory = '') {
   return found;
 }
 
-async function container({ workspace, adapter, commands, docker, cwd, timeoutMs }) {
+async function container({ workspace, adapter, setup, commands, docker, cwd, limits }) {
   if (/[,=]/.test(workspace) || !inside(workspace, cwd)) return unavailable('workspace path cannot be mounted');
   const image = await ensureImage(docker);
   if (!image) return unavailable('verifier image could not be built');
@@ -98,9 +128,7 @@ async function container({ workspace, adapter, commands, docker, cwd, timeoutMs 
     const prepared = await execute(docker, ['exec', '-u', '0', name, 'chown', user, ...volumes], { env: dockerCliEnv(), timeoutMs: 60000 });
     if (!prepared.ok) return unavailable('container volumes could not be prepared', prepared);
     const workdir = ['/workspace', relative(workspace, cwd)].filter(Boolean).join('/');
-    const processes = [];
-    for (const [command, ...args] of commands) processes.push(await execute(docker, ['exec', '-w', workdir, name, command, ...args], { env: dockerCliEnv(), timeoutMs }));
-    return outcome(processes);
+    return await phased({ setup, commands, limits, run: (command, limit) => execute(docker, ['exec', '-w', workdir, name, ...command], { env: dockerCliEnv(), timeoutMs: limit }) });
   } finally {
     await execute(docker, ['rm', '-f', '-v', name], { env: dockerCliEnv(), timeoutMs: 60000 });
     await rm(temp, { recursive: true, force: true });
@@ -163,13 +191,13 @@ export function composeOverride(text, { network = true } = {}) {
   const networks = network ? {} : { networks: Object.fromEntries(['default', ...Object.keys(model.networks || {})].map(id => [id, { internal: true }])) };
   return YAML.stringify({ services: Object.fromEntries(services.map(([id]) => [id, { user, environment: { HOME: '/tmp' } }])), ...networks });
 }
-async function compose({ workspace, commands, docker, cwd, timeoutMs, network }) {
+async function compose({ workspace, setup, commands, docker, cwd, limits, network }) {
   const temp = await mkdtemp(join(tmpdir(), 'sonomama-isolation-'));
   try {
     const empty = join(temp, 'empty');
     await writeFile(empty, '');
     const overrides = new Map();
-    for (const [, , , file] of commands.filter(isComposeCommand)) {
+    for (const [, , , file] of [...setup, ...commands].filter(isComposeCommand)) {
       const path = resolve(cwd, file);
       try {
         if (!inside(workspace, path)) throw new Error('Compose file must be inside the workspace');
@@ -182,15 +210,14 @@ async function compose({ workspace, commands, docker, cwd, timeoutMs, network })
         }
       } catch (error) { return unavailable(`Compose file rejected: ${error.message}`); }
     }
-    const processes = [];
     // An empty --env-file keeps a workspace .env out of interpolation.
     // Harness scripts in the list (schema-checked) run on the host like isolation: harness.
-    for (const command of commands) {
+    const run = (command, timeoutMs) => {
       const [name, sub, ...args] = command;
       const files = isComposeCommand(command) ? [args[0], args[1], '-f', overrides.get(args[1])] : [];
-      processes.push(isComposeCommand(command) ? await execute(docker, [sub, '--env-file', empty, ...files, ...args.slice(2)], { cwd, timeoutMs, env: { ...dockerCliEnv(), ...pick(['HARNESS_BUILD_CACHE_FROM', 'HARNESS_BUILD_CACHE_TO']) } })
-        : await execute(name, [sub, ...args], { cwd, timeoutMs, env: harnessEnv() }));
-    }
-    return outcome(processes);
+      return isComposeCommand(command) ? execute(docker, [sub, '--env-file', empty, ...files, ...args.slice(2)], { cwd, timeoutMs, env: { ...dockerCliEnv(), ...pick(['HARNESS_BUILD_CACHE_FROM', 'HARNESS_BUILD_CACHE_TO']) } })
+        : execute(name, [sub, ...args], { cwd, timeoutMs, env: harnessEnv() });
+    };
+    return await phased({ setup, commands, limits, run });
   } finally { await rm(temp, { recursive: true, force: true }); }
 }

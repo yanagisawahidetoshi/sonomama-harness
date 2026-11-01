@@ -12,6 +12,7 @@ export async function json(path, value) {
 }
 // No shell expansion. env replaces the inherited environment when given. Bound runtime and captured output; kill the process group on timeout.
 export function execute(command, args, { cwd, input = '', timeoutMs = 120000, env } = {}) {
+  const started = Date.now();
   return new Promise(resolve => {
     let stdout = '', stderr = '', error = null, timedOut = false;
     const child = spawn(command, args, { cwd, env, shell: false, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] });
@@ -29,7 +30,7 @@ export function execute(command, args, { cwd, input = '', timeoutMs = 120000, en
     child.stdin.on('error', () => {});
     child.on('close', (code, signal) => {
       clearTimeout(timer);
-      resolve({ code, signal, timedOut, error, stdout: stdout.slice(0, 1024 * 1024), stderr: stderr.slice(0, 1024 * 1024), ok: code === 0 && !error && !timedOut });
+      resolve({ code, signal, timedOut, error, durationMs: Date.now() - started, stdout: stdout.slice(0, 1024 * 1024), stderr: stderr.slice(0, 1024 * 1024), ok: code === 0 && !error && !timedOut });
     });
     child.stdin.end(input);
   });

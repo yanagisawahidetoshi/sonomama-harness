@@ -1,3 +1,4 @@
+import { describePhases } from './isolation.mjs';
 import { mkdir, writeFile, realpath, readFile, readdir, lstat } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -176,7 +177,7 @@ async function verifyHead({ root, summary, inputs, result, iterDir, iteration, r
   if (result.securityVerification.checks.some(c=>c.required&&c.status==='NOT_CONFIGURED')) {
     await record(); return escalate('Required Security Verifier is NOT_CONFIGURED; configure it before starting a new run', 'SECURITY_VERIFIER_NOT_CONFIGURED');
   }
-  if (!quiet) for (const c of result.verification.checks) console.log(`  ${c.id}: ${c.status}${c.reason ? ` (${c.reason})` : ''}`);
+  if (!quiet) for (const c of [...result.verification.checks, ...result.securityVerification.checks.filter(c => c.phases)]) console.log(`  ${c.id}: ${c.status}${c.reason ? ` (${c.reason})` : ''}${describePhases(c)}`);
   if (result.verification.status === 'PASS' && result.security.status === 'PASS') {
     await transition('REVIEWING', `iteration ${iteration}`);
     result.review = redact(await reviewer({ root, workspace, sbi, rules, verification: result.verification, files }));
