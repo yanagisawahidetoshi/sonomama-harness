@@ -87,8 +87,9 @@ describe('Security Impact Classifier', () => {
       assert.ok(result.impacts.includes('PIILogging'));
       assert.ok(result.requiredVerifiers.includes('pii-log-check'));
     });
-    it('when explicit SBI security metadata declares RLS then cannot be downgraded', () => {
-      const result = assess([], { securityImpact: ['RLS'], minimumRiskLevel: 3, preImplementationGate: true });
+    // The declaration requires the verifiers of the areas the SBI may change (#165); an API SBI gets the Rails RLS test.
+    it('when explicit SBI security metadata declares RLS for API files then cannot be downgraded', () => {
+      const result = assess([], { securityImpact: ['RLS'], minimumRiskLevel: 3, preImplementationGate: true, allowedFiles: ['apps/api/db/rls.sql'] });
       assert.ok(result.matchedRules.includes('SEC-RLS-001'));
       assert.ok(result.requiredVerifiers.includes('rails-rls-test'));
     });
@@ -122,7 +123,8 @@ describe('Security cannot be overridden by completion or approval', () => {
 describe('Security enforcement in the execution loop', () => {
   describe('given RLS metadata and no installed RLS verifier', () => {
     it('when the approved SBI runs then reports NOT_CONFIGURED and never DONE', () => fixture(async root => {
-      await update(root, '.harness/state/sample-sbi.json', s => s.securityImpact = ['RLS']);
+      await update(root, '.harness/state/sample-sbi.json', s => { s.securityImpact = ['RLS']; s.allowedFiles.push('apps/api/db/rls.sql'); });
+      await update(root, '.harness/config/harness.json', c => { c.securityVerifiers = c.securityVerifiers.filter(v => v.id !== 'rails-rls-test'); });
       const run = await runHarness({ root, quiet: true });
       assert.notEqual(run.executionStatus, 'DONE');
       const evidence = await readJson(join(root, run.runDir, 'security-verification.json'));

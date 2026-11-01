@@ -17,12 +17,15 @@ const classifierSource = f => [f.path, f.previousPath].filter(Boolean).every(pat
 const contentFor = (rule, f, text) => (rule.contentExceptions || [])
   .filter(e => [f.path, f.previousPath].filter(Boolean).every(path => e.pathPatterns.some(p => new RegExp(p).test(path))))
   .reduce((rest, e) => e.ignoredPatterns.reduce((t, p) => t.replace(new RegExp(p, e.ignoreCase ? 'gim' : 'gm'), ''), rest), text);
-// An SBI that declares a rule requires all its verifiers; a matched file requires only the verifiers whose appliesTo covers that file.
+// A matched file requires the verifiers whose appliesTo covers that file. An SBI that declares a rule requires those whose appliesTo
+// covers any of its allowed files or of the changed files, so declaring AuthN for an API change does not ask for the mobile tests (#165).
 const sbiSources = new Set(['requiredSecurityRules', 'securityImpact', 'SBI/acceptance']);
 export function classifySecurity({ files = [], sbi = {}, legacySbi = false }, rawPolicy) {
   const policy = securityPolicySchema.parse(rawPolicy);
   const appliesTo = new Map(policy.verifiers.map(v => [v.id, v.appliesTo]));
-  const applies = (id, matches) => !appliesTo.get(id) || matches.some(m => sbiSources.has(m.source) || [m.path, m.previousPath].some(path => path && appliesTo.get(id).some(p => new RegExp(p).test(path))));
+  const sbiScope = [...(sbi.allowedFiles || []), ...(sbi.allowedDirs || []), ...files.flatMap(f => [f.path, f.previousPath])].filter(Boolean);
+  const covers = (id, paths) => paths.some(path => path && appliesTo.get(id).some(p => new RegExp(p).test(path)));
+  const applies = (id, matches) => !appliesTo.get(id) || matches.some(m => covers(id, sbiSources.has(m.source) ? sbiScope : [m.path, m.previousPath]));
   const impacts = new Set(), matchedRules = [], reasons = [];
   const required = new Set([...policy.alwaysRequiredVerifiers, ...(sbi.requiredVerifiers || [])]);
   let gate = Boolean(sbi.preImplementationGate), minimum = Math.max(2, sbi.minimumRiskLevel || 2), approvals = 0;

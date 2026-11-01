@@ -901,6 +901,256 @@
       ],
       "isolation": "compose",
       "network": true
+    },
+    {
+      "id": "rails-authn-test",
+      "directory": ".",
+      "commands": [
+        [
+          "node",
+          "tools/harness/authorization-specs.mjs",
+          "authentication"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "compose.yaml",
+          "build",
+          "api"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "compose.yaml",
+          "run",
+          "--rm",
+          "-e",
+          "RAILS_ENV=test",
+          "-e",
+          "DATABASE_URL=postgres://postgres@db:5432/sonomama_authn_test",
+          "api",
+          "bin/rails",
+          "db:prepare"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "compose.yaml",
+          "run",
+          "--rm",
+          "-e",
+          "RAILS_ENV=test",
+          "-e",
+          "DATABASE_URL=postgres://postgres@db:5432/sonomama_authn_test",
+          "api",
+          "bundle",
+          "exec",
+          "ruby",
+          "-e",
+          "require \"rspec/core\"; RSpec.configure { |c| c.fail_if_no_examples = true }; exit RSpec::Core::Runner.run([\"spec/authentication\"])"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "compose.yaml",
+          "down"
+        ]
+      ],
+      "isolation": "compose",
+      "network": true
+    },
+    {
+      "id": "rails-rls-test",
+      "directory": ".",
+      "commands": [
+        [
+          "node",
+          "tools/harness/authorization-specs.mjs",
+          "rls"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "compose.yaml",
+          "build",
+          "api"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "compose.yaml",
+          "run",
+          "--rm",
+          "-e",
+          "RAILS_ENV=test",
+          "-e",
+          "DATABASE_URL=postgres://postgres@db:5432/sonomama_rls_test",
+          "api",
+          "bin/rails",
+          "db:prepare"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "compose.yaml",
+          "run",
+          "--rm",
+          "-e",
+          "RAILS_ENV=test",
+          "-e",
+          "DATABASE_URL=postgres://postgres@db:5432/sonomama_rls_test",
+          "api",
+          "bundle",
+          "exec",
+          "ruby",
+          "-e",
+          "require \"rspec/core\"; RSpec.configure { |c| c.fail_if_no_examples = true }; exit RSpec::Core::Runner.run([\"spec/rls\"])"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "compose.yaml",
+          "down"
+        ]
+      ],
+      "isolation": "compose",
+      "network": true
+    },
+    {
+      "id": "data-lifecycle-test",
+      "directory": ".",
+      "commands": [
+        [
+          "node",
+          "tools/harness/authorization-specs.mjs",
+          "data_lifecycle"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "compose.yaml",
+          "build",
+          "api"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "compose.yaml",
+          "run",
+          "--rm",
+          "-e",
+          "RAILS_ENV=test",
+          "-e",
+          "DATABASE_URL=postgres://postgres@db:5432/sonomama_data_lifecycle_test",
+          "api",
+          "bin/rails",
+          "db:prepare"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "compose.yaml",
+          "run",
+          "--rm",
+          "-e",
+          "RAILS_ENV=test",
+          "-e",
+          "DATABASE_URL=postgres://postgres@db:5432/sonomama_data_lifecycle_test",
+          "api",
+          "bundle",
+          "exec",
+          "ruby",
+          "-e",
+          "require \"rspec/core\"; RSpec.configure { |c| c.fail_if_no_examples = true }; exit RSpec::Core::Runner.run([\"spec/data_lifecycle\"])"
+        ],
+        [
+          "docker",
+          "compose",
+          "-f",
+          "compose.yaml",
+          "down"
+        ]
+      ],
+      "isolation": "compose",
+      "network": true
+    },
+    {
+      "id": "admin-authn-test",
+      "directory": "apps/admin",
+      "commands": [
+        [
+          "pnpm",
+          "install",
+          "--frozen-lockfile",
+          "--prefer-offline",
+          "--filter",
+          "admin"
+        ],
+        [
+          "node",
+          "../../tools/harness/authn-tests.mjs",
+          "admin"
+        ],
+        [
+          "pnpm",
+          "exec",
+          "vitest",
+          "run",
+          ".authn.test.",
+          "--passWithNoTests=false"
+        ]
+      ],
+      "network": true
+    },
+    {
+      "id": "mobile-authn-test",
+      "directory": "apps/mobile",
+      "commands": [
+        [
+          "pnpm",
+          "install",
+          "--frozen-lockfile",
+          "--prefer-offline",
+          "--filter",
+          "mobile"
+        ],
+        [
+          "node",
+          "../../tools/harness/authn-tests.mjs",
+          "mobile"
+        ],
+        [
+          "pnpm",
+          "exec",
+          "jest",
+          "--testPathPatterns",
+          "\\.authn\\.test\\.tsx?$",
+          "--passWithNoTests=false"
+        ]
+      ],
+      "network": true
+    },
+    {
+      "id": "api-schema-authn-check",
+      "directory": ".",
+      "commands": [
+        [
+          "node",
+          "tools/harness/api-schema-authn.mjs"
+        ]
+      ],
+      "isolation": "harness"
     }
   ],
   "impact": {

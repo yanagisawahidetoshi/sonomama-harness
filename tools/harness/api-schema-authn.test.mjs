@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { stringify } from 'yaml';
 import { fixture } from './test-fixture.mjs';
@@ -76,6 +76,8 @@ describe('API contract authentication check (#165)', () => {
     }));
     it('when the contract passes the check then exits zero', () => fixture(async root => {
       await save(root, contract(lessons));
+      // The fixture copies only tracked files, so the CLI borrows this checkout's installed dependencies (yaml).
+      await symlink(new URL('../../node_modules', import.meta.url).pathname, join(root, 'node_modules'));
       assert.equal((await execute(process.execPath, [script], { cwd: root })).code, 0);
     }));
   });

@@ -11,7 +11,7 @@
 
 | ルールID | 対象となる変更 | 必ず実行する検証 |
 | --- | --- | --- |
-| SEC-AUTH-001 | 認証、APIの認証 | 認証のテスト（authn-test） |
+| SEC-AUTH-001 | 認証、APIの認証 | 変更した領域の認証の検証（rails-authn-test・admin-authn-test・mobile-authn-test・api-schema-authn-check） |
 | SEC-AUTHZ-001 | 認可、APIの認可 | Railsの認可テスト（rails-authz-test） |
 | SEC-RLS-001 | RLS | RailsのRLSテスト（rails-rls-test） |
 | SEC-ROLE-001 | 役割や権限のモデル | Railsの認可テスト（rails-authz-test） |
@@ -43,4 +43,15 @@ SBIの本文（タイトル・目的・受け入れ要件と、PRに入るRun sn
 Railsの認可テスト（rails-authz-test）は、`apps/api/spec/authorization/`の`*_spec.rb`をテスト用DBで実行する。specが無い、テストが0件、skip・pending・focusで実行されないテストがある場合は失敗にする。
 役割ごとの許可・拒否のspecは、認可を実装するSBIが、ここから参照する権限表に沿って書く。権限表が決まるまでは、`apps/api/`の認可を変えるPRはこの検証で必ず失敗する。
 
-Railsの認可テストとRLSテストは`apps/api/`の変更、認証のテストは`apps/`・`packages/`・`prototypes/`の変更でだけ実行する。ADRなどの文書だけで認可を記述した場合も、実装前の人の承認とレベル3の判定は必要になる。
+認証とRLSも、変更した領域ごとに同じ条件で検証する（#165）。どれも、対象のテストが0件、skip・pending・focus・todo、実行の失敗はFAILにし、正しく検証できたときだけPASSにする。
+
+| 領域 | Verifier | 検証するもの |
+| --- | --- | --- |
+| `apps/api/` | rails-authn-test | `apps/api/spec/authentication/`の`*_spec.rb`をテスト用DBで実行する |
+| `apps/api/` | rails-rls-test | `apps/api/spec/rls/`の`*_spec.rb`をテスト用DBで実行する |
+| `apps/admin/` | admin-authn-test | `apps/admin/src/`の`*.authn.test.ts(x)`（対象のコードの隣に置く）をVitestで実行する |
+| `apps/mobile/` | mobile-authn-test | `apps/mobile/src/`の`*.authn.test.ts(x)`をJestで実行する |
+| `packages/api-schema/` | api-schema-authn-check | OpenAPIの全operationが認証を宣言している（operationか文書の`security`）、未定義のschemeを使わない、認証が要るoperationは401を書いている。`security: []`のoperationは公開として一覧に出す |
+
+`prototypes/`の認証の変更には認証のVerifierを置かない。実装前の人の承認、レベル3、2人の承認で止める。
+SBIがSecurity ruleを宣言したときは、SBIの許可ファイルか変更したファイルが入る領域のVerifierだけを必須にする。ADRなどの文書だけで認証・認可を記述した場合も、実装前の人の承認とレベル3の判定は必要になる。

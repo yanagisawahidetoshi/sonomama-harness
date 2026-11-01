@@ -71,7 +71,10 @@
       "minimumRiskLevel": 3,
       "requiredHumanApprovals": 2,
       "requiredVerifiers": [
-        "authn-test"
+        "rails-authn-test",
+        "admin-authn-test",
+        "mobile-authn-test",
+        "api-schema-authn-check"
       ],
       "policyDocument": "docs/security/authorization.md",
       "ignoredMetadataPatterns": [
@@ -461,11 +464,38 @@
       "kind": "pii-log"
     },
     {
-      "id": "authn-test",
+      "id": "rails-authn-test",
       "kind": "command",
-      "directory": ".",
+      "directory": "apps/api",
       "appliesTo": [
-        "^(apps|packages|prototypes)/"
+        "^apps/api/"
+      ],
+      "commands": []
+    },
+    {
+      "id": "admin-authn-test",
+      "kind": "command",
+      "directory": "apps/admin",
+      "appliesTo": [
+        "^apps/admin/"
+      ],
+      "commands": []
+    },
+    {
+      "id": "mobile-authn-test",
+      "kind": "command",
+      "directory": "apps/mobile",
+      "appliesTo": [
+        "^apps/mobile/"
+      ],
+      "commands": []
+    },
+    {
+      "id": "api-schema-authn-check",
+      "kind": "command",
+      "directory": "packages/api-schema",
+      "appliesTo": [
+        "^packages/api-schema/"
       ],
       "commands": []
     },
@@ -537,9 +567,9 @@
     {
       "id": "data-lifecycle-test",
       "kind": "command",
-      "directory": ".",
+      "directory": "apps/api",
       "appliesTo": [
-        "^(apps|packages|prototypes)/"
+        "^apps/api/"
       ],
       "commands": []
     }

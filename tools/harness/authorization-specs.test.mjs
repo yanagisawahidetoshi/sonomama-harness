@@ -255,7 +255,7 @@ describe('Rails security spec suites other than authorization (#165)', () => {
           await writeFile(join(root, file), content);
         }
         const sample = await readJson(join(root, '.harness/state/sample-sbi.json'));
-        await writeFile(join(root, '.harness/state/sbi-suite.json'), JSON.stringify({ ...sample, id: 'SBI-SUITE', allowedFiles: [path, ...Object.keys(specs)], requiredSecurityRules: [ruleId] }));
+        await writeFile(join(root, '.harness/state/sbi-suite.json'), JSON.stringify({ ...sample, id: 'SBI-SUITE', allowedFiles: [path, ...Object.keys(specs)], requiredSecurityRules: [ruleId], requiredVerifiers: [id] }));
         await commitFixture(root);
       };
       it(`when ${suite} specs come with it then the matrix runs ${id} and PASSes instead of reporting NOT_CONFIGURED`, () => fixture(async root => {
