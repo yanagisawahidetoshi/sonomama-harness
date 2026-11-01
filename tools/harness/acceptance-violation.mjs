@@ -21,7 +21,9 @@ const answerSchema = z.strictObject({
   violations: z.array(z.strictObject({ scenario: z.string(), files: z.array(z.strictObject({ path: z.string(), content: z.string() })) })),
   escalation: z.string().nullable(),
 });
-export const violationResponseSchema = z.toJSONSchema(answerSchema);
+// The claude CLI cannot resolve the draft 2020-12 meta-schema Zod names in $schema, so the schema goes without it.
+const { $schema: violationDraft, ...violationResponse } = z.toJSONSchema(answerSchema);
+export const violationResponseSchema = violationResponse;
 export const parseViolationAnswer = answer => answerSchema.safeParse(answer);
 
 export function violationPrompt({ sbiIssue, scenarios }) {

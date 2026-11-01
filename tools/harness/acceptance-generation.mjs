@@ -31,7 +31,9 @@ const answerSchema = z.strictObject({
   mapping: z.array(z.strictObject({ scenario: z.string(), acceptanceIds: z.array(z.string()), examples: z.array(z.strictObject({ path: z.string(), description: z.string() })) })),
   escalation: z.string().nullable(),
 });
-export const generationResponseSchema = z.toJSONSchema(answerSchema);
+// The claude CLI cannot resolve the draft 2020-12 meta-schema Zod names in $schema, so the schema goes without it.
+const { $schema: generationDraft, ...generationResponse } = z.toJSONSchema(answerSchema);
+export const generationResponseSchema = generationResponse;
 
 function prompt(spec, feedback = []) {
   return [
