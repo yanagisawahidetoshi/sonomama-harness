@@ -56,7 +56,10 @@ export function classifySecurity({ files = [], sbi = {}, legacySbi = false }, ra
     if (rule.categories.includes('Secret') && files.some(f => f.excludedSecret === true || isSecretPath(f.path) || hasSecret(`${f.added || ''}\n${f.deleted || ''}`))) matches.push({ source: 'secret-file-or-content' });
     if (matches.length) {
       rule.categories.forEach(c => impacts.add(c)); matchedRules.push(rule.id);
-      rule.requiredVerifiers.filter(id => applies(rule, id, matches)).forEach(id => required.add(id));
+      // #246 N2: a changed path the rule names (apps/ for SEC-AUTH-001) that none of its verifiers covers requires them all.
+      const scoped = rule.requiredVerifiers.filter(id => appliesTo.get(id));
+      const uncovered = changedPaths.some(path => (rule.uncoveredPathsRequireAllVerifiers || []).some(p => new RegExp(p).test(path)) && !scoped.some(id => covers(id, [path])));
+      rule.requiredVerifiers.filter(id => uncovered || applies(rule, id, matches)).forEach(id => required.add(id));
       gate ||= rule.preImplementationGate; minimum = Math.max(minimum, rule.minimumRiskLevel); approvals = Math.max(approvals, rule.requiredHumanApprovals);
       reasons.push({ ruleId: rule.id, policyDocument: rule.policyDocument, matches });
     }
@@ -151,8 +154,8 @@ export async function verifySecurity({ workspace, assessment, policy, config, he
     }
     if (adapter.kind === 'command') {
       const cwd = join(workspace, adapter.directory || '.');
-      const {status,reason,processes}=await runIsolated({workspace,adapter,config,cwd});
-      checks.push({id,verifier:id,required:true,status,...(reason&&{reason}),cwd,isolation:adapter.isolation||'container',processes});
+      const {status,reason,failure,phases,processes}=await runIsolated({workspace,adapter,config,cwd});
+      checks.push({id,verifier:id,required:true,status,...(reason&&{reason}),...(failure&&{failure}),...(phases&&{phases}),cwd,isolation:adapter.isolation||'container',processes});
     } else {
       const patterns = adapter.kind === 'secret' ? policy.secretPatterns : adapter.kind === 'pii-log' ? policy.piiLogPatterns : policy.forbiddenPatterns;
       // The SBI snapshot is Issue text the Harness wrote, not code: only secret-scan reads it (#184).

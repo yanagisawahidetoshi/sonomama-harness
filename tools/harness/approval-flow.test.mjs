@@ -93,7 +93,7 @@ describe('Workspace and verifier registry', () => {
       await writeFile(join(root, 'apps/admin/package.json'), '{"private":true}');
       await writeFile(join(root, 'apps/admin/message.txt'), 'root');
       await update(root, sbiPath, s => s.allowedFiles.push('apps/admin/message.txt'));
-      await update(root, '.harness/config/harness.json', c => c.verifiers.find(v => v.id === 'admin').commands = [['node', '-e', 'require("node:assert/strict").equal(require("node:fs").readFileSync("message.txt", "utf8"), "workspace")']]);
+      await update(root, '.harness/config/harness.json', c => Object.assign(c.verifiers.find(v => v.id === 'admin'), { setupCommands: [], commands: [['node', '-e', 'require("node:assert/strict").equal(require("node:fs").readFileSync("message.txt", "utf8"), "workspace")']] }));
       const run = await runHarness({ root, quiet: true, agent: async () => ({ files: [{ path: 'greeting.mjs', content: good }, { path: 'apps/admin/message.txt', content: 'workspace' }] }) });
       assert.equal(run.executionStatus, 'DONE');
       assert.equal(run.iterations[0].verification.checks.find(c => c.id === 'admin').status, 'PASS');
