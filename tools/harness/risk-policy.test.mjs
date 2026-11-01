@@ -243,3 +243,28 @@ describe('Risk contract for prototype lanes', () => {
     });
   });
 });
+
+// #233: the SBI metadata or its committed snapshot that only negates authentication stays at the default level.
+describe('PR risk rules on text that states no authentication is needed', () => {
+  it('when the SBI metadata only says the endpoint needs no authentication then stays at level 1', () => {
+    const result = assessRisk({ files: [], metadata: { title: 'Health', description: '認証不要の GET /api/v1/health を実装する。', acceptanceCriteria: [{ id: 'AC-1', description: '認証ヘッダや Cookie を付けないリクエストでも HTTP 200 が返る' }] }, humanGate: false }, policy);
+    assert.equal(result.level, 1);
+  });
+  it('when the committed snapshot has an unauthenticated client scenario then stays at level 1', () => {
+    assert.equal(risk([file('.harness/state/sbi-233.json', 'Scenario: 未認証クライアントが疎通確認できる\nGiven 認証ヘッダも Cookie も持たないクライアント', { verifiedSbiSnapshot: true })]).level, 1);
+  });
+  it('when the SBI metadata makes an existing endpoint public then is level 3', () => {
+    assert.equal(assessRisk({ files: [], metadata: { description: '既存の GET /api/v1/courses を認証不要にする。' }, humanGate: false }, policy).level, 3);
+  });
+  for (const description of [
+    '既存の GET /api/v1/courses を未認証クライアントでも呼べるようにする。',
+    '既存の GET /api/v1/courses を未認証クライアントでもアクセス可能にする。',
+    '既存の GET /api/v1/courses に認証なしでアクセスできるようにする。',
+  ]) {
+    it(`when the SBI metadata says "${description}" then is level 3`, () => assert.equal(assessRisk({ files: [], metadata: { description }, humanGate: false }, policy).level, 3));
+  }
+  it('when the SBI metadata only says an unauthenticated client can reach the health check then stays at level 1', () => {
+    assert.equal(assessRisk({ files: [], metadata: { description: '未認証クライアントでも疎通確認できる。' }, humanGate: false }, policy).level, 1);
+  });
+  it('when changed code mentions authentication then is level 3', () => assert.equal(risk([file('apps/api/app/models/session.rb', '# authentication for admins')]).level, 3));
+});
