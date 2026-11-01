@@ -736,7 +736,7 @@ describe('CI Completion Judge for a legacy hand-written SBI (#217)', () => {
     it('when its words mention 認証 and JWT then the Security check does not require the authentication test', async () => fixture(async root => {
       await edit(root, '.harness/state/sbi-api-env.json');
       const result = await runCompletionJudge({ root, base: 'main', needs });
-      assert.equal(result.security.requiredVerifiers.includes('authn-test'), false, JSON.stringify(result.security.reasons ?? result.security));
+      assert.deepEqual(result.security.requiredVerifiers.filter(id => /authn/.test(id)), [], JSON.stringify(result.security.reasons ?? result.security));
     }));
   });
 

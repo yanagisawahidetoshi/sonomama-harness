@@ -7,6 +7,10 @@ import { securityPolicySchema } from './schemas.mjs';
 const policy = JSON.parse(await readFile(new URL('../../.harness/rules/security.json', import.meta.url), 'utf8'));
 const assess = files => classifySecurity({ files, sbi: {} }, policy);
 const detected = (result, ruleId) => result.matchedRules.includes(ruleId);
+// SEC-AUTH-001 is verified by the authentication verifier of the area that changed; prototypes have none (#165).
+const authnVerifiers = { 'apps/api/': 'rails-authn-test', 'apps/admin/': 'admin-authn-test', 'apps/mobile/': 'mobile-authn-test', 'packages/api-schema/': 'api-schema-authn-check' };
+const authnVerifier = path => Object.entries(authnVerifiers).find(([prefix]) => path.startsWith(prefix))?.[1];
+const requiresNoAuthn = result => Object.values(authnVerifiers).every(id => !result.requiredVerifiers.includes(id));
 
 describe('Security Impact Classifier on Markdown citations', () => {
   describe('given a Markdown document that names security files and rule IDs', () => {
@@ -70,10 +74,10 @@ describe('Security Impact Classifier on its own implementation and fixture', () 
 });
 
 describe('Security Impact Classifier on the scope of application security verifiers', () => {
-  const applicationVerifiers = ['authn-test', 'rails-authz-test', 'rails-rls-test', 'migration-safety', 'data-lifecycle-test'];
+  const applicationVerifiers = [...Object.values(authnVerifiers), 'rails-authz-test', 'rails-rls-test', 'migration-safety', 'data-lifecycle-test'];
   describe('given an ADR whose prose describes AuthN, AuthZ, RLS, roles, schema, retention or the production API', () => {
     for (const [ruleId, verifier, prose] of [
-      ['SEC-AUTH-001', 'authn-test', 'Users authenticate with Cognito.'],
+      ['SEC-AUTH-001', 'rails-authn-test', 'Users authenticate with Cognito.'],
       ['SEC-AUTHZ-001', 'rails-authz-test', 'This endpoint requires authorization.'],
       ['SEC-RLS-001', 'rails-rls-test', 'Tenants are isolated with ROW LEVEL SECURITY.'],
       ['SEC-ROLE-001', 'rails-authz-test', 'Each member has a role_id.'],
@@ -112,8 +116,9 @@ describe('Security Impact Classifier on the scope of application security verifi
       ]);
       assert.equal(result.requiredVerifiers.includes('rails-authz-test'), false);
     });
-    it('when the SBI declares the AuthZ impact then still requires the authorization test', () => {
-      const result = classifySecurity({ files: [{ path: 'docs/adr/0002-foo.md', status: 'A', added: 'This endpoint requires authorization.' }], sbi: { securityImpact: ['AuthZ'] } }, policy);
+    // An SBI declaration requires the verifiers whose appliesTo covers the SBI's files or the diff, not every verifier of the rule (#165).
+    it('when the SBI declares the AuthZ impact for API files then still requires the authorization test', () => {
+      const result = classifySecurity({ files: [{ path: 'docs/adr/0002-foo.md', status: 'A', added: 'This endpoint requires authorization.' }], sbi: { securityImpact: ['AuthZ'], allowedFiles: ['apps/api/app/policies/lesson_policy.rb'] } }, policy);
       assert.ok(result.requiredVerifiers.includes('rails-authz-test'));
     });
   });
@@ -137,8 +142,7 @@ describe('Security Impact Classifier on the scope of application security verifi
       ['apps/api/app/models/membership.rb', 'belongs_to :role_id', 'rails-authz-test'],
       ['apps/api/db/rls.sql', 'CREATE POLICY tenant ON lessons', 'rails-rls-test'],
       ['apps/admin/db/migrate/001_lessons.rb', 'class Lessons; end', 'migration-safety'],
-      ['apps/mobile/src/features/auth/index.ts', 'export const signIn = () => null;', 'authn-test'],
-      ['prototypes/web/src/auth/login.ts', 'export const signIn = () => null;', 'authn-test'],
+      ['apps/mobile/src/features/auth/index.ts', 'export const signIn = () => null;', 'mobile-authn-test'],
       ['apps/api/app/jobs/purge_job.rb', 'Lesson.destroy_all', 'data-lifecycle-test'],
     ]) {
       it(`when ${path} changes then requires ${verifier}`, () => {
@@ -163,7 +167,7 @@ describe('Security Impact Classifier on OpenAPI structure names in the API contr
     it('when unsupported.rb adds securitySchemes to the list then does not match SEC-AUTH-001 or require the authentication test', () => {
       const result = assess([{ path: contract, status: 'M', added: names }]);
       assert.equal(detected(result, 'SEC-AUTH-001'), false);
-      assert.equal(result.requiredVerifiers.includes('authn-test'), false);
+      assert.ok(requiresNoAuthn(result));
     });
     it('when the list is removed then still does not match SEC-AUTH-001', () => {
       assert.equal(detected(assess([{ path: contract, status: 'M', deleted: names }]), 'SEC-AUTH-001'), false);
@@ -221,7 +225,7 @@ describe('Security Impact Classifier on OpenAPI structure names in the API contr
       it(`when ${path} adds ${added.split('\n').at(-1).trim()} then matches SEC-AUTH-001 and requires the authentication test`, () => {
         const result = assess([{ path, status: 'M', added }]);
         assert.ok(detected(result, 'SEC-AUTH-001'));
-        assert.ok(result.requiredVerifiers.includes('authn-test'));
+        assert.ok(result.requiredVerifiers.includes(authnVerifier(path)));
       });
     }
     it('when openapi.yaml removes the bearer requirement then matches SEC-AUTH-001', () => {
@@ -279,7 +283,7 @@ describe('Security Impact Classifier on authentication filters named with the au
       it(`when ${controller} ${name} then matches SEC-AUTH-001 and requires the authentication test`, () => {
         const result = assess([{ path: controller, status: 'M', ...change }]);
         assert.ok(detected(result, 'SEC-AUTH-001'));
-        assert.ok(result.requiredVerifiers.includes('authn-test'));
+        assert.ok(result.requiredVerifiers.includes(authnVerifier(controller)));
       });
     }
     it('when config/routes.rb adds a Devise authenticated :user block then matches SEC-AUTH-001', () => {
@@ -350,7 +354,7 @@ describe('Security Impact Classifier on the security requirement of an OpenAPI d
       it(`when ${openapi} ${name} then matches SEC-AUTH-001 and requires the authentication test`, () => {
         const result = assess([{ path: openapi, status: 'M', ...change }]);
         assert.ok(detected(result, 'SEC-AUTH-001'));
-        assert.ok(result.requiredVerifiers.includes('authn-test'));
+        assert.ok(result.requiredVerifiers.includes(authnVerifier(openapi)));
       });
     }
     it('when a JSON OpenAPI document adds "security": [] then matches SEC-AUTH-001', () => {
@@ -380,15 +384,15 @@ describe('Security Impact Classifier on a legacy SBI and Trusted Acceptance that
     it('when it is classified as a legacy SBI then does not match SEC-AUTH-001 or require the authentication test', () => {
       const result = classify(legacy, true);
       assert.equal(detected(result, 'SEC-AUTH-001'), false);
-      assert.equal(result.requiredVerifiers.includes('authn-test'), false);
+      assert.ok(requiresNoAuthn(result));
     });
     it('when the same SBI is not a legacy SBI then still matches SEC-AUTH-001 by its words', () => {
       assert.ok(detected(classify(legacy, false), 'SEC-AUTH-001'));
     });
     it('when the legacy SBI declares SEC-AUTH-001 then still matches it and requires the authentication test', () => {
-      const result = classify({ ...legacy, requiredSecurityRules: ['SEC-AUTH-001'] }, true);
+      const result = classify({ ...legacy, requiredSecurityRules: ['SEC-AUTH-001'], allowedFiles: ['apps/api/config/application.rb'] }, true);
       assert.ok(detected(result, 'SEC-AUTH-001'));
-      assert.ok(result.requiredVerifiers.includes('authn-test'));
+      assert.ok(result.requiredVerifiers.includes('rails-authn-test'));
     });
     it('when the legacy SBI declares the AuthN impact then still matches SEC-AUTH-001', () => {
       assert.ok(detected(classify({ ...legacy, securityImpact: ['AuthN'] }, true), 'SEC-AUTH-001'));
@@ -569,7 +573,7 @@ describe('Security Impact Classifier on Rails 8, Devise and HTTP authentication 
       it(`when ${controller} ${name} then matches SEC-AUTH-001 and requires the authentication test`, () => {
         const result = assess([{ path: controller, status: 'M', ...change }]);
         assert.ok(detected(result, 'SEC-AUTH-001'));
-        assert.ok(result.requiredVerifiers.includes('authn-test'));
+        assert.ok(result.requiredVerifiers.includes(authnVerifier(controller)));
       });
     }
     for (const added of ['devise :database_authenticatable, :registerable', 'devise :token_authenticatable', 'include Devise::Models::Authenticatable']) {
@@ -601,7 +605,7 @@ describe('Security Impact Classifier on Devise routes, Devise models, has_secure
       it(`when ${path} ${name} then matches SEC-AUTH-001 and requires the authentication test`, () => {
         const result = assess([{ path, status: 'M', ...change }]);
         assert.ok(detected(result, 'SEC-AUTH-001'));
-        assert.ok(result.requiredVerifiers.includes('authn-test'));
+        assert.ok(result.requiredVerifiers.includes(authnVerifier(path)));
       });
     }
   });

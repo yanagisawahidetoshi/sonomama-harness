@@ -168,3 +168,115 @@ describe('rails-authz-test in the CI verifier matrix', () => {
     }));
   });
 });
+
+// #165: the AuthN, RLS and data lifecycle rules of the API are verified the same way as authorization, each by its own spec directory.
+describe('Rails security spec suites other than authorization (#165)', () => {
+  for (const [suite, id, ruleId, path, added] of [
+    ['authentication', 'rails-authn-test', 'SEC-AUTH-001', 'apps/api/app/controllers/application_controller.rb', 'before_action :authenticate_user!'],
+    ['rls', 'rails-rls-test', 'SEC-RLS-001', 'apps/api/db/rls.sql', 'CREATE POLICY tenant ON lessons'],
+    ['data_lifecycle', 'data-lifecycle-test', 'SEC-DESTRUCTIVE-001', 'apps/api/app/jobs/purge_job.rb', 'Lesson.destroy_all'],
+  ]) {
+    const directory = `apps/api/spec/${suite}`;
+    const suiteSpec = `${directory}/lessons_spec.rb`;
+    const verifier = config.securityVerifiers.find(v => v.id === id);
+    describe(`given the ${suite} spec directory of a repository`, () => {
+      it(`when no ${suite} spec exists then FAILs and names ${directory}`, () => fixture(async root => {
+        const result = await checkAuthorizationSpecs({ root, directory });
+        assert.equal(result.status, 'FAIL');
+        assert.match(result.errors.join('\n'), new RegExp(directory));
+      }));
+      it(`when a ${suite} spec skips an example then FAILs and names the file, line and marker`, () => fixture(async root => {
+        await mkdir(join(root, directory), { recursive: true });
+        await writeFile(join(root, suiteSpec), spec('  pending "not decided yet"'));
+        const result = await checkAuthorizationSpecs({ root, directory });
+        assert.equal(result.status, 'FAIL');
+        assert.deepEqual(result.findings, [{ path: suiteSpec, line: 4, marker: 'pending' }]);
+      }));
+      it(`when a ${suite} spec exists and every example runs then PASSes`, () => fixture(async root => {
+        await mkdir(join(root, directory), { recursive: true });
+        await writeFile(join(root, suiteSpec), examples);
+        assert.deepEqual(await checkAuthorizationSpecs({ root, directory }), { status: 'PASS', specs: [suiteSpec], findings: [], errors: [] });
+      }));
+      it(`when only an authorization spec exists then the ${suite} suite still FAILs`, () => fixture(async root => {
+        await mkdir(join(root, 'apps/api/spec/authorization'), { recursive: true });
+        await writeFile(join(root, specPath), examples);
+        assert.equal((await checkAuthorizationSpecs({ root, directory })).status, 'FAIL');
+      }));
+    });
+    describe(`given the command line entry point with the ${suite} suite`, () => {
+      it(`when no ${suite} spec exists then exits non-zero and names ${directory}`, () => fixture(async root => {
+        const result = await execute(process.execPath, [script, suite], { cwd: root });
+        assert.equal(result.code, 1);
+        assert.match(result.stdout + result.stderr, new RegExp(directory));
+      }));
+      it(`when a ${suite} spec exists then exits zero`, () => fixture(async root => {
+        await mkdir(join(root, directory), { recursive: true });
+        await writeFile(join(root, suiteSpec), examples);
+        assert.equal((await execute(process.execPath, [script, suite], { cwd: root })).code, 0);
+      }));
+    });
+    describe(`given the shipped ${id} Security Verifier`, () => {
+      it('when it is looked up then it is a configured command verifier whose first step is the static check of its suite', () => {
+        assert.ok(verifier?.commands.length > 0, id);
+        assert.deepEqual(verifier.commands[0], ['node', script, suite]);
+      });
+      it('when its Rails commands run then they target only the local test database and never production', () => {
+        const runs = verifier.commands.filter(c => c[0] === 'docker' && c.includes('run'));
+        assert.ok(runs.length > 0);
+        for (const command of runs) {
+          assert.ok(command.includes('RAILS_ENV=test'), command.join(' '));
+          assert.ok(command.some(arg => /^DATABASE_URL=postgres:\/\/postgres@db:5432\/[a-z_]+_test$/.test(arg)), command.join(' '));
+          assert.equal(command.join(' ').includes('production'), false, command.join(' '));
+        }
+      });
+      it(`when its Rails commands run then the database is prepared before only spec/${suite} runs, failing on zero examples`, () => {
+        const tasks = verifier.commands.filter(c => c[0] === 'docker' && c.includes('run')).map(c => c.slice(c.indexOf('api') + 1).join(' '));
+        const prepare = tasks.indexOf('bin/rails db:prepare');
+        const rspec = tasks.indexOf(`bundle exec ruby -e require "rspec/core"; RSpec.configure { |c| c.fail_if_no_examples = true }; exit RSpec::Core::Runner.run(["spec/${suite}"])`);
+        assert.ok(prepare >= 0 && rspec > prepare, tasks.join(' | '));
+      });
+      it('when its commands finish then the containers are stopped', () => {
+        assert.deepEqual(verifier.commands.at(-1), ['docker', 'compose', '-f', 'compose.yaml', 'down']);
+      });
+    });
+    describe(`given a change to the API that matches ${ruleId}`, () => {
+      it(`when classified then requires ${id}`, () => {
+        assert.ok(classifySecurity({ files: [{ path, status: 'M', added }], sbi: { risks: [], acceptanceCriteria: [] } }, policy).requiredVerifiers.includes(id));
+      });
+    });
+    describe(`given a Production pull request that changes the API under ${ruleId}`, () => {
+      const pullRequest = async (root, specs) => {
+        await update(root, '.harness/config/harness.json', c => { c.securityVerifiers.find(v => v.id === id).commands = [['node', script, suite]]; });
+        await commitFixture(root);
+        await mkdir(join(root, path, '..'), { recursive: true });
+        await writeFile(join(root, path), `${added}\n`);
+        for (const [file, content] of Object.entries(specs)) {
+          await mkdir(join(root, file, '..'), { recursive: true });
+          await writeFile(join(root, file), content);
+        }
+        const sample = await readJson(join(root, '.harness/state/sample-sbi.json'));
+        await writeFile(join(root, '.harness/state/sbi-suite.json'), JSON.stringify({ ...sample, id: 'SBI-SUITE', allowedFiles: [path, ...Object.keys(specs)], requiredSecurityRules: [ruleId] }));
+        await commitFixture(root);
+      };
+      it(`when ${suite} specs come with it then the matrix runs ${id} and PASSes instead of reporting NOT_CONFIGURED`, () => fixture(async root => {
+        await pullRequest(root, { [suiteSpec]: examples });
+        const { impact, result, passed } = await runVerifier({ root, base: 'HEAD~1', id });
+        assert.ok(impact.requiredVerifiers.includes(id));
+        assert.deepEqual(result.checks.map(c => [c.id, c.status]), [[id, 'PASS']]);
+        assert.equal(passed, true);
+      }));
+      it(`when no ${suite} spec exists then the matrix FAILs`, () => fixture(async root => {
+        await pullRequest(root, {});
+        const { result, passed } = await runVerifier({ root, base: 'HEAD~1', id });
+        assert.deepEqual(result.checks.map(c => [c.id, c.status]), [[id, 'FAIL']]);
+        assert.equal(passed, false);
+      }));
+    });
+  }
+  describe('given the command line entry point with a suite that is not a Rails security suite', () => {
+    it('when it runs then exits non-zero instead of checking an arbitrary directory', () => fixture(async root => {
+      const result = await execute(process.execPath, [script, '../../etc'], { cwd: root });
+      assert.notEqual(result.code, 0);
+    }));
+  });
+});
