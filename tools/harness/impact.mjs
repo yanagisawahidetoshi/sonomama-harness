@@ -25,7 +25,7 @@ const generatedId = /^generated-acceptance-sbi-([1-9]\d*)$/;
 export const acceptanceResultsDirectory = '.acceptance-ci/results';
 const firstMatch = (patterns = [], files) => files.find(f => patterns.some(p => new RegExp(p).test(f.path)))?.path;
 
-export function analyzeImpact({ config, sbis = [], runSbis = [], files = [], all = false }) {
+export function analyzeImpact({ config, sbis = [], runSbis = [], files = [], all = false, securityVerifiers = [] }) {
   const verifiers = new Map();
   const select = (id, reason, mandatory) => {
     const entry = verifiers.get(id) ?? { id, mandatory: false, reasons: [] };
@@ -42,6 +42,8 @@ export function analyzeImpact({ config, sbis = [], runSbis = [], files = [], all
     // Generated Trusted Acceptance runs PR code (#147), so its specs run in the verifier matrix and the Completion Judge only reads the report.
     for (const id of new Set(s.acceptanceCriteria.map(a => a.verifier).filter(id => generatedId.test(id)))) select(id, `sbi:${s.id} generated acceptance`, true);
   }
+  // A command verifier a Security rule requires runs in the matrix whether or not the SBI lists it (#165).
+  for (const id of securityVerifiers) select(id, 'security', true);
   const fromSbi = new Set(verifiers.keys());
   for (const v of apps) {
     const path = firstMatch(v.appliesTo, files);
@@ -158,12 +160,19 @@ export async function changedSbis(root, files) {
 
 // The config and rules come from root; the diff and the SBI JSON from workspace. They are one tree except in the trusted Judge (ADR-0008),
 // where root is main and workspace the PR head read as data.
+// A changed legacy SBI is a document being edited, not the SBI this PR implements; its declarations still count (#217).
+const assessSecurity = ({ files, sbis, snapshots, policy }) =>
+  combineSecurity(classifySecurity({ files }, policy), ...sbis.map(sbi => classifySecurity({ files, sbi, legacySbi: !snapshots.some(s => s.snapshot.sbi === sbi) }, policy)));
 export async function loadImpact({ root, workspace = root, base, all = false }) {
   const files = all ? [] : await changedFiles(workspace, base);
   const { sbis, snapshots } = await readSbiFiles(workspace, files);
   // Each Run snapshot brings the Trusted Acceptance of its own SBI Issue only (.harness/acceptance/sbi-<N>.json).
   const config = await withAcceptance(root, configSchema.parse(await readJson(join(root, '.harness/config/harness.json'))), snapshots.map(s => s.snapshot.source.number), workspace);
-  return { config, files, sbis, snapshots, impact: analyzeImpact({ config, sbis, runSbis: snapshots.map(s => s.snapshot.sbi), files, all }) };
+  const policy = securityPolicySchema.parse(await readJson(join(root, '.harness/rules/security.json')));
+  // Only connected command verifiers go to the matrix; an unconnected one stays NOT_CONFIGURED in the judge and fails there.
+  const connected = new Set(config.securityVerifiers.filter(v => v.commands.length).map(v => v.id));
+  const securityVerifiers = assessSecurity({ files, sbis, snapshots, policy }).requiredVerifiers.filter(id => connected.has(id));
+  return { config, files, sbis, snapshots, impact: analyzeImpact({ config, sbis, runSbis: snapshots.map(s => s.snapshot.sbi), files, all, securityVerifiers }) };
 }
 
 // The matrix job: one verifier, mandatory only when an SBI asked for it, so a cross-layer contract without a document stays a placeholder SKIP.
@@ -255,12 +264,11 @@ export async function runCompletionJudge({ root, workspace = root, base, all = f
   }
   const acceptance = { status: !sbis.length || (checksPassed(checks) && !missing.length) ? 'PASS' : 'FAIL', missing };
   const policy = securityPolicySchema.parse(await readJson(join(root, '.harness/rules/security.json')));
-  // A changed legacy SBI is a document being edited, not the SBI this PR implements; its declarations still count (#217).
-  const assessment = combineSecurity(classifySecurity({ files }, policy), ...sbis.map(sbi => classifySecurity({ files, sbi, legacySbi: !snapshots.some(s => s.snapshot.sbi === sbi) }, policy)));
-  // Application verifiers an SBI requires ran in the matrix job, which succeeds only when every one of them passed.
+  const assessment = assessSecurity({ files, sbis, snapshots, policy });
+  // Application verifiers an SBI requires and command verifiers a Security rule requires ran in the matrix job, which succeeds only when every one of them passed.
   const matrix = impact.requiredVerifiers.map(id => ({ id, status: needs.verifiers?.result === 'success' ? 'PASS' : 'FAIL', reason: `verifier matrix: ${needs.verifiers?.result ?? 'missing'}` }));
   const changed = all ? await trackedContent(workspace) : await changedContent(workspace, files);
-  const security = await verifySecurity({ workspace, sbi: {}, assessment, policy, config, headSha, verification: { checks: [...checks, ...matrix] }, changed, entries: all ? changed.length : files.length });
+  const security = await verifySecurity({ workspace, sbi: {}, assessment, policy, config, headSha, verification: { checks: [...checks, ...matrix] }, changed, entries: all ? changed.length : files.length, runCommands: false });
   // A trusted bot's dependency PR lifts the source requirement only; everything above and judgeCi stay as they are.
   const exemption = impact.sbiRequired && pullNumber !== undefined
     ? await dependencyBotExemption({ policy: dependencyBotPolicySchema.parse(await readJson(join(root, '.harness/rules/dependency-bots.json'))), files, headSha, repository, pullNumber, github })
