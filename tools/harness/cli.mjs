@@ -170,7 +170,7 @@ try {
       if (!workspace || workspace === resolve(root)) throw new Error('judge --trusted requires HARNESS_WORKSPACE, a PR tree apart from the Harness root');
       if (!base) throw new Error('judge --trusted requires --base REF');
       const judged = await runTrustedJudge({ root, workspace, base, repository: process.env.GITHUB_REPOSITORY, pullNumber: process.env.HARNESS_PULL_REQUEST || undefined,
-        eventName: process.env.GITHUB_EVENT_NAME || undefined, headSha: process.env.HARNESS_HEAD_SHA ?? '', log: line => console.log(redactText(line)) });
+        eventName: process.env.GITHUB_EVENT_NAME || undefined, headSha: process.env.HARNESS_HEAD_SHA ?? '', baseSha: process.env.HARNESS_BASE_SHA || undefined, log: line => console.log(redactText(line)) });
       if (judged.run) console.log(`Evidence: run ${judged.run.id} attempt ${judged.run.run_attempt} of ${judged.run.path}`);
       if (judged.checks) {
         for (const line of describeImpact(judged.impact)) console.log(redactText(line));
@@ -186,7 +186,8 @@ try {
     } else {
       const needs = JSON.parse(process.env.HARNESS_NEEDS || '{}');
       // Set only on pull_request events; a trusted dependency bot PR and a Harness PR are read from GitHub by this number (#220: missing on such an event fails).
-      const judged = await runCompletionJudge({ root, base, all, needs, pullNumber: process.env.HARNESS_PULL_REQUEST || undefined, eventName: process.env.GITHUB_EVENT_NAME || undefined, maestroResults: process.env.HARNESS_MAESTRO_RESULTS || undefined, expectedHeadSha: process.env.HARNESS_HEAD_SHA ?? '', ...acceptanceResults() });
+      const judged = await runCompletionJudge({ root, base, all, needs, pullNumber: process.env.HARNESS_PULL_REQUEST || undefined, eventName: process.env.GITHUB_EVENT_NAME || undefined, maestroResults: process.env.HARNESS_MAESTRO_RESULTS || undefined, expectedHeadSha: process.env.HARNESS_HEAD_SHA ?? '',
+        expectedBaseSha: process.env.HARNESS_BASE_SHA || undefined, ...acceptanceResults() });
       for (const line of describeImpact(judged.impact)) console.log(redactText(line));
       for (const line of describeSbiSource(judged.source)) console.log(redactText(line));
       for (const c of [...judged.checks, ...judged.security.checks.filter(c => c.required)]) console.log(redactText(`${c.id}: ${c.status}${c.reason ? ` (${c.reason})` : ''}`));
