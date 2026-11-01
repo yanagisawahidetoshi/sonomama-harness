@@ -120,16 +120,19 @@ describe('Security cannot be overridden by completion or approval', () => {
 });
 
 describe('Security enforcement in the execution loop', () => {
+  // #165: a declared rule requires the verifiers whose appliesTo covers the SBI's paths, so the SBI also allows an API directory.
+  const rlsSbi = s => { s.securityImpact = ['RLS']; s.allowedDirs = ['apps/api/db/']; };
   describe('given RLS metadata and no installed RLS verifier', () => {
     it('when the approved SBI runs then reports NOT_CONFIGURED and never DONE', () => fixture(async root => {
-      await update(root, '.harness/state/sample-sbi.json', s => s.securityImpact = ['RLS']);
+      await update(root, '.harness/state/sample-sbi.json', rlsSbi);
+      await update(root, '.harness/config/harness.json', c => { c.securityVerifiers = c.securityVerifiers.filter(v => v.id !== 'rails-rls-test'); });
       const run = await runHarness({ root, quiet: true });
       assert.notEqual(run.executionStatus, 'DONE');
       const evidence = await readJson(join(root, run.runDir, 'security-verification.json'));
       assert.equal(evidence.checks.find(c => c.id === 'rails-rls-test').status, 'NOT_CONFIGURED');
     }));
     it('when a trusted RLS command is configured then verifies it and still requires two merge reviewers', () => fixture(async root => {
-      await update(root, '.harness/state/sample-sbi.json', s => s.securityImpact = ['RLS']);
+      await update(root, '.harness/state/sample-sbi.json', rlsSbi);
       await update(root, '.harness/config/harness.json', c => c.securityVerifiers = [{ id: 'rails-rls-test', directory: 'apps/api', commands: [['node', '-e', 'require("node:assert/strict").ok(true)']] }]);
       const run = await runHarness({ root, quiet: true });
       let resumed = run;

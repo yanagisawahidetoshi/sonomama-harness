@@ -70,7 +70,7 @@ describe('Security Impact Classifier on its own implementation and fixture', () 
 });
 
 describe('Security Impact Classifier on the scope of application security verifiers', () => {
-  const applicationVerifiers = ['authn-test', 'rails-authz-test', 'rails-rls-test', 'migration-safety', 'data-lifecycle-test'];
+  const applicationVerifiers = ['authn-test', 'admin-authn-test', 'mobile-authn-test', 'rails-authz-test', 'rails-rls-test', 'migration-safety', 'data-lifecycle-test'];
   describe('given an ADR whose prose describes AuthN, AuthZ, RLS, roles, schema, retention or the production API', () => {
     for (const [ruleId, verifier, prose] of [
       ['SEC-AUTH-001', 'authn-test', 'Users authenticate with Cognito.'],
@@ -112,9 +112,14 @@ describe('Security Impact Classifier on the scope of application security verifi
       ]);
       assert.equal(result.requiredVerifiers.includes('rails-authz-test'), false);
     });
-    it('when the SBI declares the AuthZ impact then still requires the authorization test', () => {
+    // #165: a rule the SBI declares keeps its gate, LEVEL and approvals, but only a changed path in a verifier's appliesTo requires that verifier.
+    it('when the SBI declares the AuthZ impact but changes only an ADR then keeps the gate, LEVEL 3 and two approvals without requiring the authorization test', () => {
       const result = classifySecurity({ files: [{ path: 'docs/adr/0002-foo.md', status: 'A', added: 'This endpoint requires authorization.' }], sbi: { securityImpact: ['AuthZ'] } }, policy);
-      assert.ok(result.requiredVerifiers.includes('rails-authz-test'));
+      assert.ok(detected(result, 'SEC-AUTHZ-001'));
+      assert.equal(result.requiresPreImplementationGate, true);
+      assert.equal(result.minimumRiskLevel, 3);
+      assert.equal(result.requiredHumanApprovals, 2);
+      assert.equal(result.requiredVerifiers.includes('rails-authz-test'), false);
     });
   });
   describe('given a change to the authorization implementation of the API', () => {
@@ -137,8 +142,9 @@ describe('Security Impact Classifier on the scope of application security verifi
       ['apps/api/app/models/membership.rb', 'belongs_to :role_id', 'rails-authz-test'],
       ['apps/api/db/rls.sql', 'CREATE POLICY tenant ON lessons', 'rails-rls-test'],
       ['apps/admin/db/migrate/001_lessons.rb', 'class Lessons; end', 'migration-safety'],
-      ['apps/mobile/src/features/auth/index.ts', 'export const signIn = () => null;', 'authn-test'],
-      ['prototypes/web/src/auth/login.ts', 'export const signIn = () => null;', 'authn-test'],
+      ['apps/api/app/controllers/sessions_controller.rb', 'before_action :authenticate_user!', 'authn-test'],
+      ['apps/admin/src/features/auth/index.ts', 'export const signIn = () => null;', 'admin-authn-test'],
+      ['apps/mobile/src/features/auth/index.ts', 'export const signIn = () => null;', 'mobile-authn-test'],
       ['apps/api/app/jobs/purge_job.rb', 'Lesson.destroy_all', 'data-lifecycle-test'],
     ]) {
       it(`when ${path} changes then requires ${verifier}`, () => {
@@ -146,12 +152,97 @@ describe('Security Impact Classifier on the scope of application security verifi
       });
     }
   });
+  describe('given authentication changes of one application (#165)', () => {
+    const authn = ['authn-test', 'admin-authn-test', 'mobile-authn-test'];
+    const required = result => authn.filter(id => result.requiredVerifiers.includes(id));
+    for (const [path, verifier] of [
+      ['apps/api/app/controllers/concerns/authentication.rb', 'authn-test'],
+      ['apps/admin/src/features/auth/hooks/useSignIn.ts', 'admin-authn-test'],
+      ['apps/mobile/src/features/auth/hooks/useSignIn.ts', 'mobile-authn-test'],
+    ]) {
+      it(`when only ${path} changes then requires ${verifier} and no authentication test of another application`, () => {
+        assert.deepEqual(required(assess([{ path, status: 'A', added: 'export const signIn = () => null;' }])), [verifier]);
+      });
+    }
+    it('when a prototype changes its login then keeps SEC-AUTH-001 with the gate, LEVEL 3 and two approvals without requiring an application authentication test', () => {
+      const result = assess([{ path: 'prototypes/web/src/auth/login.ts', status: 'A', added: 'export const signIn = () => null;' }]);
+      assert.ok(detected(result, 'SEC-AUTH-001'));
+      assert.equal(result.requiresPreImplementationGate, true);
+      assert.equal(result.minimumRiskLevel, 3);
+      assert.equal(result.requiredHumanApprovals, 2);
+      assert.deepEqual(required(result), []);
+    });
+  });
   describe('given the builtin security verifiers', () => {
     it('when the policy is read then none of them is limited to a path', () => {
       for (const v of policy.verifiers.filter(v => v.kind !== 'command')) assert.equal(v.appliesTo, undefined, v.id);
     });
     it('when the policy is read then every command verifier a rule requires names the paths it applies to', () => {
       for (const id of applicationVerifiers) assert.ok(policy.verifiers.find(v => v.id === id).appliesTo?.length, id);
+    });
+  });
+});
+
+describe('Security Impact Classifier on the verifiers a rule declared by the SBI requires (#165)', () => {
+  const authn = ['authn-test', 'admin-authn-test', 'mobile-authn-test'];
+  const required = result => authn.filter(id => result.requiredVerifiers.includes(id));
+  const admin = [{ path: 'apps/admin/src/features/home/HomePage/index.tsx', status: 'M', added: 'export const HomePage = () => null;' }];
+  const keepsGate = result => {
+    assert.equal(result.requiresPreImplementationGate, true);
+    assert.equal(result.minimumRiskLevel, 3);
+    assert.equal(result.requiredHumanApprovals, 2);
+  };
+  for (const [source, sbi] of [
+    ['requiredSecurityRules', { requiredSecurityRules: ['SEC-AUTH-001'] }],
+    ['securityImpact', { securityImpact: ['AuthN'] }],
+    ['the SBI text', { title: '管理画面のログイン画面', acceptanceCriteria: [{ id: 'AC-1', description: '管理者は認証してから一覧を見る' }] }],
+  ]) {
+    describe(`given an SBI that brings SEC-AUTH-001 by ${source}`, () => {
+      it('when it changes only the admin then requires the admin authentication test and not the API or mobile ones', () => {
+        const result = classifySecurity({ files: admin, sbi }, policy);
+        assert.ok(detected(result, 'SEC-AUTH-001'));
+        keepsGate(result);
+        assert.deepEqual(required(result), ['admin-authn-test']);
+      });
+      it('when no changed path is known yet then requires every authentication test, failing closed', () => {
+        const result = classifySecurity({ files: [], sbi }, policy);
+        assert.ok(detected(result, 'SEC-AUTH-001'));
+        keepsGate(result);
+        assert.deepEqual(required(result), authn);
+      });
+    });
+  }
+  describe('given an SBI that declares RLS', () => {
+    it('when it changes only the admin then keeps the gate without requiring the RLS test', () => {
+      const result = classifySecurity({ files: admin, sbi: { securityImpact: ['RLS'] } }, policy);
+      keepsGate(result);
+      assert.equal(result.requiredVerifiers.includes('rails-rls-test'), false);
+    });
+    it('when it changes the API then requires the RLS test', () => {
+      const result = classifySecurity({ files: [{ path: 'apps/api/app/models/lesson.rb', status: 'M', added: 'class Lesson; end' }], sbi: { securityImpact: ['RLS'] } }, policy);
+      assert.ok(result.requiredVerifiers.includes('rails-rls-test'));
+    });
+  });
+  // The detector does not read 「変更を加えない」 as out of scope, and no approval replaces the test: the text match stays fail-closed.
+  describe('given an SBI whose text alone matches SEC-DESTRUCTIVE-001 by naming the production API', () => {
+    const sbi = { title: '管理画面の一覧', description: '本番APIには変更を加えない', acceptanceCriteria: [] };
+    for (const [name, files] of [
+      ['changes only the admin', admin],
+      ['changes only a document outside every appliesTo', [{ path: 'docs/product/lessons.md', status: 'M', added: '一覧の並び順' }]],
+      ['changes the API', [{ path: 'apps/api/app/models/lesson.rb', status: 'M', added: 'class Lesson; end' }]],
+      ['has no changed path known yet', []],
+    ]) {
+      it(`when it ${name} then still requires the data lifecycle test with the gate, LEVEL 3 and two approvals`, () => {
+        const result = classifySecurity({ files, sbi }, policy);
+        assert.ok(detected(result, 'SEC-DESTRUCTIVE-001'));
+        keepsGate(result);
+        assert.ok(result.requiredVerifiers.includes('data-lifecycle-test'));
+      });
+    }
+  });
+  describe('given an SBI that names a verifier in requiredVerifiers', () => {
+    it('when it changes only the admin then still requires that verifier', () => {
+      assert.ok(classifySecurity({ files: admin, sbi: { requiredVerifiers: ['authn-test'] } }, policy).requiredVerifiers.includes('authn-test'));
     });
   });
 });
