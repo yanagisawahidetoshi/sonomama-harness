@@ -105,7 +105,9 @@ const scanText = (policy, id, file) => (policy.contentScanExceptions || []).filt
 // changed lists the targets from securityTargets: CI passes the added lines of each changed file (envTemplate marks a vetted .env template),
 // a Harness run reads its committed diff whole from the workspace. entries is the number of diff entries; every entry must land in one bucket.
 // An empty diff, a diff of the SBI snapshot alone, a missing changed file or an entry left out fails; a deletion-only diff passes as such.
-export async function verifySecurity({ workspace, assessment, policy, config, headSha, verification, changed, entries = changed?.filter(c => !c.optional).length ?? 0 }) {
+// runCommands is false in the Completion Judge: a command verifier runs in the verifier matrix, and one that did not run there FAILs,
+// so the judge never runs the PR's code (#165).
+export async function verifySecurity({ workspace, assessment, policy, config, headSha, verification, changed, entries = changed?.filter(c => !c.optional).length ?? 0, runCommands = true }) {
   const registry = new Map(policy.verifiers.map(v => [v.id, v]));
   for (const adapter of config.securityVerifiers || []) {
     if (registry.has(adapter.id) && registry.get(adapter.id).kind !== 'command') throw new Error('Builtin security verifiers cannot be overridden');
@@ -143,6 +145,9 @@ export async function verifySecurity({ workspace, assessment, policy, config, he
     if (general) { checks.push({...general,required:true,verifier:id}); continue; }
     if (!adapter || (adapter.kind === 'command' && !adapter.commands?.length)) {
       checks.push({ id, verifier: id, required: true, status: 'NOT_CONFIGURED', reason: 'required security verifier is not configured' }); continue;
+    }
+    if (adapter.kind === 'command' && !runCommands) {
+      checks.push({ id, verifier: id, required: true, status: 'FAIL', reason: 'required security verifier did not run in the verifier matrix' }); continue;
     }
     if (adapter.kind === 'command') {
       const cwd = join(workspace, adapter.directory || '.');
