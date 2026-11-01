@@ -48,7 +48,8 @@ describe('Implementation of an approved SBI starts without an implementation gat
   describe('given an approved SBI that declares RLS, a Human Gate risk with a pre-implementation security rule', () => {
     it('when harness:run starts then implements without a gate, runs the RLS Security Verifier and still needs two different humans to merge', () => fixture(async root => {
       await rlsVerifier(root);
-      await update(root, sbiPath, s => s.risks = ['RLS']);
+      // The declaration requires the RLS test only for an SBI that may change the API (#165).
+      await update(root, sbiPath, s => { s.risks = ['RLS']; s.allowedDirs = ['apps/api/db/']; });
       const run = await runHarness({ root, quiet: true, agent: agent() });
       assert.equal(run.executionStatus, 'DONE');
       assert.equal(run.gate.required, false);
@@ -63,7 +64,8 @@ describe('Implementation of an approved SBI starts without an implementation gat
       assert.equal(allowed.merge.autoMergeEligible, false);
     }));
     it('when the RLS Security Verifier is not configured then still never reaches DONE', () => fixture(async root => {
-      await update(root, sbiPath, s => s.securityImpact = ['RLS']);
+      await update(root, sbiPath, s => { s.securityImpact = ['RLS']; s.allowedDirs = ['apps/api/db/']; });
+      await update(root, '.harness/config/harness.json', c => { c.securityVerifiers = c.securityVerifiers.filter(v => v.id !== 'rails-rls-test'); });
       const run = await runHarness({ root, quiet: true, agent: agent() });
       assert.notEqual(run.executionStatus, 'DONE');
       assert.equal(run.escalation.code, 'SECURITY_VERIFIER_NOT_CONFIGURED');
