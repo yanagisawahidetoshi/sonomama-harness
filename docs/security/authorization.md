@@ -7,7 +7,7 @@
 
 ## Harnessで守らせるルール
 
-次の変更には、実装前の人の承認、レベル3のリスク判定、決めた検証の実行が必要になる（詳しくは[README](README.md)）。
+次の変更には、SBI承認、レベル3のリスク判定、決めた検証の実行が必要になる（詳しくは[README](README.md)）。
 
 | ルールID | 対象となる変更 | 必ず実行する検証 |
 | --- | --- | --- |
@@ -53,5 +53,5 @@ Railsの認可テスト（rails-authz-test）は、`apps/api/spec/authorization/
 | `apps/mobile/` | mobile-authn-test | `apps/mobile/src/`の`*.authn.test.ts(x)`をJestで実行する |
 | `packages/api-schema/` | api-schema-authn-check | OpenAPIの全operationが認証を宣言している（operationか文書の`security`）、未定義のschemeを使わない、認証が要るoperationは401を書いている。`security: []`のoperationは公開として一覧に出す |
 
-`prototypes/`の認証の変更には認証のVerifierを置かない。実装前の人の承認、レベル3、2人の承認で止める。
-SBIがSecurity ruleを宣言したときは、SBIの許可ファイルか変更したファイルが入る領域のVerifierだけを必須にする。ADRなどの文書だけで認証・認可を記述した場合も、実装前の人の承認とレベル3の判定は必要になる。
+`prototypes/`の認証の変更には認証のVerifierを置かない。SBI承認、レベル3、2人の承認で止める。
+SBIがSecurity ruleを宣言したときは、SBIの許可ファイルか変更したファイルが入る領域のVerifierだけを必須にする。ADRなどの文書だけで認証・認可を記述した場合も、SBI承認とレベル3の判定は必要になる。
