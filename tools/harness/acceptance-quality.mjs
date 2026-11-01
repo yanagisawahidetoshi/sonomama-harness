@@ -2,7 +2,9 @@
 // A mapping only counts when the example it names exists, really runs and checks an expected result. These are heuristics: the final
 // judgement of a generated test stays with the PR Review, and the detection of a controlled violation is a separate, executed check.
 export const acceptanceDirectory = sbiIssue => `apps/api/spec/acceptance/sbi_${sbiIssue}/`;
-const exampleStart = /^(\s*)(it|specify|example|scenario|xit|xspecify|xexample|fit|fspecify|fexample)\s*\(?\s*(["'])(.*?)\3(.*?)\s+do\s*(\|[^|]*\|)?\s*$/;
+// The description is a Ruby string literal; a backslash escapes the quote that would otherwise end it.
+const exampleStart = /^(\s*)(it|specify|example|scenario|xit|xspecify|xexample|fit|fspecify|fexample)\s*\(?\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')(.*?)\s+do\s*(\|[^|]*\|)?\s*$/;
+const unescape = (double, single) => double !== undefined ? double.replace(/\\(["\\])/g, '$1') : single.replace(/\\(['\\])/g, '$1');
 const notRun = /^(x|f)/;
 // Stubs that replace what the scenario is supposed to check (an authorization policy, a controller, any instance, a query chain).
 const stubs = [
@@ -17,7 +19,7 @@ function examples(content) {
     const start = exampleStart.exec(line);
     if (!start) return;
     const indent = start[1], end = lines.findIndex((l, i) => i > index && new RegExp(`^${indent}end\\s*$`).test(l));
-    found.push({ keyword: start[2], description: start[4], metadata: start[5], line: index + 1, body: lines.slice(index + 1, end < 0 ? lines.length : end).map(code) });
+    found.push({ keyword: start[2], description: unescape(start[3], start[4]), metadata: start[5], line: index + 1, body: lines.slice(index + 1, end < 0 ? lines.length : end).map(code) });
   });
   return found;
 }
