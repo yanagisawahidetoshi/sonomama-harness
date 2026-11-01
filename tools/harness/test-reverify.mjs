@@ -41,7 +41,7 @@ export async function registered(root) {
   await writeFile(join(root, '.harness/verification/issue-7.mjs'), acceptance('ホーム'));
   await mkdir(join(root, '.harness/acceptance'), { recursive: true });
   await writeFile(join(root, '.harness/acceptance/sbi-7.json'), JSON.stringify({ version: 1, sbiIssue: 7, verifiers: [{ id: 'issue-7-acceptance', trustedScript: '.harness/verification/issue-7.mjs', planned: ['ホーム見出し'], acceptanceIds: ['AC-1'] }] }));
-  await update(root, '.harness/config/harness.json', c => { c.verifiers.find(v => v.id === 'admin').commands = [['node', '-e', 'process.exit(0)']]; });
+  await update(root, '.harness/config/harness.json', c => { Object.assign(c.verifiers.find(v => v.id === 'admin'), { setupCommands: [], commands: [['node', '-e', 'process.exit(0)']] }); });
   await commitFixture(root);
 }
 // origin is github.com/acme/app for the Harness, while git pushes to a local bare repository. B already has its PR, opened by harness:run.

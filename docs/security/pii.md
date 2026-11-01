@@ -15,4 +15,6 @@ Harnessが個人情報を見つけるためのパターンは、要件を完全�
 | SEC-LOG-001 | ログへの個人情報の出力 | 個人情報のログ検査（pii-log-check） |
 | SEC-LIFECYCLE-001 | データの削除・匿名化・保存期間 | データの保存と削除のテスト（data-lifecycle-test） |
 
+データの保存と削除のテスト（data-lifecycle-test）は、`apps/api/spec/data_lifecycle/`の`*_spec.rb`をテスト用DBで実行する。specが無い、テストが0件、skip・pending・focusがある、テストが失敗した場合は失敗にする（#165、[threat-model](threat-model.md)）。
+
 ログの検査は、初期設定のパターンに当てはまるものを見つけるだけである。権限のモデルや、実データをどう匿名化すべきかを判定したり決めたりするものではない。

@@ -1,3 +1,4 @@
+import { describePhases } from './isolation.mjs';
 import { mkdir, writeFile, realpath, readFile, readdir, lstat } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -160,7 +161,10 @@ async function verifyHead({ root, summary, inputs, result, iterDir, iteration, r
     requiredVerifiers:summary.securityAssessment.requiredVerifiers.filter(id=>generalIds.has(id)),
     acceptanceRunner: inputs.acceptanceRunner, generatedSpecDigest: summary.acceptance?.specDigest }));
   await json(join(iterDir,'verifier-selection.json'),result.verification.checks.map(({id,selectionReasons,required,status})=>({id,selectionReasons,required,status})));
-  summary.securityAssessment = combineSecurity(summary.securityAssessment, classifySecurity({files:await riskFiles(root,summary,inputs,files),sbi},securityPolicy));
+  // #246 N1: the preflight announces and decides the gate; the completion requires the verifiers the actual diff needs, as CI does.
+  // Rules, level and approvals still never go below what the preflight found.
+  const actualSecurity = classifySecurity({files:await riskFiles(root,summary,inputs,files),sbi},securityPolicy);
+  summary.securityAssessment = { ...combineSecurity(summary.securityAssessment, actualSecurity), requiredVerifiers: actualSecurity.requiredVerifiers };
   summary.executionSecurityAssessment = summary.securityAssessment;
   // The committed diff, not allowedFiles alone: an SBI Issue allows directories only, and its allowedFiles is empty.
   // The diff is classified as in CI (#184) and read whole; a file the SBI allows by name but the diff lacks is read when it exists.
@@ -176,7 +180,7 @@ async function verifyHead({ root, summary, inputs, result, iterDir, iteration, r
   if (result.securityVerification.checks.some(c=>c.required&&c.status==='NOT_CONFIGURED')) {
     await record(); return escalate('Required Security Verifier is NOT_CONFIGURED; configure it before starting a new run', 'SECURITY_VERIFIER_NOT_CONFIGURED');
   }
-  if (!quiet) for (const c of result.verification.checks) console.log(`  ${c.id}: ${c.status}${c.reason ? ` (${c.reason})` : ''}`);
+  if (!quiet) for (const c of [...result.verification.checks, ...result.securityVerification.checks.filter(c => c.phases)]) console.log(`  ${c.id}: ${c.status}${c.reason ? ` (${c.reason})` : ''}${describePhases(c)}`);
   if (result.verification.status === 'PASS' && result.security.status === 'PASS') {
     await transition('REVIEWING', `iteration ${iteration}`);
     result.review = redact(await reviewer({ root, workspace, sbi, rules, verification: result.verification, files }));

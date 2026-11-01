@@ -28,12 +28,17 @@ const publicOperationFor = (rule, f, sbi, text) => {
   if (!added || (sbiStatements(sbi) && !added.every(op => declaredPublic(op, sbi, rule.ignoredMetadataPatterns ?? [])))) return text;
   return rule.publicOperationException.ignoredPatterns.reduce((t, p) => t.replace(new RegExp(p, 'gm'), ''), text);
 };
-// An SBI that declares a rule requires all its verifiers; a matched file requires only the verifiers whose appliesTo covers that file.
+// A matched file requires only the verifiers whose appliesTo covers that file. A rule the SBI declares or describes keeps its gate, level
+// and approvals, but requires only the verifiers whose appliesTo covers a changed path (#165); with no path known yet, it requires them all.
+// A rule with metadataRequiresAllVerifiers (SEC-DESTRUCTIVE-001) stays fail-closed on a match in the SBI text alone.
 const sbiSources = new Set(['requiredSecurityRules', 'securityImpact', 'SBI/acceptance']);
 export function classifySecurity({ files = [], sbi = {}, legacySbi = false }, rawPolicy) {
   const policy = securityPolicySchema.parse(rawPolicy);
   const appliesTo = new Map(policy.verifiers.map(v => [v.id, v.appliesTo]));
-  const applies = (id, matches) => !appliesTo.get(id) || matches.some(m => sbiSources.has(m.source) || [m.path, m.previousPath].some(path => path && appliesTo.get(id).some(p => new RegExp(p).test(path))));
+  const changedPaths = files.flatMap(f => [f.path, f.previousPath]).filter(Boolean);
+  const covers = (id, paths) => paths.some(path => path && appliesTo.get(id).some(p => new RegExp(p).test(path)));
+  const applies = (rule, id, matches) => !appliesTo.get(id) || matches.some(m => (m.source === 'SBI/acceptance' && rule.metadataRequiresAllVerifiers)
+    || (sbiSources.has(m.source) ? !changedPaths.length || covers(id, changedPaths) : covers(id, [m.path, m.previousPath])));
   const impacts = new Set(), matchedRules = [], reasons = [];
   const required = new Set([...policy.alwaysRequiredVerifiers, ...(sbi.requiredVerifiers || [])]);
   let gate = Boolean(sbi.preImplementationGate), minimum = Math.max(2, sbi.minimumRiskLevel || 2), approvals = 0;
@@ -61,7 +66,10 @@ export function classifySecurity({ files = [], sbi = {}, legacySbi = false }, ra
     if (rule.categories.includes('Secret') && files.some(f => f.excludedSecret === true || isSecretPath(f.path) || hasSecret(`${f.added || ''}\n${f.deleted || ''}`))) matches.push({ source: 'secret-file-or-content' });
     if (matches.length) {
       rule.categories.forEach(c => impacts.add(c)); matchedRules.push(rule.id);
-      rule.requiredVerifiers.filter(id => applies(id, matches)).forEach(id => required.add(id));
+      // #246 N2: a changed path the rule names (apps/ for SEC-AUTH-001) that none of its verifiers covers requires them all.
+      const scoped = rule.requiredVerifiers.filter(id => appliesTo.get(id));
+      const uncovered = changedPaths.some(path => (rule.uncoveredPathsRequireAllVerifiers || []).some(p => new RegExp(p).test(path)) && !scoped.some(id => covers(id, [path])));
+      rule.requiredVerifiers.filter(id => uncovered || applies(rule, id, matches)).forEach(id => required.add(id));
       gate ||= rule.preImplementationGate; minimum = Math.max(minimum, rule.minimumRiskLevel); approvals = Math.max(approvals, rule.requiredHumanApprovals);
       reasons.push({ ruleId: rule.id, policyDocument: rule.policyDocument, matches });
     }
@@ -110,7 +118,9 @@ const scanText = (policy, id, file) => (policy.contentScanExceptions || []).filt
 // changed lists the targets from securityTargets: CI passes the added lines of each changed file (envTemplate marks a vetted .env template),
 // a Harness run reads its committed diff whole from the workspace. entries is the number of diff entries; every entry must land in one bucket.
 // An empty diff, a diff of the SBI snapshot alone, a missing changed file or an entry left out fails; a deletion-only diff passes as such.
-export async function verifySecurity({ workspace, assessment, policy, config, headSha, verification, changed, entries = changed?.filter(c => !c.optional).length ?? 0 }) {
+// runCommands is false in the Completion Judge: a command verifier runs in the verifier matrix, and one that did not run there FAILs,
+// so the judge never runs the PR's code (#165).
+export async function verifySecurity({ workspace, assessment, policy, config, headSha, verification, changed, entries = changed?.filter(c => !c.optional).length ?? 0, runCommands = true }) {
   const registry = new Map(policy.verifiers.map(v => [v.id, v]));
   for (const adapter of config.securityVerifiers || []) {
     if (registry.has(adapter.id) && registry.get(adapter.id).kind !== 'command') throw new Error('Builtin security verifiers cannot be overridden');
@@ -149,10 +159,13 @@ export async function verifySecurity({ workspace, assessment, policy, config, he
     if (!adapter || (adapter.kind === 'command' && !adapter.commands?.length)) {
       checks.push({ id, verifier: id, required: true, status: 'NOT_CONFIGURED', reason: 'required security verifier is not configured' }); continue;
     }
+    if (adapter.kind === 'command' && !runCommands) {
+      checks.push({ id, verifier: id, required: true, status: 'FAIL', reason: 'required security verifier did not run in the verifier matrix' }); continue;
+    }
     if (adapter.kind === 'command') {
       const cwd = join(workspace, adapter.directory || '.');
-      const {status,reason,processes}=await runIsolated({workspace,adapter,config,cwd});
-      checks.push({id,verifier:id,required:true,status,...(reason&&{reason}),cwd,isolation:adapter.isolation||'container',processes});
+      const {status,reason,failure,phases,processes}=await runIsolated({workspace,adapter,config,cwd});
+      checks.push({id,verifier:id,required:true,status,...(reason&&{reason}),...(failure&&{failure}),...(phases&&{phases}),cwd,isolation:adapter.isolation||'container',processes});
     } else {
       const patterns = adapter.kind === 'secret' ? policy.secretPatterns : adapter.kind === 'pii-log' ? policy.piiLogPatterns : policy.forbiddenPatterns;
       // The SBI snapshot is Issue text the Harness wrote, not code: only secret-scan reads it (#184).

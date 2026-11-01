@@ -10,9 +10,12 @@ export const sbiKinds = Object.freeze(['implementation', 'validation']);
 export const isHarnessScript = (directory, [command, script]) => command === 'node' && /^tools\/harness\/[^/]+\.mjs$/.test(posix.normalize(posix.join(directory, script || '')));
 export const isComposeCommand = ([docker, compose, flag, file]) => docker === 'docker' && compose === 'compose' && flag === '-f' && Boolean(file);
 function isolationRules(v, ctx) {
-  if (v.isolation === 'harness' && !v.commands.every(c => isHarnessScript(v.directory, c))) ctx.addIssue({ code: 'custom', message: 'harness isolation only runs tools/harness scripts' });
-  if (v.isolation === 'compose' && (!v.network || !v.commands.every(c => isComposeCommand(c) || isHarnessScript(v.directory, c)))) ctx.addIssue({ code: 'custom', message: 'compose isolation only runs docker compose -f FILE or tools/harness scripts and requires network' });
+  const all = [...(v.setupCommands ?? []), ...v.commands];
+  if (v.isolation === 'harness' && !all.every(c => isHarnessScript(v.directory, c))) ctx.addIssue({ code: 'custom', message: 'harness isolation only runs tools/harness scripts' });
+  if (v.isolation === 'compose' && (!v.network || !all.every(c => isComposeCommand(c) || isHarnessScript(v.directory, c)))) ctx.addIssue({ code: 'custom', message: 'compose isolation only runs docker compose -f FILE or tools/harness scripts and requires network' });
 }
+// Setup commands run before the verification commands, each phase with its own time limit (#246).
+const phaseSettings = { setupCommands: z.array(z.array(text).min(1)).default([]), setupTimeoutMs: z.number().int().min(100).max(1800000).optional(), timeoutMs: z.number().int().min(100).max(600000).optional() };
 export const relativePath = text.refine(p => !p.startsWith('/') && !p.includes('\\') && p.split('/').every(s => s !== '..' && s !== '.' && s !== ''), 'unsafe relative path');
 // A directory scope ends with '/' so it can never be read as a file name, and allowedFiles keeps meaning exactly those files.
 export const directoryPath = text.refine(p => p.endsWith('/') && relativePath.safeParse(p.slice(0, -1)).success, 'directory scope must be a safe relative path ending with /');
@@ -71,14 +74,16 @@ export const configSchema = z.strictObject({
   version: z.literal(1), provider: z.enum(['fake', 'codex', 'claude']), sbi: relativePath,
   maxConsecutiveFailures: z.number().int().min(1).max(3), maxIterations: z.number().int().min(1).max(20),
   timeoutMs: z.number().int().min(100).max(600000),
-  securityVerifiers: z.array(z.strictObject({ id: text, directory: z.union([z.literal('.'), relativePath]), commands: z.array(z.array(text).min(1)),
+  // #246: the limit of each setup command (dependency install); a verifier may set its own setupTimeoutMs and timeoutMs.
+  setupTimeoutMs: z.number().int().min(100).max(1800000).optional(),
+  securityVerifiers: z.array(z.strictObject({ id: text, directory: z.union([z.literal('.'), relativePath]), commands: z.array(z.array(text).min(1)), ...phaseSettings,
     isolation: z.enum(['container', 'compose', 'harness']).default('container'), network: z.boolean().default(false) }).superRefine(isolationRules)).default([]),
   // Untrusted verifier commands run in a Docker container; docker names the trusted CLI that starts it.
   isolation: z.strictObject({ docker: text }).default({ docker: 'docker' }),
   // GitHub PR mode. requiredChecks are combined with the ruleset's required status checks of the base branch.
   github: z.strictObject({ remote: text, base: text, requiredChecks: z.array(text) }).default({ remote: 'origin', base: 'main', requiredChecks: ['harness'] }),
   verifiers: z.array(z.strictObject({ id: text, directory: z.union([z.literal('.'), relativePath]), marker: relativePath.optional(),
-    allowMissing: z.boolean().default(true), planned: z.array(text).min(1), commands: z.array(z.array(text).min(1)),
+    allowMissing: z.boolean().default(true), planned: z.array(text).min(1), commands: z.array(z.array(text).min(1)), ...phaseSettings,
     acceptanceIds: z.array(text).default([]),
     appliesTo: z.array(text).optional(),
     lanes: z.array(z.enum(['prototype', 'production'])).default(['prototype', 'production']),
@@ -306,6 +311,10 @@ export const securityPolicySchema = z.strictObject({
     ignoreLegacySbiMetadata: z.literal(true).optional(),
     // Phrases of the SBI text that only negate the rule (an endpoint that needs no authentication) are dropped before metadataPatterns (#233).
     ignoredMetadataPatterns: z.array(narrowPattern).optional(),
+    // A match in the SBI text alone requires every verifier of the rule whatever the changed paths, so no approval stands in for them (#165).
+    metadataRequiresAllVerifiers: z.literal(true).optional(),
+    // A changed path under these patterns that none of the rule's verifiers covers requires them all, failing closed (#246 N2).
+    uncoveredPathsRequireAllVerifiers: z.array(narrowPattern).optional(),
     // A new OpenAPI operation the approved SBI declares public drops only these patterns from the contract's changed lines (#243).
     publicOperationException: z.strictObject({ ignoredPatterns: z.array(narrowPattern).min(1) }).optional(),
     // Only the added lines of a file under pathPatterns count, so a change that turns a setting dangerous matches and one that narrows it does not.
