@@ -3,7 +3,7 @@ import { githubCli } from './planner-github.mjs';
 import { relativePath } from './schemas.mjs';
 import { assertWritablePath } from './workspace.mjs';
 import { acceptancePath, generatedVerifierId } from './acceptance-registry.mjs';
-import { readSpecApproval, specApprovalLine } from './spec-approval.mjs';
+import { specApproval } from './spec-approval.mjs';
 import { readReadyBinding } from './ready-approval.mjs';
 // harness:run SBI_URL reads the SBI from the GitHub Issue a human marked ready. Nothing here is written back to GitHub,
 // and nobody transcribes the Issue into SBI JSON: the Harness builds the execution SBI and records it as the Run snapshot.
@@ -144,16 +144,16 @@ export async function loadSbiIssue({ issueUrl, config, github = githubCli }) {
   let issue;
   try { issue = await github.fetchIssue(ref); } catch (error) { throw new Error(`SBI Issue fetch failed for ${ref.url}: ${error.message}`); }
   const reasons = issueReadiness(issue, ref.url);
-  // #147: without ready, a writer's harness-spec approval of the current spec digest is the other way to start (generated Trusted Acceptance).
+  // #147, ADR-0009: without ready, the spec-approved label is the other way to start (generated Trusted Acceptance).
   if (reasons.length && reasons.every(r => r.endsWith('has no ready label'))) {
-    const spec = await readSpecApproval({ ref, issue, github });
+    const spec = specApproval(issue);
     if (spec.approved) {
       const sbi = sbiFromIssue({ ref, issue, config, generate: true });
       const waiting = await unfinishedDependencies({ ref, issue, config, github });
       if (waiting.length) throw new Error([`SBI Issue ${ref.url} の依存SBIが完了していません。Runは開始していません。`, ...waiting.map(p => `- ${p}`)].join('\n'));
       return { ref, issue, sbi, mode: 'generate', spec };
     }
-    reasons.push(`仕様の承認もありません。write権限のある人が \`${specApprovalLine(spec.digest ?? '<spec digest>')}\` をIssueにコメントすると承認になります（pnpm harness:spec-approve ${ref.url}）`);
+    reasons.push('仕様の承認もありません。Issueをレビューし、needs-reviewを外してspec-approvedラベルを付けると承認になります');
   }
   // #194: ready approves the Issue only as it was when the label was added.
   if (!reasons.length) reasons.push(...await readReadyBinding({ ref, issue, github }));

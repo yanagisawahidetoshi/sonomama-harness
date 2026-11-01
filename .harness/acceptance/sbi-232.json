@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "sbiIssue": 232,
+  "verifiers": [
+    {
+      "id": "sbi-232-health-contract",
+      "trustedScript": ".harness/verification/api-health-contract.mjs",
+      "planned": ["Trusted Acceptance: GET /api/v1/health in the OpenAPI 3.1 contract"],
+      "acceptanceIds": ["AC-1", "AC-2", "AC-3", "AC-4"]
+    }
+  ]
+}

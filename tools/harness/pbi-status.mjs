@@ -5,8 +5,7 @@ import { parseIssueUrl } from './planner.mjs';
 import { githubCli } from './planner-github.mjs';
 import { githubPrCli, ciStatus } from './github-pr.mjs';
 import { mergedHarnessPull } from './sbi-issue.mjs';
-import { parsePlan, planDigest, pbiSbis, comparePlan, planPrefix, planRevision, approvalKey } from './pbi-plan.mjs';
-import { readCommentApprovals } from './github-approval-records.mjs';
+import { parsePlan, planDigest, pbiSbis, comparePlan, planApproved, planRevision, approvalKey } from './pbi-plan.mjs';
 import { judgePbi } from './pbi-judge.mjs';
 import { pbiAcceptanceRecords, recordPbiAcceptance, evidenceManifests, recordEvidenceManifest } from './pbi-acceptance.mjs';
 import { localHumanIdentity } from './human-approvals.mjs';
@@ -40,7 +39,7 @@ export async function collectPbiStatus({ root, pbiUrl, config, github = githubCl
   const ref = parseIssueUrl(pbiUrl);
   evidence ??= maestroEvidence({ ref, github, ...(actions ? { actions } : {}) });
   config ??= (await check(root)).config;
-  const problems = [], output = { pbi: { url: ref.url, number: ref.number, title: null }, plan: { digest: null, revision: null, approvalKey: null, approved: false, approvers: [] }, sbis: [], blockers: [] };
+  const problems = [], output = { pbi: { url: ref.url, number: ref.number, title: null }, plan: { digest: null, revision: null, approvalKey: null, approved: false }, sbis: [], blockers: [] };
   const attempt = async (what, fn, fallback) => { try { return await fn(); } catch (error) { problems.push(`${what}をGitHubから読めません（${error.message}）`); return fallback; } };
 
   const issue = await attempt(`PBI ${ref.url}`, () => github.fetchIssue(ref), null);
@@ -49,16 +48,16 @@ export async function collectPbiStatus({ root, pbiUrl, config, github = githubCl
   const sbis = issue && !issue.pull_request ? await attempt('SBI Issueの一覧', () => pbiSbis(ref, github, problems), []) : [];
   // The approved plan, the PBI marker of each SBI Issue and the SBI Issues found on GitHub must be the same set.
   const { plan, errors: planErrors } = issue && !issue.pull_request ? parsePlan(issue.body, ref.url) : { plan: null, errors: [] };
-  problems.push(...planErrors.map(e => `PBI plan: ${e}（pnpm harness:pbi-plan ${ref.url} で生成し、pnpm harness:pbi-plan-approve ${ref.url} で承認する）`));
+  problems.push(...planErrors.map(e => `PBI plan: ${e}（pnpm harness:pbi-plan ${ref.url} で生成し、PBIに plan-approved ラベルを付けて承認する）`));
   if (plan) {
     output.plan.digest = planDigest(plan);
     const versions = await attempt('PBI本文の編集履歴', () => github.bodyVersions(ref), null);
     if (versions) {
       output.plan.revision = planRevision({ versions, currentBody: issue.body, pbiUrl: ref.url });
       output.plan.approvalKey = approvalKey(output.plan.digest, output.plan.revision);
-      Object.assign(output.plan, await attempt('PBI planの承認', () => readCommentApprovals({ ref, prefix: planPrefix, digest: output.plan.approvalKey, github }), {}));
     }
-    if (!output.plan.approved) problems.push(`PBI plan（digest ${output.plan.digest.slice(0, 12)}）が承認されていません。## SBI構成 を確認して pnpm harness:pbi-plan-approve ${ref.url}`);
+    output.plan.approved = planApproved(issue);
+    if (!output.plan.approved) problems.push(`PBI plan（digest ${output.plan.digest.slice(0, 12)}）が承認されていません。## SBI構成 を確認してPBIに plan-approved ラベルを付ける`);
     problems.push(...comparePlan(plan, sbis));
   }
   const required = await attempt('必須check', () => requiredChecks(ref, config, githubPr), null);
@@ -154,7 +153,7 @@ export function renderPbiStatus(result) {
       : s.e2e ? `E2E ${s.e2e.api} ${s.e2e.status}${s.evidence === 'MANIFEST' ? ' (manifest)' : ''}` : s.kind === 'validation' ? 'E2E -' : 'E2E none'].join(' / ');
   return [
     `PBI: #${result.pbi.number} ${result.pbi.title ?? '(unreadable)'}`, `Status: ${result.status}`, '',
-    'PBI plan', result.plan.digest ? `${mark(result.plan.approved)} ${result.plan.approved ? `APPROVED by ${result.plan.approvers.join(', ')}` : 'NOT_APPROVED'} (digest ${result.plan.digest.slice(0, 12)})` : '❌ ## SBI構成 なし', '',
+    'PBI plan', result.plan.digest ? `${mark(result.plan.approved)} ${result.plan.approved ? 'APPROVED (plan-approved, ' : 'NOT_APPROVED ('}digest ${result.plan.digest.slice(0, 12)})` : '❌ ## SBI構成 なし', '',
     'SBI', ...(result.sbis.length ? result.sbis.map(sbiLine) : ['❌ none']), '',
     'Human Acceptance', `${mark(result.acceptance === 'APPROVED')} ${result.acceptance}`,
     ...(result.evidenceDigest ? [`Evidence digest: ${result.evidenceDigest}`] : []),

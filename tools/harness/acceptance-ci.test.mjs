@@ -9,7 +9,6 @@ import { runCompletionJudge, runVerifier } from './impact.mjs';
 import { renderSbiBody } from './planner.mjs';
 import { sbiFromIssue } from './sbi-issue.mjs';
 import { snapshotFromIssue, snapshotPath } from './sbi-source.mjs';
-import { specApprovalLine, specDigest } from './spec-approval.mjs';
 import { generateAcceptance } from './acceptance-generation.mjs';
 import { generatedVerifierId } from './acceptance-registry.mjs';
 import { writeAcceptanceResult } from './acceptance-run.mjs';
@@ -32,10 +31,8 @@ const planned = (then = '403になる') => ({
   verification: { applicationTest: 'RSpec', acceptance: 'Trusted Acceptance（生成）', e2e: '不要' },
 });
 const issueOf = (body, labels = ['sbi']) => ({ number: 7, title: 'SBI-001 担当講師だけが講座を閲覧できる', body, html_url: ref.url, state: 'open', labels: labels.map(name => ({ name })) });
-const approved = issueOf(renderSbiBody(planned(), pbi));
-const at = '2026-10-30T00:00:00Z';
-const approvalOf = issue => ({ id: 1, issue: 7, body: specApprovalLine(specDigest(issue)), html_url: `${ref.url}#issuecomment-1`, user: { login: 'alice', type: 'User' }, created_at: at, updated_at: at });
-const githubOf = (issue, comments = [approvalOf(issue)]) => ({ fetchIssue: async () => issue, listComments: async () => comments, permission: async () => 'admin' });
+const approved = issueOf(renderSbiBody(planned(), pbi), ['sbi', 'spec-approved']);
+const githubOf = issue => ({ fetchIssue: async () => issue });
 
 const testPath = 'apps/api/spec/acceptance/sbi_7/courses_spec.rb';
 const testContent = 'require "rails_helper"\n\nRSpec.describe "講座の閲覧", type: :request do\n  it "担当講師が閲覧する: 200を返す" do\n    get "/api/v1/courses/1"\n    expect(response).to have_http_status(:ok)\n  end\n\n  it "担当外の講師が閲覧する: 403を返す" do\n    get "/api/v1/courses/1"\n    expect(response).to have_http_status(:forbidden)\n  end\nend\n';
@@ -115,23 +112,23 @@ describe('CI for a PR whose Trusted Acceptance was generated from a spec-approve
     it('when the Issue has no spec approval then the SBI source fails even though the generated specs passed', () => fixture(async root => {
       await branch(root);
       await matrixLeg(root);
-      const judged = await judge(root, { github: githubOf(approved, []) });
+      const judged = await judge(root, { github: githubOf({ ...approved, labels: [{ name: 'sbi' }] }) });
       assert.equal(judged.source.status, 'FAIL');
-      assert.match(judged.source.reasons.join('\n'), /harness-spec/);
+      assert.match(judged.source.reasons.join('\n'), /spec-approved/);
       assert.equal(judged.status, 'FAIL');
     }));
     it('when the Issue is ready but has no spec approval then generated tests are still not trusted', () => fixture(async root => {
       await branch(root);
       await matrixLeg(root);
       const ready = { ...approved, labels: [{ name: 'sbi' }, { name: 'ready' }] };
-      const judged = await judge(root, { issue: ready, github: githubOf(ready, []) });
+      const judged = await judge(root, { issue: ready, github: githubOf(ready) });
       assert.equal(judged.source.status, 'FAIL');
-      assert.match(judged.source.reasons.join('\n'), /harness-spec/);
+      assert.match(judged.source.reasons.join('\n'), /spec-approved/);
     }));
     it('when the spec was edited and re-approved after the tests were generated then the generated acceptance fails on the spec digest', () => fixture(async root => {
       await branch(root);
       await matrixLeg(root);
-      const edited = issueOf(renderSbiBody(planned('404になる'), pbi));
+      const edited = issueOf(renderSbiBody(planned('404になる'), pbi), ['sbi', 'spec-approved']);
       const judged = await judge(root, { issue: edited });
       assert.equal(generatedCheck(judged).status, 'FAIL');
       assert.match(generatedCheck(judged).reason, /spec digest/);
