@@ -46,7 +46,7 @@ API design (API契約を設計するときだけ):
   pnpm api:mock ISSUE_URL [--dynamic] | pnpm api:docs [--port PORT]
 Internal/Maintenance (CI・障害復旧・Harness保守用):
   pnpm harness:resume --run RUN_ID | pnpm harness:pr --run RUN_ID | pnpm harness:approve --run RUN_ID --phase merge
-  pnpm harness:run --sbi PATH [--provider fake|codex|claude]（Harness自己テスト・fixture用のSBI JSON）
+  pnpm harness:run --sbi PATH [--provider fake|codex|claude]（Harness自己テスト・fixture用のSBI JSON。real providerでもPRは作らず、auto mergeの対象にもならない）
   pnpm harness:impact --base REF|--all | pnpm harness:verify --verifier ID --base REF|--all | pnpm harness:judge --base REF|--all
   pnpm harness:check | pnpm harness:test | pnpm harness:demo [--full] | pnpm harness:push-gate
   pnpm harness:pbi-plan PBI_URL（## SBI構成 が無い既存PBIに、GitHubのSBI Issueから書く）
@@ -170,7 +170,7 @@ try {
       if (!workspace || workspace === resolve(root)) throw new Error('judge --trusted requires HARNESS_WORKSPACE, a PR tree apart from the Harness root');
       if (!base) throw new Error('judge --trusted requires --base REF');
       const judged = await runTrustedJudge({ root, workspace, base, repository: process.env.GITHUB_REPOSITORY, pullNumber: process.env.HARNESS_PULL_REQUEST || undefined,
-        headSha: process.env.HARNESS_HEAD_SHA ?? '', baseSha: process.env.HARNESS_BASE_SHA || undefined, log: line => console.log(redactText(line)) });
+        eventName: process.env.GITHUB_EVENT_NAME || undefined, headSha: process.env.HARNESS_HEAD_SHA ?? '', baseSha: process.env.HARNESS_BASE_SHA || undefined, log: line => console.log(redactText(line)) });
       if (judged.run) console.log(`Evidence: run ${judged.run.id} attempt ${judged.run.run_attempt} of ${judged.run.path}`);
       if (judged.checks) {
         for (const line of describeImpact(judged.impact)) console.log(redactText(line));
@@ -185,8 +185,8 @@ try {
       process.exitCode = judged.status === 'FAIL' ? 1 : 0;
     } else {
       const needs = JSON.parse(process.env.HARNESS_NEEDS || '{}');
-      // Set only on pull_request events; a trusted dependency bot PR is read from GitHub by this number.
-      const judged = await runCompletionJudge({ root, base, all, needs, pullNumber: process.env.HARNESS_PULL_REQUEST || undefined, maestroResults: process.env.HARNESS_MAESTRO_RESULTS || undefined, expectedHeadSha: process.env.HARNESS_HEAD_SHA ?? '',
+      // Set only on pull_request events; a trusted dependency bot PR and a Harness PR are read from GitHub by this number (#220: missing on such an event fails).
+      const judged = await runCompletionJudge({ root, base, all, needs, pullNumber: process.env.HARNESS_PULL_REQUEST || undefined, eventName: process.env.GITHUB_EVENT_NAME || undefined, maestroResults: process.env.HARNESS_MAESTRO_RESULTS || undefined, expectedHeadSha: process.env.HARNESS_HEAD_SHA ?? '',
         expectedBaseSha: process.env.HARNESS_BASE_SHA || undefined, ...acceptanceResults() });
       for (const line of describeImpact(judged.impact)) console.log(redactText(line));
       for (const line of describeSbiSource(judged.source)) console.log(redactText(line));

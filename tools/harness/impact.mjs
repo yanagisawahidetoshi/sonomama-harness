@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { isSafeEnvTemplate } from './evidence-protection.mjs';
 import { classifyChangeType, describeChangeType, needsContent } from './change-type.mjs';
 import { readJson } from './io.mjs';
-import { readSbiFiles, snapshotFilePattern, verifySbiSource } from './sbi-source.mjs';
+import { judgeHarnessPull, readHarnessPull, readSbiFiles, snapshotFilePattern, verifySbiSource } from './sbi-source.mjs';
 import { judgeChangedFileCount } from './planner-judge.mjs';
 import { dependencyBotExemption } from './dependency-bot.mjs';
 import { githubCli } from './planner-github.mjs';
@@ -228,7 +228,7 @@ async function trackedContent(root) {
 // by a ready SBI Run snapshot; an engineering diff needs none (ADR-0006).
 // expectedHeadSha is the head the workflow checked out; the CLI always passes it, so a missing value fails there.
 // expectedBaseSha is the base commit of the pull request event; it is checked when the workflow passes it (HARNESS_BASE_SHA).
-export async function runCompletionJudge({ root, workspace = root, base, all = false, needs, repository = process.env.GITHUB_REPOSITORY, pullNumber, github = githubCli, githubPr, maestroResults, expectedHeadSha, expectedBaseSha, acceptanceResults = join(root, acceptanceResultsDirectory) }) {
+export async function runCompletionJudge({ root, workspace = root, base, all = false, needs, repository = process.env.GITHUB_REPOSITORY, pullNumber, eventName, github = githubCli, githubPr, maestroResults, expectedHeadSha, expectedBaseSha, acceptanceResults = join(root, acceptanceResultsDirectory) }) {
   const { config, files, sbis, snapshots, impact } = await loadImpact({ root, workspace, base, all });
   const headSha = (await git(workspace, ['rev-parse', 'HEAD'])).stdout.trim();
   // The Issue is read once for the generated acceptance and the SBI source check, so both judge the same Issue.
@@ -268,9 +268,13 @@ export async function runCompletionJudge({ root, workspace = root, base, all = f
   // The SBI source is a separate axis from the change type: a changed, broken or deleted snapshot is always verified,
   // while the Run trailers alone are no source and never change the change type. A legacy hand-written SBI is not a snapshot (#217).
   const snapshotChanged = files.some(f => snapshotFilePattern.test(f.path));
-  const required = exemption?.exempt ? [] : impact.sbiRequiredReasons.length ? impact.sbiRequiredReasons : snapshotChanged ? ['sbi-snapshot'] : [];
+  // #220: a Harness PR (harness/<run-id>) needs the snapshot of its own run whatever the diff, and no exemption lifts that.
+  const harnessPull = all ? null : await readHarnessPull({ repository, pullNumber, eventName, github });
+  const sourceRequired = exemption?.exempt ? [] : impact.sbiRequiredReasons.length ? impact.sbiRequiredReasons : snapshotChanged ? ['sbi-snapshot'] : [];
+  const required = [...(harnessPull ? [`harness-pr:${harnessPull.branch ?? `#${pullNumber ?? 'missing'}`}`] : []), ...sourceRequired];
   const verified = await verifySbiSource({ root: workspace, base, files, required, config, repository, github: issueGithub });
-  const source = { ...verified, ...(exemption ? { exemption } : {}) };
+  const pullReasons = judgeHarnessPull({ pull: harnessPull, snapshots, source: verified });
+  const source = { ...verified, reasons: [...pullReasons, ...verified.reasons], status: pullReasons.length ? 'FAIL' : verified.status, ...(exemption ? { exemption } : {}) };
   // A destructive migration that migration-safety let through as an exception request still needs two reviews on headSha.
   const migrationExceptions = all ? { status: 'PASS', exceptions: [], reasons: [] }
     : await verifyMigrationExceptions({ root: workspace, base, files, headSha, repository, pullNumber, ...(githubPr ? { githubPr } : {}) });
