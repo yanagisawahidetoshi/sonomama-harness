@@ -27,14 +27,14 @@ Rails API・Expo・React adminの3アプリは開発環境まで構築済みで�
 
 ```sh
 pnpm planner:sbi https://github.com/<owner>/<repo>/issues/<PBI番号>     # PBI → SBI Issue [sbi][needs-review]
-# 人間がSBI Issueをレビューし、全ACのTrusted Acceptanceを登録してから ready にする
+# 人間がSBI Issueをレビューし、needs-review を spec-approved に替える（手書きのTrusted Acceptanceを登録した場合は ready）
 pnpm harness:run https://github.com/<owner>/<repo>/issues/<SBI番号>     # 実装 → ローカル検証 → PR作成
 pnpm harness:reverify https://github.com/<owner>/<repo>/pull/<PR番号>  # mainが進んだときだけ。最新のmainをpullしてから実行する
 ```
 
 providerの既定はClaude。Codexだけ使える場合は各コマンドに`--provider codex`を付ける。
 PRのmergeは人間がGitHub Reviewのあとで行う。RUN_IDのコピー、`harness:resume`・`harness:pr`の実行は通常フローでは要らない。
-`harness:run`はIssueがopen・`sbi`と`ready`付き・`needs-review`なしで、Planner markerがあり、write以上の人間が付けた`ready`の後に本文・titleが編集されていないときだけ開始する（#194・#200）。
+`harness:run`はIssueがopen・`sbi`付き・`needs-review`なしで、Planner markerがあり、`spec-approved`が付いているか、write以上の人間が付けた`ready`の後に本文・titleが編集されていないときだけ開始する（#194・#200・ADR-0009）。
 Issue本文から実行SBIを組み立て、Run開始時点の内容を`.harness/runs/<id>/sbi-snapshot.json`に保存し、PRへ`.harness/state/sbi-<Issue番号>.json`としてcommitする。
 想定変更範囲は末尾`/`付きのディレクトリ許可（allowedDirs）になる。`apps/admin/`は`apps/admin-other/`を含まず、予約パスは範囲内でも書けない。
 ACごとのTrusted Acceptanceは、人間が`.harness/verification/`にscriptを書き、
@@ -441,7 +441,7 @@ GitHub Issue (PBI) → PBI Reader → SBI Decomposer（codex / claude）→ SBI 
 GitHubアクセスは認証済みの`gh` CLIを使う。providerはcodexまたはclaudeを明示するか、harness.jsonのproviderを使う。
 fakeは公開先がGitHubのため拒否する。`--dry-run`・`--publish`は設けない。
 SBIには種類（kind）がある。implementation（実装SBI）と、Integration / E2Eが必要なPBIだけ1件まで持てるvalidation（最終確認SBI、実API / Rails / DB接続のMaestro E2E）の2つ。
-人間確認はSBIにせず、PBI Human Acceptance Gateとして扱う。PlannerはPBI本文に`## SBI構成`を書き、人間が`pnpm harness:pbi-plan-approve PBI_URL`で一度承認する（`## SBI構成`が無い既存PBIは`pnpm harness:pbi-plan PBI_URL`で書く）。PBIの完了は`pnpm harness:pbi-status PBI_URL`で判定し、受け入れは`pnpm harness:pbi-accept PBI_URL --evidence DIGEST`で署名付き台帳へ記録する（Maestro E2E EvidenceはmergeされたHarness PRのCI artifactから読む。[pbi-sbi-planner.md](.ai/workflows/pbi-sbi-planner.md)）。
+人間確認はSBIにせず、PBI Human Acceptance Gateとして扱う。PlannerはPBI本文に`## SBI構成`を書き、人間がPBIに`plan-approved`ラベルを付けて承認する（`## SBI構成`が無い既存PBIは`pnpm harness:pbi-plan PBI_URL`で書く）。PBIの完了は`pnpm harness:pbi-status PBI_URL`で判定し、受け入れは`pnpm harness:pbi-accept PBI_URL --evidence DIGEST`で署名付き台帳へ記録する（Maestro E2E EvidenceはmergeされたHarness PRのCI artifactから読む。[pbi-sbi-planner.md](.ai/workflows/pbi-sbi-planner.md)）。
 Quality Judgeは決定的なルールで、粒度（受け入れ要件6件以内。implementationは変更範囲4領域以内・レイヤー1つ・想定変更ファイル1以上で、10超は理由が必須）、実テスト（implementationはApplication TestとScenarioごとのtest、validationはE2E）、目的が2文以内、受け入れ要件の曖昧語、
 Gherkinと受け入れ要件の対応、依存SBIの存在と循環、変更範囲・Risk/Security・検証方法の記載を検査する。
 Security Impactを宣言したSBIのRisk candidateはL3。最終Risk判定はExecution Harnessが行う。
@@ -456,8 +456,8 @@ title・本文が今回の生成結果と完全一致する場合だけ再利用
 digest不一致（PBIやモデル出力が変わった）、人間による本文・title編集、`ready`化、closeのいずれかがあれば書き込まずに停止し、人間が判断する。
 途中失敗後の再実行で重複Issueを作らない。
 
-Plannerは`needs-review`のSBIをExecution Harnessへ投入しない。人間がレビューし、全ACのTrusted Acceptanceを登録してから`needs-review`を外し`ready`を付ける。
-`ready`のSBIは`pnpm harness:run <SBI Issue URL>`で実行する。SBI JSONは書かない。`ready`への自動遷移・Risk確定・mergeは行わない。
+Plannerは`needs-review`のSBIをExecution Harnessへ投入しない。人間がレビューし、`needs-review`を外して`spec-approved`を付ける（Trusted Acceptanceはrunが生成する）。手書きのTrusted Acceptanceを登録した場合は`spec-approved`の代わりに`ready`を付ける。
+承認済みのSBIは`pnpm harness:run <SBI Issue URL>`で実行する。SBI JSONは書かない。承認ラベルの自動付与・Risk確定・mergeは行わない。
 手順は[.ai/workflows/pbi-sbi-planner.md](.ai/workflows/pbi-sbi-planner.md)。
 
 ## OpenAPI Schema SBI

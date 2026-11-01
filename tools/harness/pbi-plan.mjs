@@ -3,12 +3,12 @@ import { parseIssueUrl, markerPattern } from './planner.mjs';
 import { githubCli } from './planner-github.mjs';
 import { issueKind, issueDependsOn } from './sbi-issue.mjs';
 import { hasSecret } from './evidence-protection.mjs';
-import { approvalLine, readCommentApprovals } from './github-approval-records.mjs';
 
-// The PBI plan is the complete SBI set of a PBI. The Planner writes it into the PBI Issue as ## SBI構成 and a human approves it once with a
-// harness-pbi-plan comment (github-approval-records.mjs). harness:pbi-status trusts neither the Issue list nor the section alone: the approved
+// The PBI plan is the complete SBI set of a PBI. The Planner writes it into the PBI Issue as ## SBI構成 and a human approves it by putting the
+// plan-approved label on the PBI (ADR-0009, MVP: who added it is not checked). harness:pbi-status trusts neither the Issue list nor the section alone: the approved
 // plan, the PBI marker of each SBI Issue and the SBI Issues GitHub finds for the PBI must be the same set.
-export const planPrefix = 'harness-pbi-plan';
+export const planApprovalLabel = 'plan-approved';
+export const planApproved = issue => (issue?.labels ?? []).some(l => l.name === planApprovalLabel);
 const kinds = ['implementation', 'validation'];
 const startMarker = pbiUrl => `<!-- sonomama-pbi-plan pbi=${pbiUrl} -->`;
 const endMarker = '<!-- /sonomama-pbi-plan -->';
@@ -36,8 +36,8 @@ export function renderPlanSection(pbiUrl, plan) {
   return [
     startMarker(pbiUrl), '## SBI構成', '',
     ...plan.sbis.map(s => `- ${s.id}: #${s.number} ${s.kind}${s.dependsOn.length ? ` 依存: ${s.dependsOn.join(', ')}` : ''}`), '',
-    `PBI plan digest: \`${planDigest(plan)}\``, `確認後に承認する: \`pnpm harness:pbi-plan-approve ${pbiUrl}\``,
-    '_SONOMAMA Harnessが生成。この節を編集するとdigestが変わり、承認は無効になる。_', endMarker, '',
+    `PBI plan digest: \`${planDigest(plan)}\``, '確認後に承認する: このPBIに `plan-approved` ラベルを付ける',
+    '_SONOMAMA Harnessが生成。この節を編集するとdigestが変わり、PBI Human Acceptanceの証跡は無効になる。_', endMarker, '',
   ].join('\n');
 }
 
@@ -105,7 +105,7 @@ async function readPlan(ref, github) {
 }
 
 // pnpm harness:pbi-plan PBI_URL: writes ## SBI構成 from the SBI Issues GitHub finds for the PBI, for a PBI planned before the section existed.
-// The result still needs harness:pbi-plan-approve; the human reviews the set before approving it.
+// The result still needs the plan-approved label; the human reviews the set before approving it.
 export async function writePbiPlan({ pbiUrl, github = githubCli }) {
   const ref = parseIssueUrl(pbiUrl), problems = [];
   const issue = await github.fetchIssue(ref);
@@ -123,19 +123,20 @@ export async function writePlanSection({ ref, issue, plan, github }) {
   if (body !== String(issue.body ?? '').replaceAll('\r\n', '\n')) await github.updateIssue(ref, { body });
 }
 
-// pnpm harness:pbi-plan-approve PBI_URL: the human's gh posts the approval line. Only a plan that matches the SBI Issues on GitHub can be approved.
+// pnpm harness:pbi-plan-approve PBI_URL: puts the plan-approved label on the PBI, as a human does on GitHub. Only a plan that matches the SBI
+// Issues on GitHub can be approved this way.
 export async function approvePbiPlan({ pbiUrl, decision = 'approve', github = githubCli }) {
   const ref = parseIssueUrl(pbiUrl);
   if (!['approve', 'revoke'].includes(decision)) throw new Error('Unknown PBI plan decision');
   const { issue, plan, errors } = await readPlan(ref, github);
   if (!plan) throw new Error(['PBI planを読めません。承認していません。', ...errors.map(e => `- ${e}`), `- pnpm harness:pbi-plan ${ref.url} で ## SBI構成 を書けます`].join('\n'));
-  const digest = planDigest(plan), revision = planRevision({ versions: await github.bodyVersions(ref), currentBody: issue.body, pbiUrl: ref.url });
-  const key = approvalKey(digest, revision);
+  const digest = planDigest(plan), labeled = planApproved(issue);
   if (decision === 'approve') {
     const problems = [];
     problems.push(...comparePlan(plan, await pbiSbis(ref, github, problems), 'PBI plan'));
     if (problems.length) throw new Error(['## SBI構成 がGitHubのSBI Issueと一致しません。承認していません。', ...problems.map(p => `- ${p}`)].join('\n'));
-  }
-  const comment = await github.addComment(ref, approvalLine(planPrefix, key, decision));
-  return { plan, digest, revision, approvalKey: key, comment: comment.html_url, ...await readCommentApprovals({ ref, prefix: planPrefix, digest: key, github }) };
+    await github.ensureLabels(ref, [planApprovalLabel]);
+    if (!labeled) await github.addLabels(ref, [planApprovalLabel]);
+  } else if (labeled) await github.removeLabel(ref, planApprovalLabel);
+  return { plan, digest, approved: decision === 'approve' };
 }

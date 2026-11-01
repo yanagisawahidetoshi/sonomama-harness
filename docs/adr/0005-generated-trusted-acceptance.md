@@ -8,7 +8,7 @@
 - 関連SBI: なし
 - 関連Design Docs: [.ai/workflows/pbi-sbi-planner.md](../../.ai/workflows/pbi-sbi-planner.md)、[.ai/workflows/implementation.md](../../.ai/workflows/implementation.md)
 - Supersedes:
-- Superseded by:
+- Superseded by: [ADR-0009](0009-label-human-approval.md)（仕様の承認の正本と `spec-approved` label の扱いだけ）
 
 状態の意味とAIの扱いは[README](README.md)を参照する。
 
@@ -36,9 +36,8 @@
 ## 決定
 
 - **仕様の承認と、テストの準備を分ける。**
-  - 仕様の承認の正本は、SBI Issue への `harness-spec: <spec digest>` コメントにする。write 以上の権限を持つ人間が投稿したもので、編集されていないものだけを数える。撤回は `harness-spec-revoke: <spec digest>`。
-  - spec digest は、Agent への指示・Risk・Security 分類・実行範囲に使う承認対象の情報全体を正規化したテキストの sha256。今は title・Planner marker・目的・種類・受け入れ要件・Gherkin・依存SBI・想定変更範囲・想定変更ファイル数・検証方法・Risk / Security Impact を含む（#194・#200 で title・Planner marker・目的・種類・依存SBI・想定変更ファイル数・検証方法を追加。Planner marker は run が記録する PBI、依存SBI は run を始める条件）。どれかが変われば、それまでの承認は無効になる。チェックボックスの状態は含めない。runが新しい項目を読むようになったら、その項目も digest に入れる。
-  - `spec-approved` label は表示用だけで、判定には使わない。
+  - 仕様の承認の正本は、SBI Issue の `spec-approved` label にする（[ADR-0009](0009-label-human-approval.md) で改めた。当初は write 以上の人間による `harness-spec: <spec digest>` コメントだった）。
+  - spec digest は、run の開始時点で計算し、生成したテストを結びつける。Agent への指示・Risk・Security 分類・実行範囲に使う承認対象の情報全体を正規化したテキストの sha256。今は title・Planner marker・目的・種類・受け入れ要件・Gherkin・依存SBI・想定変更範囲・想定変更ファイル数・検証方法・Risk / Security Impact を含む（#194・#200 で title・Planner marker・目的・種類・依存SBI・想定変更ファイル数・検証方法を追加。Planner marker は run が記録する PBI、依存SBI は run を始める条件）。生成後にどれかが変われば、生成した Trusted Acceptance は無効になる。チェックボックスの状態は含めない。runが新しい項目を読むようになったら、その項目も digest に入れる。
   - `ready` は生成方式の仕様承認には使わない。version 1 の手書き Trusted Acceptance を登録した SBI の legacy 互換経路としてだけ残す。
   - legacy `ready` では「label が付いていること」だけを信用しない（#194）。write 以上の権限を持つ人間（bot は数えない）が `ready` を付けた時点の Issue 内容を、GitHub の監査履歴（timeline の `labeled`・`renamed` と本文の編集履歴）に束縛する。最後に `ready` を付けた人で判定し、権限や付けた人を読めなければ無効にする。`ready` の後に本文か title が変わった場合は、A→B→A で元に戻しても無効にする。再承認は `ready` を外して付け直すことで行う。
 - **生成と検査は二段階（G / I）にする。** 生成時点で「完成した実装に対して PASS」を求めない。G（生成時）で、制御した違反を検出できることを確かめ、I（実装後）で完成した実装を検証する。
@@ -67,14 +66,14 @@ G / I の二段階にすれば、まだ実装が無い時点でもテストの�
 
 ## 実装・運用への影響
 
-- `pnpm harness:spec-approve <SBI Issue URL>` で、仕様の承認をコメントとして投稿する（投稿者は実行した人の `gh` のアカウント）。
-- `harness:run` は、`ready` が無くても、現在の spec digest に有効な承認があれば新方式として扱う。生成が実装されるまでは、新方式の run は「生成がまだ無い」と明示して止まる（fail-closed）。
+- `pnpm harness:spec-approve <SBI Issue URL>` は、`spec-approved` label を付ける（ADR-0009）。
+- `harness:run` は、`ready` が無くても、`spec-approved` label があれば新方式として扱う。生成が実装されるまでは、新方式の run は「生成がまだ無い」と明示して止まる（fail-closed）。
 - Trusted Acceptance の registration は version 2 になり、spec digest と生成したテストの digest を持つ（生成の PR で入れる）。
 
 ## 検証方法
 
-- 仕様の項目を変えると spec digest が変わり、古い承認では run が始まらない。
-- 編集されたコメント、bot、read 権限、権限を読めない人、撤回された承認では始まらない。
+- 生成後に仕様の項目を変えると spec digest が変わり、生成した Trusted Acceptance は CI で無効になる。
+- `spec-approved` label が無い SBI では生成方式の run は始まらない（ADR-0009）。
 - legacy `ready`: bot・write 未満の人が付けた、付けた人や権限を読めない、付けた後に本文か title が変わった（A→B→A を含む）ときは、`harness:run`・`harness:reverify`・CI のどれでも通らない。
 - 生成の PR 以降: 制御した違反を検出できないテストは登録されない。登録後のテストの改変を CI で検出する。
 

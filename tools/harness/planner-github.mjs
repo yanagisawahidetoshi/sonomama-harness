@@ -46,7 +46,8 @@ const labelDefinitions = {
   'api-schema': { color: '1d76db', description: 'Issue with a Planner-generated API Schema Proposal' },
   'needs-api-schema-review': { color: 'fbca04', description: 'API Schema Proposal awaiting human review; implementation must wait' },
   'api-schema-approved': { color: '0e8a16', description: 'Projection of a signed API Schema approval; not the source of truth' },
-  'spec-approved': { color: '0e8a16', description: 'Projection of a harness-spec approval comment; not the source of truth' },
+  'spec-approved': { color: '0e8a16', description: 'A human approved the SBI spec; the Execution Harness may start (ADR-0009)' },
+  'plan-approved': { color: '0e8a16', description: 'A human approved the SBI set of the PBI (ADR-0009)' },
 };
 export const githubCli = {
   async fetchIssue({ owner, repo, number }) {

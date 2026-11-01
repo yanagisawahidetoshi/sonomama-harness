@@ -92,7 +92,7 @@ function world({ pbiBody = '## 背景\n\nログインしたい。', comments = [
       { number: 201, title: 'SBI-001 a', body: sbiBody('SBI-001'), html_url: 'https://github.com/acme/app/issues/201', state: 'open', labels: [{ name: 'sbi' }] },
       { number: 202, title: 'SBI-002 b', body: sbiBody('SBI-002', 'implementation', ['SBI-001']), html_url: 'https://github.com/acme/app/issues/202', state: 'open', labels: [{ name: 'sbi' }] },
     ],
-    comments, posted: [], patched: [], versions: [], failVersions: false,
+    comments, posted: [], ensured: [], patched: [], versions: [], failVersions: false,
   };
   const github = {
     async fetchIssue() { return state.pbi; },
@@ -102,6 +102,9 @@ function world({ pbiBody = '## 背景\n\nログインしたい。', comments = [
     async bodyVersions() { if (state.failVersions) throw new Error('HTTP 502'); return state.versions; },
     async permission() { return permission; },
     async addComment(_ref, text) { state.posted.push(text); return { id: 9, body: text, html_url: `${pbi.url}#issuecomment-9` }; },
+    async ensureLabels(_ref, names) { state.ensured.push(...names); },
+    async addLabels(_ref, names) { state.posted.push(...names.map(name => `+${name}`)); },
+    async removeLabel(_ref, name) { state.posted.push(`-${name}`); },
   };
   return { state, github };
 }
@@ -145,29 +148,19 @@ describe('PBI plan commands', () => {
   });
 
   describe('given a PBI whose ## SBI構成 matches the SBI Issues on GitHub', () => {
-    it('when a human runs harness:pbi-plan-approve then the approval line of the plan digest is posted on the PBI', async () => {
+    // ADR-0009: the plan-approved label is the approval; the CLI only puts it on the PBI for a human who prefers the terminal.
+    it('when a human runs harness:pbi-plan-approve then the plan-approved label is added to the PBI and no comment is posted', async () => {
       const { state, github } = world({ pbiBody: body(currentPlan) });
       const result = await approvePbiPlan({ pbiUrl: pbi.url, github });
-      assert.deepEqual(state.posted, [`harness-pbi-plan: ${approvalKey(planDigest(currentPlan), 1)}`]);
+      assert.deepEqual(state.posted, ['+plan-approved']);
+      assert.deepEqual(state.ensured, ['plan-approved']);
       assert.equal(result.digest, planDigest(currentPlan));
-      assert.equal(result.revision, 1);
     });
-    it('when the human revokes then the revoke line is posted', async () => {
+    it('when the human revokes then the plan-approved label is removed', async () => {
       const { state, github } = world({ pbiBody: body(currentPlan) });
+      state.pbi.labels = [{ name: 'plan-approved' }];
       await approvePbiPlan({ pbiUrl: pbi.url, github, decision: 'revoke' });
-      assert.deepEqual(state.posted, [`harness-pbi-plan-revoke: ${approvalKey(planDigest(currentPlan), 1)}`]);
-    });
-    it('when the plan went back to an earlier content then the approval is posted for the new revision', async () => {
-      const { state, github } = world({ pbiBody: body(currentPlan) });
-      state.versions = [{ body: body(currentPlan), deletedAt: null }, { body: body(planOf(8, currentPlan.sbis.slice(0, 1))), deletedAt: null }];
-      await approvePbiPlan({ pbiUrl: pbi.url, github });
-      assert.deepEqual(state.posted, [`harness-pbi-plan: ${approvalKey(planDigest(currentPlan), 3)}`]);
-    });
-    it('when the edit history of the PBI cannot be read then nothing is posted', async () => {
-      const { state, github } = world({ pbiBody: body(currentPlan) });
-      state.failVersions = true;
-      await assert.rejects(approvePbiPlan({ pbiUrl: pbi.url, github }), /HTTP 502/);
-      assert.deepEqual(state.posted, []);
+      assert.deepEqual(state.posted, ['-plan-approved']);
     });
   });
 
