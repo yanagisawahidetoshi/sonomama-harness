@@ -14,8 +14,14 @@ import { providerAiReviewer } from './agents/ai-review-adapter.mjs';
 const sbiPath = '.harness/state/sample-sbi.json';
 const good = 'export function greet(name) { return `こんにちは、${name?.trim() || "ゲスト"}さん`; }';
 const agent = (content = good) => async () => ({ files: [{ path: 'greeting.mjs', content }] });
-// #165: a declared rule requires the verifiers whose appliesTo covers the SBI's paths, so the RLS SBIs also allow an API directory.
-const apiDirs = ['apps/api/db/'];
+// #246 N1: the completion requires the verifiers the actual diff needs, so the RLS SBIs change an RLS file of the API.
+// The Rails application verifier (Docker Compose) is kept out of that diff; the RLS Security Verifier is what these tests are about.
+const rlsFile = 'apps/api/db/rls.sql';
+const rlsChange = async (root, sbi) => {
+  await update(root, sbiPath, s => { sbi(s); s.allowedFiles.push(rlsFile); });
+  await update(root, '.harness/config/harness.json', c => { c.verifiers.find(v => v.id === 'rails').appliesTo = []; });
+  return async () => ({ files: [{ path: 'greeting.mjs', content: good }, { path: rlsFile, content: '-- tenant isolation\n' }] });
+};
 const rlsVerifier = root => update(root, '.harness/config/harness.json', c => c.securityVerifiers = [{ id: 'rails-rls-test', directory: 'apps/api', commands: [['node', '-e', 'require("node:assert/strict").ok(true)']] }]);
 // A connected adapter reviews the SHA it is given (#187).
 const review = (result, name = 'test-adapter') => async ({ headSha }) => ({ adapter: name, headSha, ...result });
@@ -50,8 +56,7 @@ describe('Implementation of an approved SBI starts without an implementation gat
   describe('given an approved SBI that declares RLS, a Human Gate risk with a pre-implementation security rule', () => {
     it('when harness:run starts then implements without a gate, runs the RLS Security Verifier and still needs two different humans to merge', () => fixture(async root => {
       await rlsVerifier(root);
-      await update(root, sbiPath, s => { s.risks = ['RLS']; s.allowedDirs = apiDirs; });
-      const run = await runHarness({ root, quiet: true, agent: agent() });
+      const run = await runHarness({ root, quiet: true, agent: await rlsChange(root, s => { s.risks = ['RLS']; }) });
       assert.equal(run.executionStatus, 'DONE');
       assert.equal(run.gate.required, false);
       assert.ok(run.securityAssessment.matchedRules.includes('SEC-RLS-001'));
@@ -65,11 +70,25 @@ describe('Implementation of an approved SBI starts without an implementation gat
       assert.equal(allowed.merge.autoMergeEligible, false);
     }));
     it('when the RLS Security Verifier is not configured then still never reaches DONE', () => fixture(async root => {
-      await update(root, sbiPath, s => { s.securityImpact = ['RLS']; s.allowedDirs = apiDirs; });
+      const rls = await rlsChange(root, s => { s.securityImpact = ['RLS']; });
       await update(root, '.harness/config/harness.json', c => { c.securityVerifiers = c.securityVerifiers.filter(v => v.id !== 'rails-rls-test'); });
-      const run = await runHarness({ root, quiet: true, agent: agent() });
+      const run = await runHarness({ root, quiet: true, agent: rls });
       assert.notEqual(run.executionStatus, 'DONE');
       assert.equal(run.escalation.code, 'SECURITY_VERIFIER_NOT_CONFIGURED');
+    }));
+  });
+  describe('given an approved SBI that declares RLS and allows the API directory, but whose change stays out of the API (#246 N1)', () => {
+    it('when the change is verified then the RLS verifier the preflight named is no longer required, while LEVEL 3 and two reviews stay', () => fixture(async root => {
+      await update(root, sbiPath, s => { s.securityImpact = ['RLS']; s.allowedDirs = ['apps/api/db/']; });
+      await update(root, '.harness/config/harness.json', c => { c.securityVerifiers = c.securityVerifiers.filter(v => v.id !== 'rails-rls-test'); });
+      const run = await runHarness({ root, quiet: true, agent: agent() });
+      assert.equal(run.riskPreflight.level, 3);
+      assert.equal(run.escalation, undefined, JSON.stringify(run.escalation));
+      assert.equal(run.executionStatus, 'DONE');
+      assert.equal(run.iterations.at(-1).securityVerification.requiredVerifiers.includes('rails-rls-test'), false);
+      assert.ok(run.securityAssessment.matchedRules.includes('SEC-RLS-001'));
+      assert.equal(run.risk.level, 3);
+      assert.equal(run.merge.requiredApprovals, 2);
     }));
   });
   describe('given an approved level 2 SBI', () => {

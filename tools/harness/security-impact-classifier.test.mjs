@@ -212,6 +212,25 @@ describe('Security Impact Classifier on the verifiers a rule declared by the SBI
       });
     });
   }
+  // #246 N2: an authentication change under apps/ that no authentication test covers requires all of them, failing closed.
+  describe('given SEC-AUTH-001 and a changed path under apps/ that no authentication test covers', () => {
+    const readme = { path: 'apps/README.md', status: 'M', added: 'ログインの説明' };
+    it('when the SBI declares AuthN and changes only apps/README.md then requires every authentication test', () => {
+      assert.deepEqual(required(classifySecurity({ files: [readme], sbi: { securityImpact: ['AuthN'] } }, policy)), authn);
+    });
+    it('when the same SBI also changes the admin then still requires every authentication test', () => {
+      assert.deepEqual(required(classifySecurity({ files: [...admin, readme], sbi: { securityImpact: ['AuthN'] } }, policy)), authn);
+    });
+    it('when SEC-AUTH-001 is not matched then apps/README.md requires no authentication test', () => {
+      assert.deepEqual(required(classifySecurity({ files: [readme], sbi: {} }, policy)), []);
+    });
+    it('when the uncovered change is outside apps/ then requires no authentication test', () => {
+      assert.deepEqual(required(classifySecurity({ files: [{ path: 'docs/product/login.md', status: 'M', added: 'ログイン' }], sbi: { securityImpact: ['AuthN'] } }, policy)), []);
+    });
+    it('when the SBI declares AuthN and changes compose.yaml then requires the API authentication test', () => {
+      assert.deepEqual(required(classifySecurity({ files: [{ path: 'compose.yaml', status: 'M', added: '      RAILS_ENV: test' }], sbi: { securityImpact: ['AuthN'] } }, policy)), ['authn-test']);
+    });
+  });
   describe('given an SBI that declares RLS', () => {
     it('when it changes only the admin then keeps the gate without requiring the RLS test', () => {
       const result = classifySecurity({ files: admin, sbi: { securityImpact: ['RLS'] } }, policy);
@@ -713,5 +732,38 @@ describe('Security Impact Classifier on Devise routes, Devise models, has_secure
     it('when .harness/verification/api-env.mjs adds them then does not match SEC-AUTH-001', () => {
       assert.equal(detected(assess([{ path: '.harness/verification/api-env.mjs', status: 'M', added: "'Then devise_for :users, has_secure_password and reauthenticate are not used'" }]), 'SEC-AUTH-001'), false);
     });
+  });
+});
+
+// #246 N3: a change to what the test runners run or skip can hide a test from every verifier, so a human reviews it at LEVEL 3.
+describe('Security Impact Classifier on test runner configuration', () => {
+  const verifiers = result => result.requiredVerifiers.filter(id => !policy.alwaysRequiredVerifiers.includes(id));
+  for (const [path, added] of [
+    ['apps/api/spec/spec_helper.rb', 'config.filter_run_excluding :slow'], ['apps/api/spec/rails_helper.rb', 'config.filter_run_excluding :slow'],
+    ['apps/api/.rspec', '--tag ~slow'], ['apps/admin/vite.config.ts', "test: { exclude: ['src/features/auth/**'] },"],
+    ['apps/admin/vitest.config.ts', "export default { test: { exclude: ['**/auth/**'] } };"], ['apps/mobile/jest.config.js', "  testPathIgnorePatterns: ['/auth/'],"],
+  ]) {
+    it(`when ${path} changes then matches SEC-VERIFY-001 at LEVEL 3 with two reviews and adds no automated verifier`, () => {
+      const result = assess([{ path, status: 'M', added }]);
+      assert.ok(detected(result, 'SEC-VERIFY-001'));
+      assert.equal(result.minimumRiskLevel, 3);
+      assert.equal(result.requiredHumanApprovals, 2);
+      assert.deepEqual(verifiers(result), []);
+    });
+  }
+  for (const [name, change] of [
+    ['adds a jest section', { added: '  "jest": {\n    "preset": "jest-expo"\n  },' }],
+    ['changes testPathIgnorePatterns in the jest section', { added: '    "testPathIgnorePatterns": ["/auth/"]', deleted: '    "testPathIgnorePatterns": []' }],
+    ['removes the testMatch of the jest section', { deleted: '    "testMatch": ["**/*.test.ts"]' }],
+  ]) {
+    it(`when apps/mobile/package.json ${name} then matches SEC-VERIFY-001`, () => {
+      assert.ok(detected(assess([{ path: 'apps/mobile/package.json', status: 'M', ...change }]), 'SEC-VERIFY-001'));
+    });
+  }
+  it('when apps/mobile/package.json only bumps the jest dependency then does not match SEC-VERIFY-001', () => {
+    assert.equal(detected(assess([{ path: 'apps/mobile/package.json', status: 'M', added: '    "jest": "30.1.0",', deleted: '    "jest": "30.0.0",' }]), 'SEC-VERIFY-001'), false);
+  });
+  it('when a test file changes then does not match SEC-VERIFY-001', () => {
+    assert.equal(detected(assess([{ path: 'apps/admin/src/features/auth/useSignIn.test.ts', status: 'M', added: "it('signs in', () => {});" }]), 'SEC-VERIFY-001'), false);
   });
 });

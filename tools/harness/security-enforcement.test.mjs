@@ -122,13 +122,19 @@ describe('Security cannot be overridden by completion or approval', () => {
 });
 
 describe('Security enforcement in the execution loop', () => {
-  // #165: a declared rule requires the verifiers whose appliesTo covers the SBI's paths, so the SBI also allows an API directory.
-  const rlsSbi = s => { s.securityImpact = ['RLS']; s.allowedDirs = ['apps/api/db/']; };
+  // #246 N1: the completion requires the verifiers the actual diff needs, so the SBI changes an RLS file of the API.
+  // The Rails application verifier (Docker Compose) is kept out of that diff; the RLS Security Verifier is what these tests are about.
+  const rlsFile = 'apps/api/db/rls.sql';
+  const rlsSbi = s => { s.securityImpact = ['RLS']; s.allowedFiles.push(rlsFile); };
+  const rlsAgent = async root => {
+    await update(root, '.harness/config/harness.json', c => { c.verifiers.find(v => v.id === 'rails').appliesTo = []; });
+    return async () => ({ files: [{ path: 'greeting.mjs', content: good }, { path: rlsFile, content: '-- tenant isolation\n' }] });
+  };
   describe('given RLS metadata and no installed RLS verifier', () => {
     it('when the approved SBI runs then reports NOT_CONFIGURED and never DONE', () => fixture(async root => {
       await update(root, '.harness/state/sample-sbi.json', rlsSbi);
       await update(root, '.harness/config/harness.json', c => { c.securityVerifiers = c.securityVerifiers.filter(v => v.id !== 'rails-rls-test'); });
-      const run = await runHarness({ root, quiet: true });
+      const run = await runHarness({ root, quiet: true, agent: await rlsAgent(root) });
       assert.notEqual(run.executionStatus, 'DONE');
       const evidence = await readJson(join(root, run.runDir, 'security-verification.json'));
       assert.equal(evidence.checks.find(c => c.id === 'rails-rls-test').status, 'NOT_CONFIGURED');
@@ -136,9 +142,10 @@ describe('Security enforcement in the execution loop', () => {
     it('when a trusted RLS command is configured then verifies it and still requires two merge reviewers', () => fixture(async root => {
       await update(root, '.harness/state/sample-sbi.json', rlsSbi);
       await update(root, '.harness/config/harness.json', c => c.securityVerifiers = [{ id: 'rails-rls-test', directory: 'apps/api', commands: [['node', '-e', 'require("node:assert/strict").ok(true)']] }]);
-      const run = await runHarness({ root, quiet: true });
+      const run = await runHarness({ root, quiet: true, agent: await rlsAgent(root) });
       let resumed = run;
       assert.equal(resumed.executionStatus, 'DONE');
+      assert.equal(run.iterations.at(-1).securityVerification.checks.find(c => c.id === 'rails-rls-test').status, 'PASS');
       assert.equal(resumed.risk.level, 3);
       for (const id of ['A', 'B']) await recordDecision({ root, runId: run.id, purpose: 'merge', identityProvider: human(id) });
       resumed = await resumeRun({ root, runId: run.id, quiet: true });
