@@ -1,8 +1,8 @@
 # ADR-0009: SBIの仕様承認とPBIの構成承認を、GitHub Issueのラベルで行う（MVP）
 
-- 状態: Proposed
+- 状態: Accepted（2026-11-01、柳沢英俊が承認）
 - 日付: 2026-11-01
-- 判断者: 柳沢英俊（方針は Issue #239 で決定済み。状態を Accepted にするのは判断者）
+- 判断者: 柳沢英俊（方針は Issue #239 で決定）
 - 関連Issue: #239、#147、#166
 - 関連SBI: なし
 - 関連Design Docs: [.ai/workflows/pbi-sbi-planner.md](../../.ai/workflows/pbi-sbi-planner.md)
