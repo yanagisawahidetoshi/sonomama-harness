@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { inspectViolation, judgeViolation, violationLimits } from './acceptance-violation.mjs';
+import { inspectViolation, judgeViolation, violationLimits, violationResponseSchema } from './acceptance-violation.mjs';
 
 // #147: controlled violation. For a Scenario that already passes before the implementation, the generation agent proposes a minimal change
 // to the application that must make that Scenario's expected outcome fail. The Harness accepts or rejects the proposal mechanically.
@@ -121,5 +121,16 @@ describe('Judging the run of a controlled violation', () => {
   }
   it('when the run produced no report then it is an environment failure, not a test quality result', () => {
     assert.equal(judge([], { error: 'Docker is not running' }).outcome, 'environment');
+  });
+});
+
+// The claude CLI cannot resolve the draft 2020-12 meta-schema Zod names in $schema and refuses the call before it starts.
+describe('Response schema of the violation proposal', () => {
+  describe('given the schema handed to the provider', () => {
+    it('when it is read then it declares no $schema and still describes the answer object', () => {
+      assert.equal('$schema' in violationResponseSchema, false);
+      assert.equal(violationResponseSchema.type, 'object');
+      assert.deepEqual(Object.keys(violationResponseSchema.properties), ['violations', 'escalation']);
+    });
   });
 });

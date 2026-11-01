@@ -9,7 +9,7 @@ import { assertWritablePath } from './workspace.mjs';
 import { configSchema, generatedRegistrationSchema } from './schemas.mjs';
 import { readAcceptance, withAcceptance } from './acceptance-registry.mjs';
 import { specDigest } from './spec-approval.mjs';
-import { approvedSpec, generateAcceptance, verifyGeneratedRegistration } from './acceptance-generation.mjs';
+import { approvedSpec, generateAcceptance, verifyGeneratedRegistration, generationResponseSchema } from './acceptance-generation.mjs';
 
 const pbi = { owner: 'acme', repo: 'app', number: 3, url: 'https://github.com/acme/app/issues/3', title: '講座' };
 const body = renderSbiBody({
@@ -248,4 +248,15 @@ describe('Re-verifying a generated registration', () => {
     await writeFile(join(root, 'apps/api/spec/acceptance/sbi_7/helper.rb'), 'def auth(_) = {}');
     assert.match((await verifyGeneratedRegistration({ root, registration, issue })).join('\n'), /helper\.rb/);
   }));
+});
+
+// The claude CLI cannot resolve the draft 2020-12 meta-schema Zod names in $schema and refuses the call before it starts.
+describe('Response schema of the acceptance generation', () => {
+  describe('given the schema handed to the provider', () => {
+    it('when it is read then it declares no $schema and still describes the answer object', () => {
+      assert.equal('$schema' in generationResponseSchema, false);
+      assert.equal(generationResponseSchema.type, 'object');
+      assert.deepEqual(Object.keys(generationResponseSchema.properties), ['files', 'mapping', 'escalation']);
+    });
+  });
 });
