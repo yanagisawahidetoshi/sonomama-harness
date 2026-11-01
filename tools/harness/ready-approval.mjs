@@ -5,7 +5,7 @@ import { isBot, canMerge } from './github-pr.mjs';
 // change (renamed), and any of them at or after the latest ready voids it. Going from A to B and back to A also voids it; the human adds ready again.
 // The dates have only seconds, so an edit in the same second as ready counts as after it. Anything GitHub cannot date fails closed.
 // On top of the dates, the title and body GitHub kept as they were at ready must have the same digest as what the run takes.
-// #200: as for harness-spec, only a human with write access approves; the person who added the latest ready decides.
+// #200: only a human with write access approves; the person who added the latest ready decides.
 // The REST body and the GraphQL history may differ only in line endings, which change nothing the run reads.
 const digestOf = ({ title, body }) => createHash('sha256').update(JSON.stringify([title ?? null, body?.replaceAll('\r\n', '\n') ?? null])).digest('hex');
 const time = value => typeof value === 'string' ? Date.parse(value) : NaN;
@@ -45,7 +45,7 @@ export function readyBinding({ url, issue, timeline, history }) {
   return reasons;
 }
 
-// The same rule as a harness-spec approval (isBot, canMerge); role_name also has to be a write role, so triage or a custom role never approves.
+// The same rule as a GitHub Review (isBot, canMerge); role_name also has to be a write role, so triage or a custom role never approves.
 export function readyApprover({ url, actor, access }) {
   const login = actor?.login;
   if (!login) return [`${url} ready was added by an actor GitHub does not record, so nobody approved it`];

@@ -10,7 +10,7 @@ import { githubCli } from './planner-github.mjs';
 import { withEvidenceProtection, redactText, hasSecret } from './evidence-protection.mjs';
 import { planOf, planDigest, writePlanSection } from './pbi-plan.mjs';
 
-// Every generated SBI carries both labels. A human removes needs-review and adds ready; the Planner never does.
+// Every generated SBI carries both labels. A human replaces needs-review with spec-approved (or ready); the Planner never does.
 export const sbiLabels = Object.freeze(['sbi', 'needs-review']);
 
 // Deterministic markers make re-runs idempotent: an SBI Issue is keyed by PBI URL + SBI ID + content digest, the PBI comment by PBI URL.
@@ -104,7 +104,8 @@ async function planProtected({ root, issueUrl, provider, quiet, agent, github, s
     // Provider output is published outside the Harness. Reject credential-like values before any GitHub write, as the execution loop does before applying files.
     if (hasSecret(JSON.stringify(response.sbis))) throw new Error('Secret/Credential detected in planner candidates; rejected before any GitHub write');
     summary.status = 'PUBLISHING'; await save();
-    await github.ensureLabels(ref, sbiLabels);
+    // The approval labels exist so that a human can pick them on GitHub (ADR-0009); the Planner never adds them.
+    await github.ensureLabels(ref, [...sbiLabels, 'spec-approved', 'plan-approved']);
     // The marker only finds candidates. Reuse requires the Issue, as it exists now, to be exactly what this run generated and still awaiting review.
     const existing = new Map((await github.listIssues(ref, sbiLabels[0])).flatMap(issue => { const match = markerPattern.exec(issue.body || ''); return match && match[1] === ref.url ? [[match[2], { issue, digest: match[3] || null }]] : []; }));
     const normalize = text => String(text ?? '').replaceAll('\r\n', '\n').trimEnd();
@@ -134,7 +135,7 @@ async function planProtected({ root, issueUrl, provider, quiet, agent, github, s
       await json(join(directory, 'issues.json'), { created: summary.created, comment: null });
       await save(); log(`${reuse ? 'Reused' : 'Created'} #${issue.number} ${title}`);
     }
-    // The complete SBI set goes into the PBI body as ## SBI構成; a human approves it once with harness:pbi-plan-approve.
+    // The complete SBI set goes into the PBI body as ## SBI構成; a human approves it with the plan-approved label.
     const plan = planOf(ref.number, summary.created.map(c => { const sbi = response.sbis.find(s => s.id === c.sbiId); return { id: c.sbiId, number: c.number, kind: sbi.kind, dependsOn: sbi.dependsOn }; }));
     // Re-read the PBI just before writing: a human may have edited it while the provider ran, and that edit must not be overwritten.
     await writePlanSection({ ref, issue: await github.fetchIssue(ref), plan, github });
