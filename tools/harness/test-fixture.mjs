@@ -14,6 +14,8 @@ async function makeTemplate() {
   process.once('exit', () => rmSync(root, { recursive: true, force: true }));
   const ignored = (await git(source, ['ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '--', 'apps', 'prototypes', 'packages'])).stdout
     .split('\n').filter(Boolean).map(path => join(source, path.replace(/\/$/, '')));
+  // The repository's API contract is not a fixture input: a fixture starts without one, and a test that needs a contract writes its own.
+  ignored.push(join(source, 'packages/api-schema/openapi.yaml'));
   for (const path of ['apps', 'prototypes', 'packages', 'docs', '.harness/config', '.harness/acceptance', '.harness/verification', '.harness/rules', '.harness/skills', '.harness/state/sample-sbi.json', 'tools/harness', 'AGENTS.md', 'package.json', 'pnpm-workspace.yaml', '.gitignore']) {
     await mkdir(join(root, path, '..'), { recursive: true });
     // Locally installed dependencies and build output are not fixture inputs; only the files Git would see are copied.
