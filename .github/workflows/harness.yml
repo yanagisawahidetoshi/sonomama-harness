@@ -242,6 +242,8 @@ jobs:
           HARNESS_ACCEPTANCE_RESULTS: ${{ runner.temp }}/acceptance-results
           HARNESS_PULL_REQUEST: ${{ github.event.pull_request.number }}
           HARNESS_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          # The base the diff must contain (#184); a push to main has no base and judges --all.
+          HARNESS_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           GH_TOKEN: ${{ github.token }}
       # A pull_request run reads this workflow from the merge ref but the Harness from the PR head, so a head branched before a job was added
       # judges without knowing it (#163: maestro failed and the Judge passed). Whatever the head's Judge says, a failed or cancelled job, or an

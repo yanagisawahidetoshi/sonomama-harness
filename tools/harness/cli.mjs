@@ -170,7 +170,7 @@ try {
       if (!workspace || workspace === resolve(root)) throw new Error('judge --trusted requires HARNESS_WORKSPACE, a PR tree apart from the Harness root');
       if (!base) throw new Error('judge --trusted requires --base REF');
       const judged = await runTrustedJudge({ root, workspace, base, repository: process.env.GITHUB_REPOSITORY, pullNumber: process.env.HARNESS_PULL_REQUEST || undefined,
-        headSha: process.env.HARNESS_HEAD_SHA ?? '', log: line => console.log(redactText(line)) });
+        headSha: process.env.HARNESS_HEAD_SHA ?? '', baseSha: process.env.HARNESS_BASE_SHA || undefined, log: line => console.log(redactText(line)) });
       if (judged.run) console.log(`Evidence: run ${judged.run.id} attempt ${judged.run.run_attempt} of ${judged.run.path}`);
       if (judged.checks) {
         for (const line of describeImpact(judged.impact)) console.log(redactText(line));

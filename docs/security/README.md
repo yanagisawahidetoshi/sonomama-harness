@@ -65,4 +65,4 @@ renameやcopyは差分に現れない（--no-renames）。移したファイル�
 
 テストのfixtureが、検知するパターンをそのまま書く必要があるときは、security.jsonのcontentScanExceptionsに、ファイル・対象の検査・外す文字列・理由を書いて外す。外した場合は証跡に残る。
 
-CIは、ワークフローがPRのbase commitを環境変数HARNESS_BASE_SHAで渡したとき、比較に使うbaseがそのcommitを含むことを確かめる。
+PRのCI（harness.ymlとcompletion-judge.ymlのJudge）は、PRのbase commitを環境変数HARNESS_BASE_SHAで受け取り、比較に使うbaseがそのcommitを含むことを確かめる。含まなければ不合格にする。mainへのpush（--all）はbaseを持たないので確かめない。
