@@ -56,6 +56,30 @@ describe('Generated Trusted Acceptance quality: mapping', () => {
     const value = generated({ files: [{ path, content: source(owner) }] });
     assert.match(inspect(value).findings.map(f => f.message).join('\n'), /担当外の講師が閲覧する: 403を返す/);
   });
+  describe('given an example description that contains an escaped quote', () => {
+    const quoted = (literal, metadata = '') => `  it ${literal}${metadata} do
+    get "/api/v1/health"
+    expect(response).to have_http_status(:ok)
+  end`;
+    const withExample = (literal, description, metadata) => generated({
+      files: [{ path, content: source(`${quoted(literal, metadata)}\n\n${stranger}`) }],
+      mapping: [{ ...generated().mapping[0], examples: [{ path, description }] }, generated().mapping[1]],
+    });
+    it('when a double-quoted description escapes " and the mapping names the text Ruby reads then it passes', () => {
+      assert.deepEqual(inspect(withExample('"担当講師が閲覧する: body は {\\"status\\":\\"ok\\"}"', '担当講師が閲覧する: body は {"status":"ok"}')), { status: 'PASS', findings: [] });
+    });
+    it("when a single-quoted description escapes ' and the mapping names the text Ruby reads then it passes", () => {
+      assert.deepEqual(inspect(withExample("'担当講師が閲覧する: it\\'s ok'", "担当講師が閲覧する: it's ok")), { status: 'PASS', findings: [] });
+    });
+    it('when the mapping names the description with its backslashes then it fails because Ruby reads no backslash there', () => {
+      const value = withExample('"担当講師が閲覧する: {\\"status\\"}"', '担当講師が閲覧する: {\\"status\\"}');
+      assert.match(inspect(value).findings.map(f => f.message).join('\n'), /is not in the generated files/);
+    });
+    it('when skip metadata follows a description with an escaped quote then it still fails as not run normally', () => {
+      const value = withExample('"担当講師が閲覧する: {\\"status\\"}"', '担当講師が閲覧する: {"status"}', ', :skip');
+      assert.match(inspect(value).findings.map(f => f.message).join('\n'), /skips or focuses it/);
+    });
+  });
   it('when the mapping names an AC the spec does not have then it fails', () => {
     const value = generated({ mapping: [...generated().mapping, { scenario: '担当講師が閲覧する', acceptanceIds: ['AC-9'], examples: generated().mapping[0].examples }] });
     assert.match(inspect(value).findings.map(f => f.message).join('\n'), /AC-9/);
