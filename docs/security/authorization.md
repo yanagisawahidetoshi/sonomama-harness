@@ -32,6 +32,14 @@ Harnessのコード（`tools/harness/`直下の`.mjs`）は、自身の承認台
 - 1行のJSON（`{"openapi": "3.1.0", "security": []}`）や、flow mappingの中のキー（`get: {security: []}`）
 - 明示キー（`? security`）、`security: null`・`security: ~`、JavaScriptの識別子を値にしたもの（`security: requirements`）
 
+SBIの本文（タイトル・目的・受け入れ要件と、PRに入るRun snapshot）のうち、認証が要らないことを述べるだけの言い回しは、SEC-AUTH-001の「認証」の検出から除く（#233、security.jsonの`ignoredMetadataPatterns`と、pr-risk.jsonの`authn_changed`の`ignoredPatterns`）。除くのは次の3つの形だけ。同じ文に「ようにする」「可能にする」「に変更」「化」「外す」「削除」「廃止」「やめる」「緩和」「許可」があるときは、境界を変える記述とみなして除かない。
+
+- 「認証不要の」「認証なしで」のように、要らないことを述べる形。「認証不要にする」「認証不要化」のように、既存の境界を変える形は除かない。
+- 「認証ヘッダや Cookie を付けない」「認証ヘッダも Cookie も持たない」のように、付けないリクエストやクライアントを述べる形。
+- 「未認証クライアントでも疎通確認できる」のように、未認証でも呼べることを述べる形。「未認証ユーザーは 401 を返す」のような拒否の記述は除かない。
+
+同じSBIで「認証を追加する」などの記述や、コードの変更行の`authenticate`などの語、ファイル名による検出、SBIが宣言した`securityImpact`は、これまでどおり検出する。英語の言い回しは除かない（Plannerは日本語で書き、英語の`authentication`はlanes.jsonのSecurity Gateにも当たるため）。
+
 Railsの認可テスト（rails-authz-test）は、`apps/api/spec/authorization/`の`*_spec.rb`をテスト用DBで実行する。specが無い、テストが0件、skip・pending・focusで実行されないテストがある場合は失敗にする。
 役割ごとの許可・拒否のspecは、認可を実装するSBIが、ここから参照する権限表に沿って書く。権限表が決まるまでは、`apps/api/`の認可を変えるPRはこの検証で必ず失敗する。
 
