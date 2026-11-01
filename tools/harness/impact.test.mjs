@@ -688,6 +688,11 @@ describe('CI workflow setup', () => {
       assert.equal(judge.env.HARNESS_HEAD_SHA, head);
     });
 
+    // #184: a pull request also names its base commit, so the Judge checks that the base it diffs from contains it; a push to main has none.
+    it('when the Judge runs on a pull request then it is told the base commit of the event', () => {
+      assert.equal(judge.env.HARNESS_BASE_SHA, '${{ github.event.pull_request.base.sha }}');
+    });
+
     it('when the impact reported no maestro output then the maestro job does not start', () => {
       assert.match(workflow.jobs.maestro.if, /needs\.impact\.outputs\.maestro != ''/);
     });
