@@ -152,7 +152,10 @@ describe('API Docs Server', () => {
 
   describe('given a Source of Truth that cannot be shown as is', () => {
     const refused = async (root, pattern) => {
-      await assert.rejects(startApiDocs({ root, port: 0 }), pattern);
+      // A server that starts anyway is closed, so the failed assertion ends the test instead of keeping the process alive.
+      const started = startApiDocs({ root, port: 0 });
+      started.then(docs => docs.server.close(), () => {});
+      await assert.rejects(started, pattern);
     };
     it('when packages/api-schema/openapi.yaml does not exist then refuses and names the file', () => fixture(async root => {
       await refused(root, /packages\/api-schema\/openapi\.yaml/);
