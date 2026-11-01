@@ -2,7 +2,7 @@
 
 - 状態: Accepted（2026-10-31、柳沢英俊が承認）
 - 日付: 2026-10-31
-- 改訂: 2026-10-31、柳沢英俊の決定で、実行 job を `pull_request_target` から `pull_request` に戻した。同日、専用 GitHub App を見送り、証拠の作り手を変える PR は人が確認する構成にした（この改訂の PR の merge で承認）
+- 改訂: 2026-10-31、柳沢英俊の決定で、実行 job を `pull_request_target` から `pull_request` に戻した。同日、専用 GitHub App を見送り、証拠の作り手を変える PR は人が確認する構成にした（この改訂の PR の merge で承認）。同日、ruleset の切替後の偽装の確認（#234、#235）で API による偽装が通ることがわかり、既知の制約と merge の前の確認を追記した（柳沢英俊の指示。この PR の merge で承認）
 - 判断者: 柳沢英俊
 - 関連Issue: #168、#147、#148、#100
 - 関連SBI: なし
@@ -63,12 +63,13 @@
   - neutral は GitHub の必須チェックを満たすので、人が確認して merge できる。Harness の merge 判定（`MERGE_ALLOWED`・`autoMergeEligible`）は success だけを数えるので、自動 merge の対象にはならない。repo の auto-merge は無効のままにする。
   - 通常の L1 / L2 の変更は、今までの条件を満たせば今までどおり自動で判定する。
 - **check run は、判定の結果だけを書く job が `checks: write` の `GITHUB_TOKEN` で出す。** 名前は `Completion Judge`。ruleset の必須チェックを `harness` からこれに切り替える（GitHub Actions、integration_id 15368）。専用 GitHub App・environment・App の秘密鍵は、今は導入しない。
-  - 残余リスク: spike のとおり、同じ GitHub Actions から同じ名前の check を出せば偽装できる。偽装には PR が `.github/**` を変える必要があり、それは producer の変更なので人が確認する。機械的には防がない。
+  - 既知の制約（ruleset の切替後に #234、#235 で確認）: PR の `pull_request` の workflow から `checks: write` の `GITHUB_TOKEN` で同じ名前の check run を後から作ると、本物の `Completion Judge` の FAIL を必須チェックの上で隠せる。API で作った check run は本物と同じ check suite に入り、GitHub は同じ suite の同じ名前のうち新しい方を使う。PR の画面も SUCCESS になり、merge できる状態（UNSTABLE）になった。job 名を `Completion Judge` にする偽装は別の suite に入るので、本物の failure が残り BLOCKED のままだった。どちらの偽装も PR が `.github/**` を変える必要がある。機械的には防がない。
+  - 暫定の運用: `.github/**` か `.harness/**` を変える PR は、PR の画面の必須チェックの表示を信用しない。merge の前に、`Completion Judge` の workflow run（`pull_request_target`、main の workflow）の `judge` と `publish` の結論を確かめてから、人が merge する。
 - **判定コードを変える PR**: 合否は main の判定コードで出す。PR 側の `tools/harness` は harness-test（実行）で検証する。PR の `.harness/rules` の変更は merge 後に効く。main 側のルールが要求する検証を PR が消しても、その PR では要求され続ける。
 - **版ずれ**: impact と judge を同じ main のコードで動かすので、要求する verifier と判定の版ずれは起きない。実行の run が古い workflow で動いて job が足りなければ FAIL にする。
 - **不変条件: judge の workflow・判定コード・ルールの変更は、main に merge されるまで、どの PR の判定にも影響しない。** その PR 自身の判定も、変更前の main のもので行う。実行の workflow の変更はその PR の run で動くが、judge はその PR を `MANUAL_REVIEW_REQUIRED` にする（producer の変更）。
 - **Actions の event policy**: この repo は public で、2026-12-02 から event policy の無い public repo では `pull_request_target` が既定で無効になる。event policy で `pull_request_target` を許可し、対象は judge の workflow ファイルだけに限る。
-- **専用 GitHub App を導入する条件**（どれかが実際のボトルネックかリスクになったら、別 Issue で check の出し手を App に固定する）: AI Agent が大量の PR を自動で作る。workflow・Harness の変更の人のレビューが運用の負荷になる。同じ integration からの同名 check の偽装を、機械的に完全に防ぐ必要が出る。auto-merge の範囲を Security・workflow・Harness の変更まで広げたい。
+- **専用 GitHub App を導入する条件**（どれかが起きたら、別 Issue で check の出し手を App に固定し、`Completion Judge` の check の identity を分ける。上の暫定の運用はそれまでのもの）: merge の権限を持つ人が増える。bot や Agent に merge を任せる。auto-merge を有効にする。`.github/**`・`.harness/**` の変更を人が毎回は精査しなくなる。PR の画面の必須チェックだけで merge の可否を機械的に決めたくなる。AI Agent が大量の PR を自動で作る。auto-merge の範囲を Security・workflow・Harness の変更まで広げたい。
 - **運用の段階（bootstrap policy）**: 今の bypass の穴は、次の段階の方針として受け入れる。一時的な例外とはしない。
   - Personal / Bootstrap（今）: collaborator は実質1人。承認レビュー数は 0 のまま（PR の作成者は自分の PR を承認できず、作成も同じアカウントで行うため）。`MANUAL_REVIEW_REQUIRED` の PR は repo owner が内容を確かめて merge する。
   - Team / Production: 承認レビュー数を 1 以上にし、L3 は異なる2人にする。CODEOWNERS と ruleset を有効にする。admin の bypass は置かないか、break-glass として扱う。`.github/workflows/**` と Security 系の変更は高リスクとして扱う。provider の identity と権限を個人のアカウントから切り離す。
@@ -90,7 +91,7 @@ check の偽装を機械的に防ぐ専用 App は、今の規模では運用の
 
 ### Negative / Trade-offs
 
-- 同名 check の偽装は機械的には防げない。producer の変更を人が見落とすと通る。
+- 同名 check の偽装は機械的には防げない。PR の画面の表示だけを見て merge すると、FAIL の PR が通る。`Completion Judge` の workflow run の結論を確かめる手間が、producer を変える PR の merge のたびにかかる。
 - PR のコードは自分のテストの出力を偽れる（`spec_helper` や Gemfile は PR 側）。ADR-0005 と同じく、保護したテストの digest 照合と PR Review に残る。
 - Harness 自身・workflow・root の依存を変える PR は、自動では通らない。Renovate の root の依存更新もここに入る。緩和（実行を固定した image のコンテナで動かすなど）は別の Issue で扱う。
 - judge は実行の run が終わるまで runner を占有して待つ。実行の run を re-run したときは、judge も re-run が要る。
@@ -107,7 +108,8 @@ check の偽装を機械的に防ぐ専用 App は、今の規模では運用の
 ## 検証方法
 
 - 回帰テスト（実装 PR で先に書く）: 通常の変更は、要求した verifier の job がすべて success なら PASS。要求した verifier の job が実行の run に無いときは FAIL。producer のパスがあり、ほかが通っていれば `MANUAL_REVIEW_REQUIRED`（neutral）で、Harness の merge 判定は通さない。producer の変更とほかの失敗が重なれば FAIL。head SHA・event・workflow が違う run は使わない。artifact の欠落・head SHA の不一致・不明な skipped は FAIL。judge が PR の tree を判定コードとして読まず、PR の code を install も実行もしないこと。judge の workflow は `pull_request_target` だけで動くこと。
-- 切替後に、通常の変更の PR が `Completion Judge` の success で merge できることと、`.github/**` を変える PR が neutral になることを確かめる。
+- 切替の前に、#227 で docs だけの変更が success、`.harness/rules` の追加が neutral になることを確かめた。
+- 切替の後に、本物の judge が FAIL を出す PR で偽装を確かめた。job 名による偽装（#234）は BLOCKED、API による偽装（#235）は UNSTABLE（merge できる）。auto-merge の有効化は「Auto merge is not allowed for this repository」で拒否された。
 
 ## 再検討条件 / 撤回条件
 
@@ -118,7 +120,7 @@ check の偽装を機械的に防ぐ専用 App は、今の規模では運用の
 
 ## 関連資料
 
-- Issue #168、spike の PR #208〜#213
+- Issue #168、spike の PR #208〜#213、確認の PR #227、#234、#235
 - [Actions pull_request_target and environment branch protections changes](https://github.blog/changelog/2025-11-07-actions-pull_request_target-and-environment-branch-protections-changes/)
 - [Securely using pull_request_target](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target)
 - [Workflow execution protections in GitHub Actions generally available](https://github.blog/changelog/2026-09-17-workflow-execution-protections-in-github-actions-generally-available/)

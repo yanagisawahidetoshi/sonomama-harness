@@ -31,8 +31,8 @@
 - 手書きのTrusted Acceptanceの登録（version 1）はmain側のものだけを使う。生成した登録（version 2）はPRのものを使い、spec digestで検査する。
 - forkからのPRは`judge`を動かさず、`publish`が`failure`を出す。
 - 実行の`pull_request` runをre-runしたときは、`Completion Judge` workflowもre-runする。
-- 同じGitHub Actionsから同じ名前のcheckを出せば偽装できる。これは受け入れた残余リスクで、作り手を変えるPRを人が確認して防ぐ（ADR-0008）。
-- rulesetを`Completion Judge`に切り替えるまでは、今の`harness` jobが必須チェックのまま。
+- 必須チェックは`Completion Judge`（GitHub Actions、integration_id 15368）。
+- PRのworkflowから`checks: write`の`GITHUB_TOKEN`で同じ名前のcheck runを後から作ると、本物のFAILが同じcheck suiteで上書きされ、必須チェックもPRの画面もSUCCESSになる（#235）。そのため`.github/**`か`.harness/**`を変えるPRは、画面の表示ではなく`Completion Judge` workflow runの`judge`と`publish`の結論を確かめてから人がmergeする。専用Appを入れるまでの暫定の運用で、条件はADR-0008にある。
 
 ## Maestro（mobile E2E）
 
