@@ -145,6 +145,28 @@ describe('Verifier isolation', () => {
       } finally { await rm(workspace, { recursive: true, force: true }); }
     }));
   });
+  describe('given the Harness process may die before it removes the verifier container', () => {
+    const lifetime = call => call.args.at(-2) === 'sleep' ? call.args.at(-1) : undefined;
+    it('when the container is started then Docker removes it and its volumes as soon as it stops', () => fixture(async root => fakeDocker(async ({ docker, calls }) => {
+      const { config } = await check(root);
+      config.isolation = { docker };
+      admin(config);
+      await verify({ root, workspace: root, config, sbi, files: [{ path: 'apps/admin/src/a.ts' }] });
+      assert.ok(run(await calls()).args.includes('--rm'));
+    })));
+    it('when the container is started then it stops by itself only after every setup and verification command could use its whole limit', () => fixture(async root => fakeDocker(async ({ docker, calls }) => {
+      const { config } = await check(root);
+      config.isolation = { docker };
+      const ok = ['node', '-e', 'process.exit(0)'];
+      admin(config, { setupCommands: [ok, ok], commands: [ok, ok, ok], setupTimeoutMs: 600000, timeoutMs: 900000 });
+      await verify({ root, workspace: root, config, sbi, files: [{ path: 'apps/admin/src/a.ts' }] });
+      const seconds = lifetime(run(await calls()));
+      assert.match(seconds ?? '', /^\d+$/, 'the container sleeps for a finite number of seconds instead of forever');
+      const commandsMs = 2 * 600000 + 3 * 900000;
+      assert.ok(Number(seconds) * 1000 > commandsMs, 'each command has its own limit, so the lifetime covers all of them back to back');
+      assert.ok(Number(seconds) * 1000 <= commandsMs + 15 * 60000, 'an orphaned container does not outlive the run by more than a few minutes');
+    })));
+  });
 
   describe('given Docker is unavailable', () => {
     for (const [name, setup] of [['the docker CLI is not installed', () => ({ docker: '/nonexistent/docker' })], ['the Docker daemon is unreachable', null]]) {
