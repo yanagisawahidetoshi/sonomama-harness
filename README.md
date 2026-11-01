@@ -15,7 +15,7 @@ Rails API・Expo・React adminの3アプリは開発環境まで構築済みで�
 | apps/admin | React + Vite（管理画面）。Vitest・Biome・buildを接続済み。業務画面は未実装 | [apps/admin/README.md](apps/admin/README.md) |
 | prototypes/web・mobile | デザイナー用の試作workspace。軽量ゲートで検証する | [Prototype Lane](#prototype-lane--production-lane) |
 | packages/api-schema | OpenAPI 3.1のSSOTの置き場所。`openapi.yaml`はまだ無い（最初のOpenAPI Schema SBIで追加する）。認証は特定Providerに依存しない`bearer-jwt` / `bearerAuth` | [packages/api-schema/README.md](packages/api-schema/README.md) |
-| Harness | 実装ループ、Risk・承認・MERGE_ALLOWED判定、PBI → SBI Planner、API Schema Planner、GitHub PR Adapter | 本README、[.ai/workflows/](.ai/workflows/) |
+| Harness | 実装ループ、Risk・承認・MERGE_ALLOWED判定、PBI → SBI Planner、GitHub PR Adapter | 本README、[.ai/workflows/](.ai/workflows/) |
 | CI | SBIと差分から必要なVerifierを選び、matrixで並列実行する。`harness` jobがCompletion Judge（Trusted AcceptanceとSecurity Verifierも実行）。Production変更はSBI Issue由来のRunが必須。必須チェック名は`harness` | [.ai/workflows/ci.md](.ai/workflows/ci.md) |
 | 認証 | Auth Providerは未決定。Provider固有のSDK・gemは入れていない | [apps/api/README.md](apps/api/README.md#認証) |
 | GitHub Ruleset | 定義は[.github/rulesets/main.json](.github/rulesets/main.json)。GitHubへ適用済み（ruleset id 26088284）。PR必須・`harness`必須・force push / 削除禁止・必要な承認数0（人数はHarnessが判定） | [docs/workflows/github-ruleset.md](docs/workflows/github-ruleset.md) |
@@ -84,13 +84,10 @@ FAILED・ESCALATED・REJECTED・CI以外の理由のBLOCKEDはexit 2、PR作成�
 | .harness/rules/human-gates.json | SBI承認で人間が判断するSecurity rule IDへの参照（実装前Gateではない） |
 | .harness/skills/implement.md | agentへの実装手順 |
 | .harness/skills/plan.md | PlannerへのPBI → SBI分割手順 |
-| .harness/skills/api-schema.md | API Schema PlannerへのAPI契約提案の手順 |
-| .harness/api-schema/ | API Schema Proposal（Issue番号別）。Git管理対象 |
 | .harness/state/runs/ | run別の状態保存 |
 | .harness/state/human/ | 信頼する人間用CLIの承認台帳と署名鍵。Git管理対象外 |
-| .harness/state/api-schema/ | API Schema Plannerが署名した生成記録。Git管理対象外 |
 | .harness/runs/ | 実行証跡と元リポジトリを共有するGit worktree |
-| tools/harness/ | 実行ループ・分類・承認・マージ可否の判定、PBI → SBI Planner、API Schema Planner |
+| tools/harness/ | 実行ループ・分類・承認・マージ可否の判定、PBI → SBI Planner |
 | docs/ | 人間向けの設計・方針・ADR・運用の概要（[docs/README.md](docs/README.md)） |
 | .ai/ | AIが実装・レビュー時に読む前提・制約・作業手順 |
 
@@ -483,32 +480,10 @@ PR本文には元PBI、Schema SBI、breaking / non-breakingのcontract diff、Pr
 Issueを手で閉じただけでは完了にならず、GitHubを読めないときも`harness:run`は開始しない。
 後続のRails / Frontend SBIは、merge後のmainにある`packages/api-schema/openapi.yaml`を使う。
 
-## API Schema Planner（内部機能）
+## API Mock ServerとSwagger UI
 
-以下は旧来の専用フロー。人間向けのpackage scriptからは外した。`node tools/harness/cli.mjs api-schema <Issue URL>`で引き続き使える。
-
-API変更を伴うIssueから、実装前に合意するOpenAPI 3.1の契約案を作る。Rails / Frontendの実装はしない。
-
-```text
-GitHub Issue → 既存OpenAPI（packages/api-schema）→ API Schema Planner（codex / claude）→ API Schema Quality Judge
-  → PASS: .harness/api-schema/<number>/{openapi.yaml, proposal.json, summary.md}
-          Issueへ [api-schema][needs-api-schema-review] と要約コメント → Human Review → 署名付き承認（digest + commit SHA）
-  → FAIL: ファイルもGitHubも書かずexit 1で理由を表示
-```
-
-providerはOpenAPIそのものではなく、閉じたJSON（endpoint・component・propertyの配列）を返す。
-OpenAPIへの変換、Bearer JWTのsecurityScheme（認証Provider非依存）、共通Error schemaはHarnessが持つ。
-Quality Judgeは決定的なルールで構造・認証認可・Security Impact・秘密値・既存endpointとの衝突を検査し、破壊的変更の候補を列挙する。
-
-`modify`で既存の内容が消える場合は、既存OpenAPIとの構造差分から破壊的変更の候補として必ず表示する。
-
-承認は`node tools/harness/cli.mjs api-schema-approve <Issue URL>`で署名付き台帳に記録し、Proposalのdigestとcommit SHAに紐づける。
-判定は`pnpm planner:api-schema-status <Issue URL>`。Issueの`api-schema-approved`ラベルは目印で、承認の正本ではない。
-Execution HarnessのSBI承認・Merge Approvalとは別で、どちらの代わりにもならない。承認後に人間がpackages/api-schemaへ反映し、実装SBIを作る。
-手順は[.ai/workflows/api-schema.md](.ai/workflows/api-schema.md)。
-
-承認済みOpenAPIのMock Serverは`pnpm api:mock <Issue URL>`で`127.0.0.1:4010`に起動する。承認済みProposalと`packages/api-schema/openapi.yaml`のdigestが一致するときだけ起動する。
-手順は[docs/workflows/api-mock.md](docs/workflows/api-mock.md)。
+`packages/api-schema/openapi.yaml`のMock Serverは`pnpm api:mock`で`127.0.0.1:4010`に起動する。Schema SBIのPRを経てmainにあるOpenAPIを承認済みの契約として扱い、そのまま提供する。
+手順は[docs/workflows/api-mock.md](docs/workflows/api-mock.md)。旧API Schema Planner（Issueごとの契約案と署名付き承認台帳）は削除した（#164）。
 
 `packages/api-schema/openapi.yaml`は`pnpm api:docs`でSwagger UIに表示できる（`http://127.0.0.1:8080`）。閲覧専用で、Try it outは無効にしてある。
 OpenAPIが契約（SSOT）、Swagger UIは契約を見るもの、Prismは契約からMock APIを提供するもの。手順は[docs/workflows/api-docs.md](docs/workflows/api-docs.md)。

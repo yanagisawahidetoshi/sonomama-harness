@@ -16,7 +16,7 @@ Design System導入、dependency、refactor、tooling、Storybook、build設定�
 ## このディレクトリの手順書
 
 - [api-docs.md](api-docs.md): API仕様をブラウザで見る
-- [api-mock.md](api-mock.md): 承認済みのAPI仕様から、ローカルでモックサーバを起動する
+- [api-mock.md](api-mock.md): mainのAPI仕様（OpenAPI）から、ローカルでモックサーバを起動する
 - [database-migrations.md](database-migrations.md): マイグレーションをexpand/contractで進め、破壊的な操作を例外承認で通す
 - [engineering-changes.md](engineering-changes.md): SBIを必要としないProduction領域の技術変更を扱う
 - [dependency-updates.md](dependency-updates.md): AdminとRails APIのdependency更新をRenovateのPRで受け取る
@@ -27,7 +27,6 @@ Design System導入、dependency、refactor、tooling、Storybook、build設定�
 | 手順 | 文書 |
 | --- | --- |
 | PBIからSBIを作る | [.ai/workflows/pbi-sbi-planner.md](../../.ai/workflows/pbi-sbi-planner.md) |
-| API仕様の案を作って承認する（内部機能。通常はSchema SBI） | [.ai/workflows/api-schema.md](../../.ai/workflows/api-schema.md) |
 | Harnessで実装・検証する | [.ai/workflows/implementation.md](../../.ai/workflows/implementation.md) |
 | PRを作ってレビューで判定する | [.ai/workflows/pull-request.md](../../.ai/workflows/pull-request.md) |
 | CIで必要な検証を選んで実行する | [.ai/workflows/ci.md](../../.ai/workflows/ci.md) |

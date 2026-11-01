@@ -4,8 +4,6 @@ import { check, runHarness, resumeRun, cleanupRun, openPullRequest, approveRun, 
 import { withEvidenceProtection, redactText } from './evidence-protection.mjs';
 import { exportRun } from './review-export.mjs';
 import { planIssue } from './planner.mjs';
-import { planApiSchema } from './api-schema-planner.mjs';
-import { recordApiSchemaDecision, apiSchemaApprovalStatus } from './api-schema-approval.mjs';
 import { startApiMock, waitForApiMock } from './api-mock.mjs';
 import { startApiDocs } from './api-docs.mjs';
 import { relativePath } from './schemas.mjs';
@@ -44,15 +42,14 @@ User-facing:
                                                      （PR HEADと最新mainが前回PASSしたrunのままなら何もせずAlready verifiedを表示）
 API design (API契約を設計するときだけ):
   OpenAPI SchemaはPlannerが作るSchema SBI（packages/api-schemaだけを変える）として pnpm harness:run SBI_URL で作る
-  pnpm api:mock ISSUE_URL [--dynamic] | pnpm api:docs [--port PORT]
+  pnpm api:mock [--dynamic] | pnpm api:docs [--port PORT]（packages/api-schema/openapi.yamlをそのまま使う）
 Internal/Maintenance (CI・障害復旧・Harness保守用):
   pnpm harness:resume --run RUN_ID | pnpm harness:pr --run RUN_ID | pnpm harness:approve --run RUN_ID --phase merge
   pnpm harness:run --sbi PATH [--provider fake|codex|claude]（Harness自己テスト・fixture用のSBI JSON。real providerでもPRは作らず、auto mergeの対象にもならない）
   pnpm harness:impact --base REF|--all | pnpm harness:verify --verifier ID --base REF|--all | pnpm harness:judge --base REF|--all
   pnpm harness:check | pnpm harness:test | pnpm harness:demo [--full] | pnpm harness:push-gate
   pnpm harness:pbi-plan PBI_URL（## SBI構成 が無い既存PBIに、GitHubのSBI Issueから書く）
-  pnpm harness:export --run RUN_ID [--out PATH] | pnpm harness:cleanup --run RUN_ID | pnpm planner:api-schema-status ISSUE_URL
-  node tools/harness/cli.mjs api-schema ISSUE_URL | node tools/harness/cli.mjs api-schema-approve ISSUE_URL（旧API Schema Planner。内部機能）`;
+  pnpm harness:export --run RUN_ID [--out PATH] | pnpm harness:cleanup --run RUN_ID`;
 // What stops the run for a human: a decision the approved SBI cannot settle, or AI Review that has not passed.
 const printDecision = run => {
   if (run.escalation?.decision === 'NEEDS_HUMAN_DECISION') console.log(`NEEDS_HUMAN_DECISION (${run.escalation.code}): SBIを更新・再承認し、新しいrunで再開してください`);
@@ -75,10 +72,10 @@ async function printVerifier({ root: workspace = root, base, all, id }) {
 await withEvidenceProtection(root, async () => {
 try {
   const [command, ...args] = process.argv.slice(2);
-  const allowed = { check: ['--sbi'], demo: ['--sbi', '--full'], run: ['--provider', '--sbi', '--full'], plan: ['--provider'], 'spec-approve': ['--decision'], 'api-schema': ['--provider'], 'api-schema-approve': ['--decision'], 'api-schema-status': [], 'api-mock': ['--dynamic'], 'api-docs': ['--port'], cleanup:['--run'], impact: ['--base', '--all'], verify: ['--base', '--all', '--verifier'], judge: ['--base', '--all', '--trusted'], 'push-gate': [], resume: ['--run'], pr: ['--run'], reverify: [], approve: ['--run', '--phase', '--decision'], export: ['--run','--out'], 'pbi-status': ['--json'], 'pbi-accept': ['--evidence', '--decision'], 'pbi-plan': [], 'pbi-plan-approve': ['--decision'] };
+  const allowed = { check: ['--sbi'], demo: ['--sbi', '--full'], run: ['--provider', '--sbi', '--full'], plan: ['--provider'], 'spec-approve': ['--decision'], 'api-mock': ['--dynamic'], 'api-docs': ['--port'], cleanup:['--run'], impact: ['--base', '--all'], verify: ['--base', '--all', '--verifier'], judge: ['--base', '--all', '--trusted'], 'push-gate': [], resume: ['--run'], pr: ['--run'], reverify: [], approve: ['--run', '--phase', '--decision'], export: ['--run','--out'], 'pbi-status': ['--json'], 'pbi-accept': ['--evidence', '--decision'], 'pbi-plan': [], 'pbi-plan-approve': ['--decision'] };
   if (!allowed[command]) throw new Error(usage);
   const options = {};
-  const positional = ['plan', 'spec-approve', 'api-schema', 'api-schema-approve', 'api-schema-status', 'api-mock', 'run', 'approve', 'reverify', 'pbi-status', 'pbi-accept', 'pbi-plan', 'pbi-plan-approve'].includes(command) && args.length && !args[0].startsWith('--') ? args.shift() : null;
+  const positional = ['plan', 'spec-approve', 'api-mock', 'run', 'approve', 'reverify', 'pbi-status', 'pbi-accept', 'pbi-plan', 'pbi-plan-approve'].includes(command) && args.length && !args[0].startsWith('--') ? args.shift() : null;
   for (let i = 0; i < args.length; i += 2) {
     if (['--full', '--dynamic', '--all', '--json', '--trusted'].includes(args[i]) && allowed[command].includes(args[i]) && !options[args[i]]) { options[args[i]]=true; i--; continue; }
     if (!allowed[command].includes(args[i]) || !args[i + 1] || args[i + 1].startsWith('--') || options[args[i]]) throw new Error(`Invalid arguments for ${command}`);
@@ -96,21 +93,6 @@ try {
     if (!positional) throw new Error('spec-approve requires an SBI Issue URL: spec-approve https://github.com/<owner>/<repo>/issues/<number>');
     const approval = await postSpecApproval({ issueUrl: positional, decision: options['--decision'] ?? 'approve', github: githubCli });
     console.log(`Spec ${options['--decision'] === 'revoke' ? 'approval revoked' : 'approved'}: spec digest ${approval.digest} (spec-approved label)`);
-  } else if (command === 'api-schema') {
-    if (!positional) throw new Error('api-schema requires a GitHub Issue URL: api-schema https://github.com/<owner>/<repo>/issues/<number>');
-    const proposal = await planApiSchema({ root, issueUrl: positional, provider: options['--provider'] });
-    console.log(`Evidence: ${proposal.runDir}/summary.json`);
-  } else if (command === 'api-schema-approve' || command === 'api-schema-status') {
-    if (!positional) throw new Error(`${command} requires a GitHub Issue URL`);
-    let result;
-    if (command === 'api-schema-approve') {
-      const decision = { approve: 'APPROVE', revoke: 'REVOKE', 'request-changes': 'REQUEST_CHANGES' }[options['--decision'] || 'approve'];
-      if (!decision) throw new Error('Unknown API schema decision');
-      result = await recordApiSchemaDecision({ root, issueUrl: positional, decision });
-    } else result = await apiSchemaApprovalStatus({ root, issueUrl: positional });
-    console.log(`API Schema: ${result.status} (${result.approvals}/${result.required}) digest=${result.proposalDigest ?? '-'} commit=${result.commitSha ?? '-'}`);
-    for (const reason of result.reasons) console.log(`- ${reason}`);
-    process.exitCode = result.status === 'APPROVED' ? 0 : 2;
   } else if (command === 'pbi-plan' || command === 'pbi-plan-approve') {
     if (!positional) throw new Error(`${command} requires a PBI URL: ${command} https://github.com/<owner>/<repo>/issues/<number>`);
     if (command === 'pbi-plan') {
@@ -137,8 +119,8 @@ try {
     else for (const line of renderPbiStatus(result)) console.log(redactText(line));
     process.exitCode = result.status === 'DONE' ? 0 : 2;
   } else if (command === 'api-mock') {
-    if (!positional) throw new Error('api-mock requires a GitHub Issue URL: api-mock https://github.com/<owner>/<repo>/issues/<number>');
-    const mock = await startApiMock({ root, issueUrl: positional, dynamic: options['--dynamic'] === true });
+    if (positional) throw new Error('api-mock takes no Issue URL: it serves packages/api-schema/openapi.yaml as it is');
+    const mock = await startApiMock({ root, dynamic: options['--dynamic'] === true });
     await waitForApiMock(mock);
     console.log(`API Mock: ${mock.url} (${mock.schemaPath} digest=${mock.digest})`);
     process.exitCode = await new Promise(resolve => mock.child.on('exit', code => resolve(code ?? 0)).on('error', () => resolve(1)));

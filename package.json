@@ -17,7 +17,6 @@
     "harness:demo": "node tools/harness/cli.mjs demo",
     "harness:run": "node tools/harness/cli.mjs run",
     "planner:sbi": "node tools/harness/cli.mjs plan",
-    "planner:api-schema-status": "node tools/harness/cli.mjs api-schema-status",
     "api:mock": "node tools/harness/cli.mjs api-mock",
     "api:docs": "node tools/harness/cli.mjs api-docs",
     "harness:test": "node --test ${HARNESS_TEST_SHARD:+--test-shard=$HARNESS_TEST_SHARD} tools/harness/*.test.mjs tools/harness/agents/*.test.mjs .harness/verification/*.test.mjs .harness/verification/lib/*.test.mjs",
