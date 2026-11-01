@@ -91,7 +91,7 @@ export async function downloadEvidence({ repository, run, name, dir }) {
 // The trusted Judge: main's impact of the PR tree, the producer paths, the jobs of the evidence run and its artifacts, then the same
 // Completion Judge as before on the PR tree. Nothing of the PR is installed or run here except the hand-written Trusted Acceptance
 // scripts the Completion Judge runs under the Node permission model, which is why this job holds no secret.
-export async function runTrustedJudge({ root, workspace, base, repository, pullNumber, eventName, headSha, github = { api }, wait = waitForEvidenceRun, readJobs = readEvidenceJobs,
+export async function runTrustedJudge({ root, workspace, base, repository, pullNumber, eventName, headSha, baseSha, github = { api }, wait = waitForEvidenceRun, readJobs = readEvidenceJobs,
   download = downloadEvidence, evidenceDir, log = () => {} }) {
   const { impact, files } = await loadImpact({ root, workspace, base });
   const producer = judgeProducer(files);
@@ -105,7 +105,7 @@ export async function runTrustedJudge({ root, workspace, base, repository, pullN
   if ((impact.maestro ?? []).length) await fetch('maestro-results', maestroResults);
   // The run's head stands for the head its impact job analyzed; judgeTestedCommit compares it and the PR tree with the event head.
   const needs = { ...evidence.needs, impact: { ...evidence.needs.impact, outputs: { head_sha: run.head_sha } } };
-  const judged = await runCompletionJudge({ root, workspace, base, needs, repository, pullNumber, eventName, maestroResults, acceptanceResults, expectedHeadSha: headSha });
+  const judged = await runCompletionJudge({ root, workspace, base, needs, repository, pullNumber, eventName, maestroResults, acceptanceResults, expectedHeadSha: headSha, expectedBaseSha: baseSha });
   // A failure of the evidence wins; a producer change alone leaves the PR to a human.
   const failures = [...evidence.reasons, ...judged.reasons];
   const status = failures.length ? 'FAIL' : producer.status;

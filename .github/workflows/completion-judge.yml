@@ -51,6 +51,8 @@ jobs:
           HARNESS_WORKSPACE: ${{ runner.temp }}/pr
           HARNESS_PULL_REQUEST: ${{ github.event.pull_request.number }}
           HARNESS_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # The base the diff must contain (#184).
+          HARNESS_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           GH_TOKEN: ${{ github.token }}
   # The only job that may write a check run: it checks nothing out and runs no Harness code, it only turns the judge job's result into the
   # check run. A failed, cancelled, skipped or silent judge job is published as a failure.

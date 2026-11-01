@@ -10,7 +10,7 @@ import { githubCli } from './planner-github.mjs';
 import { verifyMigrationExceptions } from './migration-exception-approval.mjs';
 import { judgeMaestro, maestroLanes, readMaestroResults } from './maestro.mjs';
 import { configSchema, dependencyBotPolicySchema, securityPolicySchema } from './schemas.mjs';
-import { classifySecurity, combineSecurity, securityPassed, verifySecurity } from './security-enforcement.mjs';
+import { classifySecurity, combineSecurity, securityPassed, securityTargets, verifySecurity } from './security-enforcement.mjs';
 import { checksPassed, verify } from './verifier.mjs';
 import { readAcceptance, withAcceptance } from './acceptance-registry.mjs';
 import { isGeneratedRegistrationPath } from './acceptance-generation.mjs';
@@ -133,6 +133,14 @@ export function judgeTestedCommit({ headSha, expectedHeadSha, needs }) {
   return reasons;
 }
 
+// The diff is taken from the base ref; when the event names its base commit, the ref must be that commit or newer on the same history, so a
+// wrong or stale base fails (#184). Main moving on between the event and the checkout is not a failure.
+async function judgeBase({ root, base, expectedBaseSha }) {
+  const resolved = (await git(root, ['rev-parse', '--verify', `${base}^{commit}`], true)).stdout.trim();
+  if (resolved && (await git(root, ['merge-base', '--is-ancestor', expectedBaseSha, resolved], true)).ok) return [];
+  return [`base sha: ${base} is ${resolved.slice(0, 12) || 'missing'}, which does not contain ${expectedBaseSha.slice(0, 12)}`];
+}
+
 // The same diff the Harness run classifies (with added and deleted lines), taken from the merge base like base...HEAD.
 // Files a content rule of the change type judges also carry both sides; a side that does not exist stays undefined.
 export async function changedFiles(root, base) {
@@ -189,20 +197,38 @@ export async function runVerifier({ root, base, all = false, id, acceptanceResul
 }
 
 // Security scans the added lines of the changed files; a vetted .env template is not a secret path, as in prepareWorkspace.
+// A changed file that is not deleted but cannot be read is missing, which fails instead of being dropped (#184).
 async function changedContent(root, files) {
   const content = [];
-  for (const f of files.filter(f => f.status !== 'D')) {
-    let text = '';
-    try { text = await readFile(join(root, f.path), 'utf8'); } catch (e) { if (e.code !== 'ENOENT') throw e; }
-    content.push({ path: f.path, text: f.added ?? '', envTemplate: isSafeEnvTemplate(f.path, text) });
+  for (const t of securityTargets(files)) {
+    if (t.target === 'deleted') { content.push(t); continue; }
+    let bytes = Buffer.alloc(0), missing = false;
+    try { bytes = await readFile(join(root, t.path)); } catch (e) { if (e.code !== 'ENOENT') throw e; missing = true; }
+    // An uninspectable file has no added line, so secret-scan reads its whole bytes instead.
+    content.push({ ...t, text: t.target === 'uninspectable' ? bytes.toString('latin1') : t.added ?? '', envTemplate: isSafeEnvTemplate(t.path, bytes.toString('utf8')), ...(missing && { missing }) });
   }
   return content;
+}
+
+// A push to main (--all) has no diff, so every file tracked at HEAD is read whole from Git (#184); untracked and ignored files are not.
+// A submodule or a file with a NUL byte has no text to read and is uninspectable.
+async function trackedContent(root) {
+  const tree = (await git(root, ['ls-tree', '-r', '-z', '--full-tree', 'HEAD'])).stdout.split('\0').filter(Boolean);
+  const files = [];
+  for (const entry of tree) {
+    const [meta, path] = [entry.slice(0, entry.indexOf('\t')), entry.slice(entry.indexOf('\t') + 1)];
+    const [, type, object] = meta.split(' ');
+    const text = type === 'blob' ? (await git(root, ['cat-file', 'blob', object])).stdout : '';
+    files.push({ path, status: 'A', added: text, deleted: '', binary: type !== 'blob' || text.includes('\0') });
+  }
+  return securityTargets(files).map(t => ({ ...t, text: t.added, envTemplate: isSafeEnvTemplate(t.path, t.added) }));
 }
 
 // Completion Judge: trusted acceptance of every changed SBI and the Harness Security Policy run here. An ambiguous Production diff must be backed
 // by a ready SBI Run snapshot; an engineering diff needs none (ADR-0006).
 // expectedHeadSha is the head the workflow checked out; the CLI always passes it, so a missing value fails there.
-export async function runCompletionJudge({ root, workspace = root, base, all = false, needs, repository = process.env.GITHUB_REPOSITORY, pullNumber, eventName, github = githubCli, githubPr, maestroResults, expectedHeadSha, acceptanceResults = join(root, acceptanceResultsDirectory) }) {
+// expectedBaseSha is the base commit of the pull request event; it is checked when the workflow passes it (HARNESS_BASE_SHA).
+export async function runCompletionJudge({ root, workspace = root, base, all = false, needs, repository = process.env.GITHUB_REPOSITORY, pullNumber, eventName, github = githubCli, githubPr, maestroResults, expectedHeadSha, expectedBaseSha, acceptanceResults = join(root, acceptanceResultsDirectory) }) {
   const { config, files, sbis, snapshots, impact } = await loadImpact({ root, workspace, base, all });
   const headSha = (await git(workspace, ['rev-parse', 'HEAD'])).stdout.trim();
   // The Issue is read once for the generated acceptance and the SBI source check, so both judge the same Issue.
@@ -233,7 +259,8 @@ export async function runCompletionJudge({ root, workspace = root, base, all = f
   const assessment = combineSecurity(classifySecurity({ files }, policy), ...sbis.map(sbi => classifySecurity({ files, sbi, legacySbi: !snapshots.some(s => s.snapshot.sbi === sbi) }, policy)));
   // Application verifiers an SBI requires ran in the matrix job, which succeeds only when every one of them passed.
   const matrix = impact.requiredVerifiers.map(id => ({ id, status: needs.verifiers?.result === 'success' ? 'PASS' : 'FAIL', reason: `verifier matrix: ${needs.verifiers?.result ?? 'missing'}` }));
-  const security = await verifySecurity({ workspace, sbi: {}, assessment, policy, config, headSha, verification: { checks: [...checks, ...matrix] }, changed: await changedContent(workspace, files) });
+  const changed = all ? await trackedContent(workspace) : await changedContent(workspace, files);
+  const security = await verifySecurity({ workspace, sbi: {}, assessment, policy, config, headSha, verification: { checks: [...checks, ...matrix] }, changed, entries: all ? changed.length : files.length });
   // A trusted bot's dependency PR lifts the source requirement only; everything above and judgeCi stay as they are.
   const exemption = impact.sbiRequired && pullNumber !== undefined
     ? await dependencyBotExemption({ policy: dependencyBotPolicySchema.parse(await readJson(join(root, '.harness/rules/dependency-bots.json'))), files, headSha, repository, pullNumber, github })
@@ -259,7 +286,8 @@ export async function runCompletionJudge({ root, workspace = root, base, all = f
   const maestro = { headSha, results: maestroResults && impact.maestro.length ? await readMaestroResults(maestroResults, impact.maestro) : {} };
   const judged = judgeCi({ impact, needs, acceptance, security, source, granularity, migrationExceptions, maestro });
   const tested = expectedHeadSha === undefined ? [] : judgeTestedCommit({ headSha, expectedHeadSha, needs });
-  const reasons = [...tested, ...judged.reasons];
+  const based = all || !expectedBaseSha ? [] : await judgeBase({ root: workspace, base, expectedBaseSha });
+  const reasons = [...tested, ...based, ...judged.reasons];
   return { impact, acceptance, checks, security, source, granularity, migrationExceptions, maestro, status: reasons.length ? 'FAIL' : 'PASS', reasons };
 }
 

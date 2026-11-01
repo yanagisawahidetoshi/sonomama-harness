@@ -77,17 +77,39 @@ export async function workspaceIntegrity(workspace, headSha) {
   const dirty = (await git(workspace, ['status', '--porcelain', '--untracked-files=all'])).stdout;
   if (current !== headSha || dirty) throw new Error('HEAD/snapshot changed; checks and approvals must be regenerated in a new run');
 }
+// #184: paths are literal, never pathspecs; what is binary and which lines changed come from the blobs, never from a .gitattributes in the tree under review (an empty attribute source
+// and no attributes file), and the lines are read by the hunk headers, so an added line that starts with "++" or spells "Binary files" stays a line.
+const emptyTree = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+const plainDiff = ['--literal-pathspecs', '--attr-source', emptyTree, '-c', 'core.attributesFile=/dev/null', 'diff', '--no-ext-diff', '--no-textconv', '--no-renames'];
+function hunkLines(diff) {
+  const added = [], deleted = [], lines = diff.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const hunk = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/.exec(lines[i]);
+    if (!hunk) continue;
+    let minus = Number(hunk[1] ?? 1), plus = Number(hunk[2] ?? 1);
+    while ((minus > 0 || plus > 0) && ++i < lines.length) {
+      const line = lines[i];
+      if (line.startsWith('-') && minus > 0) { deleted.push(line.slice(1)); minus--; }
+      else if (line.startsWith('+') && plus > 0) { added.push(line.slice(1)); plus--; }
+      else if (!line.startsWith('\\')) throw new Error('git diff: unexpected hunk line');
+    }
+  }
+  return { added, deleted };
+}
 export async function changedFiles(workspace, baselineSha, headSha) {
-  const names = (await git(workspace, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--name-status', '-z', baselineSha, headSha])).stdout.split('\0').filter(Boolean);
+  const names = (await git(workspace, [...plainDiff, '--name-status', '-z', baselineSha, headSha])).stdout.split('\0').filter(Boolean);
+  // Git counts no lines of a blob with a NUL byte; with no attributes, nothing else makes a file binary.
+  const numstat = (await git(workspace, [...plainDiff, '--numstat', '-z', baselineSha, headSha])).stdout.split('\0').filter(Boolean);
+  const binary = new Set(numstat.filter(entry => entry.startsWith('-\t-\t')).map(entry => entry.slice(4)));
   const files = [];
   for (let i = 0; i < names.length; i += 2) {
     const status = names[i], path = names[i + 1];
-    const diff = (await git(workspace, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--unified=0', baselineSha, headSha, '--', path])).stdout;
-    const lines = diff.split('\n');
-    const tree = (await git(workspace, ['ls-tree', headSha, '--', path])).stdout;
-    files.push({ path, status, mode: tree.slice(0, 6), modeChanged: /^old mode /m.test(diff), binary: diff.includes('Binary files '),
-      added: lines.filter(s => s.startsWith('+') && !s.startsWith('+++')).map(s => s.slice(1)).join('\n'),
-      deleted: lines.filter(s => s.startsWith('-') && !s.startsWith('---')).map(s => s.slice(1)).join('\n') });
+    const diff = (await git(workspace, [...plainDiff, '--unified=0', baselineSha, headSha, '--', path])).stdout;
+    const header = diff.split(/^@@ /m)[0];
+    const { added, deleted } = binary.has(path) ? { added: [], deleted: [] } : hunkLines(diff);
+    const tree = (await git(workspace, ['--literal-pathspecs', 'ls-tree', headSha, '--', path])).stdout;
+    files.push({ path, status, mode: tree.slice(0, 6), modeChanged: /^old mode /m.test(header), binary: binary.has(path),
+      added: added.join('\n'), deleted: deleted.join('\n'), addedLines: added.length, deletedLines: deleted.length });
   }
   return files;
 }
