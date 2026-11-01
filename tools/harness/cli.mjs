@@ -94,7 +94,7 @@ try {
   } else if (command === 'spec-approve') {
     if (!positional) throw new Error('spec-approve requires an SBI Issue URL: spec-approve https://github.com/<owner>/<repo>/issues/<number>');
     const approval = await postSpecApproval({ issueUrl: positional, decision: options['--decision'] ?? 'approve', github: githubCli });
-    console.log(`Spec ${options['--decision'] === 'revoke' ? 'approval revoked' : 'approved'}: spec digest ${approval.digest} (${approval.comment})`);
+    console.log(`Spec ${options['--decision'] === 'revoke' ? 'approval revoked' : 'approved'}: spec digest ${approval.digest} (spec-approved label)`);
   } else if (command === 'api-schema') {
     if (!positional) throw new Error('api-schema requires a GitHub Issue URL: api-schema https://github.com/<owner>/<repo>/issues/<number>');
     const proposal = await planApiSchema({ root, issueUrl: positional, provider: options['--provider'] });
@@ -115,12 +115,11 @@ try {
     if (command === 'pbi-plan') {
       const written = await writePbiPlan({ pbiUrl: positional });
       console.log(`## SBI構成: ${written.plan.sbis.map(s => `${s.id} #${s.number} ${s.kind}`).join(', ')}`);
-      console.log(`PBI plan digest: ${written.digest}（確認後: pnpm harness:pbi-plan-approve ${positional}）`);
+      console.log(`PBI plan digest: ${written.digest}（確認後: PBIに plan-approved ラベルを付ける）`);
     } else {
       const decision = options['--decision'] || 'approve';
       const approved = await approvePbiPlan({ pbiUrl: positional, decision });
-      console.log(`Posted ${decision} for PBI plan ${approved.digest}: ${approved.comment}`);
-      console.log(`PBI plan: ${approved.approved ? `APPROVED by ${approved.approvers.join(', ')}` : 'NOT_APPROVED'}`);
+      console.log(`PBI plan ${approved.digest}: ${approved.approved ? 'APPROVED (plan-approved label)' : 'NOT_APPROVED'}`);
     }
   } else if (command === 'pbi-status' || command === 'pbi-accept') {
     if (!positional) throw new Error(`${command} requires a PBI URL: ${command} https://github.com/<owner>/<repo>/issues/<number>`);

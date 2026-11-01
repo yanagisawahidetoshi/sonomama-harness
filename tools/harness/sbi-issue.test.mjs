@@ -221,7 +221,7 @@ describe('Starting a run from an SBI Issue a human marked ready', () => {
       assert.equal((await load(github({ timeline, edits: [editedAt('2026-10-30T11:00:00Z'), editedAt('2026-10-30T12:00:00Z')] }))).mode, 'registered');
     });
   });
-  // #200: as for harness-spec, only a human with write access approves the Issue.
+  // #200: only a human with write access approves the Issue.
   describe('given the person who added ready', () => {
     it('when a bot added ready then the run does not start', async () => {
       await assert.rejects(load(github({ timeline: [{ ...readyEvent, actor: { login: 'planner[bot]', type: 'Bot' } }] })), /readyではありません[\s\S]*ready was added by planner\[bot\]/);

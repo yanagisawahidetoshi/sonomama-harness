@@ -8,7 +8,6 @@ import { runHarness } from './index.mjs';
 import { renderSbiBody } from './planner.mjs';
 import { git } from './workspace.mjs';
 import { readJson } from './io.mjs';
-import { specApprovalLine, specDigest } from './spec-approval.mjs';
 import { generatedVerifierId } from './acceptance-registry.mjs';
 
 // #147: a spec-approved SBI Issue runs generation → detection (G) → implementation → acceptance (I) without a hand-written registration.
@@ -26,9 +25,8 @@ const body = renderSbiBody({
   verification: { applicationTest: 'RSpec', acceptance: 'Trusted Acceptance（生成）', e2e: '不要' },
 }, pbi);
 const at = '2026-10-30T00:00:00Z';
-const issue = { number: 7, title: 'SBI-001 担当講師だけが講座を閲覧できる', body, html_url: issueUrl, state: 'open', labels: [{ name: 'sbi' }] };
-const approval = { id: 1, issue: 7, body: specApprovalLine(specDigest(issue)), html_url: `${issueUrl}#issuecomment-1`, user: { login: 'alice', type: 'User' }, created_at: at, updated_at: at };
-const mockGitHub = githubMock({ issue, comments: [approval], permissions: { alice: 'admin' } });
+const issue = { number: 7, title: 'SBI-001 担当講師だけが講座を閲覧できる', body, html_url: issueUrl, state: 'open', labels: [{ name: 'sbi' }, { name: 'spec-approved' }] };
+const mockGitHub = githubMock({ issue });
 
 const testPath = 'apps/api/spec/acceptance/sbi_7/courses_spec.rb';
 const testContent = 'require "rails_helper"\n\nRSpec.describe "講座の閲覧", type: :request do\n  it "担当講師が閲覧する: 200を返す" do\n    get "/api/v1/courses/1"\n    expect(response).to have_http_status(:ok)\n  end\n\n  it "担当外の講師が閲覧する: 403を返す" do\n    get "/api/v1/courses/1"\n    expect(response).to have_http_status(:forbidden)\n  end\nend\n';
