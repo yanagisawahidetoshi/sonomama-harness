@@ -17,7 +17,7 @@ pnpm install                                       # repo rootで実行
 pnpm --filter prototype-mobile start               # Expo Router版の試作アプリ (Metro)
 pnpm --filter prototype-mobile ios                 # development buildを作ってiOS Simulatorで起動
 pnpm --filter prototype-mobile android             # development buildを作ってAndroid Emulatorで起動
-pnpm --filter prototype-mobile storybook           # Storybook版で起動 (Metro)
+pnpm --filter prototype-mobile storybook:start         # Storybook版で起動 (Metro)
 pnpm --filter prototype-mobile typecheck
 pnpm --filter prototype-mobile check               # Biome (lint + format + import整列)
 pnpm --filter prototype-mobile doctor              # expo-doctor
@@ -40,7 +40,7 @@ iOS Simulator / Android Emulatorで見るには、先にdevelopment buildを入�
 
 ```sh
 EXPO_PUBLIC_STORYBOOK_ENABLED=true pnpm --filter prototype-mobile ios   # 初回: buildしてStorybookで起動
-pnpm --filter prototype-mobile storybook                                # 2回目以降: Metroだけ起動し、Simulator / Emulatorのアプリを開く
+pnpm --filter prototype-mobile storybook:start                              # 2回目以降: Metroだけ起動し、Simulator / Emulatorのアプリを開く
 ```
 
 通常の試作アプリに戻すときは `pnpm --filter prototype-mobile start` でMetroを起動し直す。
